@@ -54,38 +54,38 @@ Se incluye API (FastAPI), UI de escritorio (PySide6), almacenamiento vectorial
 
 ```mermaid
 flowchart LR
-      U[Usuario / UI PySide6] --> API[FastAPI API]
+   U[Usuario UI PySide6] --> API[FastAPI API]
 
-      subgraph ING[Pipeline de Ingesta]
-         GIT[Git Clone + Scan]
-         CHK[Chunking Símbolos/Archivos/Módulos]
-         EMB[Embeddings]
-         IDX1[ChromaDB]
-         IDX2[BM25]
-         GRF[Neo4j Graph]
-         GIT --> CHK --> EMB --> IDX1
-         CHK --> IDX2
-         CHK --> GRF
-      end
+   subgraph ING[Pipeline Ingesta]
+      GIT[Git Clone y Scan]
+      CHK[Chunking Simbolos Archivos Modulos]
+      EMB[Embeddings]
+      IDX1[ChromaDB]
+      IDX2[BM25]
+      GRF[Neo4j Graph]
+      GIT --> CHK --> EMB --> IDX1
+      CHK --> IDX2
+      CHK --> GRF
+   end
 
-      API -->|POST /repos/ingest| ING
-      API -->|GET /jobs/{id}| JOBS[(Job State)]
+   API --> ING
+   API --> JOBS[Job State]
 
-      subgraph QRY[Pipeline de Consulta]
-         QN[Normalización]
-         HYB[Hybrid Search<br/>Vector + BM25 + Modules]
-         RER[Reranking]
-         EXP[Graph Expand]
-         ASM[Context Assembly]
-         LLM[OpenAI Answer + Verify]
-         QN --> HYB --> RER --> EXP --> ASM --> LLM
-      end
+   subgraph QRY[Pipeline Consulta]
+      QN[Normalizacion]
+      HYB[Hybrid Search Vector BM25 Modules]
+      RER[Reranking]
+      EXP[Graph Expand]
+      ASM[Context Assembly]
+      LLM[OpenAI Answer Verify]
+      QN --> HYB --> RER --> EXP --> ASM --> LLM
+   end
 
-      API -->|POST /query| QRY
-      IDX1 --> HYB
-      IDX2 --> HYB
-      GRF --> EXP
-      LLM --> API --> U
+   API --> QRY
+   IDX1 --> HYB
+   IDX2 --> HYB
+   GRF --> EXP
+   LLM --> API --> U
 ```
 
 ## Instalación
