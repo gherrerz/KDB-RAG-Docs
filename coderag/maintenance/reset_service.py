@@ -1,0 +1,127 @@
+"""System reset utilities for clearing indexed and persisted data."""
+
+import gc
+import os
+import shutil
+import sqlite3
+import stat
+import time
+from pathlib import Path
+
+import chromadb
+
+from coderag.core.settings import get_settings
+from coderag.ingestion.graph_builder import GraphBuilder
+from coderag.ingestion.index_bm25 import GLOBAL_BM25
+from coderag.ingestion.index_chroma import COLLECTIONS
+
+
+def _on_remove_error(func, path: str, exc_info) -> None:
+    """Handle read-only files during directory cleanup on Windows."""
+    os.chmod(path, stat.S_IWRITE)
+    func(path)
+
+
+def _remove_path(path: Path, retries: int = 3) -> None:
+    """Delete file or directory with retries for transient file locks."""
+    if not path.exists():
+        return
+
+    last_error: Exception | None = None
+    for _ in range(retries):
+        try:
+            if path.is_dir():
+                shutil.rmtree(path, onerror=_on_remove_error)
+            else:
+                path.unlink()
+            return
+        except Exception as exc:  # pragma: no cover - depends on OS lock timing
+            last_error = exc
+            time.sleep(0.35)
+
+    if last_error is not None:
+        raise RuntimeError(f"No se pudo eliminar {path}: {last_error}") from last_error
+
+
+def _compact_chroma_sqlite(chroma_path: Path) -> None:
+    """Force SQLite file compaction after logical collection deletion."""
+    db_file = chroma_path / "chroma.sqlite3"
+    if not db_file.exists():
+        return
+
+    connection = sqlite3.connect(str(db_file), timeout=8)
+    try:
+        connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        connection.execute("VACUUM")
+        connection.execute("PRAGMA optimize")
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def reset_all_storage() -> tuple[list[str], list[str]]:
+    """Clear vector, lexical, graph, workspace, and metadata persistence."""
+    settings = get_settings()
+    cleared: list[str] = []
+    warnings: list[str] = []
+
+    GLOBAL_BM25.clear()
+    cleared.append("BM25 en memoria")
+
+    chroma_reset_done = False
+    try:
+        client = chromadb.PersistentClient(path=str(settings.chroma_path))
+        for collection_name in COLLECTIONS:
+            try:
+                client.delete_collection(collection_name)
+            except Exception:
+                continue
+        chroma_reset_done = True
+    except Exception as exc:
+        warnings.append(f"No se pudieron limpiar colecciones Chroma por API: {exc}")
+    finally:
+        try:
+            del client
+        except Exception:
+            pass
+        gc.collect()
+
+    try:
+        _compact_chroma_sqlite(settings.chroma_path)
+        cleared.append("Chroma SQLite compactado")
+    except sqlite3.Error as exc:
+        warnings.append(
+            "No se pudo compactar chroma.sqlite3 tras borrado lógico: "
+            f"{exc}"
+        )
+
+    try:
+        _remove_path(settings.chroma_path)
+    except RuntimeError as exc:
+        warnings.append(
+            "No se pudo vaciar carpeta Chroma por lock de archivos: "
+            f"{exc}"
+        )
+    settings.chroma_path.mkdir(parents=True, exist_ok=True)
+    if chroma_reset_done:
+        cleared.append(f"Chroma ({settings.chroma_path})")
+
+    _remove_path(settings.workspace_path)
+    settings.workspace_path.mkdir(parents=True, exist_ok=True)
+    cleared.append(f"Workspace ({settings.workspace_path})")
+
+    metadata_db = settings.workspace_path.parent / "metadata.db"
+    _remove_path(metadata_db)
+    metadata_db.parent.mkdir(parents=True, exist_ok=True)
+    metadata_db.touch(exist_ok=True)
+    cleared.append(f"Metadata ({metadata_db})")
+
+    graph = GraphBuilder()
+    try:
+        with graph.driver.session() as session:
+            session.run("MATCH (n) DETACH DELETE n")
+        cleared.append("Grafo Neo4j")
+    finally:
+        graph.close()
+
+    return cleared, warnings

@@ -43,5 +43,9 @@ class BM25Index:
             )
         return result
 
+    def clear(self) -> None:
+        """Remove all repository BM25 corpora from memory."""
+        self._by_repo.clear()
+
 
 GLOBAL_BM25 = BM25Index()

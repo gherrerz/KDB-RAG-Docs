@@ -3,7 +3,13 @@
 from fastapi import FastAPI, HTTPException
 
 from coderag.core.logging import configure_logging
-from coderag.core.models import JobInfo, QueryRequest, QueryResponse, RepoIngestRequest
+from coderag.core.models import (
+    JobInfo,
+    QueryRequest,
+    QueryResponse,
+    RepoIngestRequest,
+    ResetResponse,
+)
 from coderag.jobs.worker import JobManager
 
 configure_logging()
@@ -36,4 +42,21 @@ def query_repo(request: QueryRequest) -> QueryResponse:
         query=request.query,
         top_n=request.top_n,
         top_k=request.top_k,
+    )
+
+
+@app.post("/admin/reset", response_model=ResetResponse)
+def reset_all_data() -> ResetResponse:
+    """Reset all indexed data stores and local ingestion workspace."""
+    try:
+        cleared, warnings = jobs.reset_all_data()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    return ResetResponse(
+        message="Limpieza total completada",
+        cleared=cleared,
+        warnings=warnings,
     )

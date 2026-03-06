@@ -26,17 +26,9 @@ class MainWindow(QMainWindow):
         self.query_view = QueryView()
         self.evidence_view = EvidenceView()
 
-        query_container = QWidget()
-        query_layout = QVBoxLayout()
-        query_layout.setContentsMargins(0, 0, 0, 0)
-        query_layout.setSpacing(12)
-        query_layout.addWidget(self.query_view)
-        query_layout.addWidget(self.evidence_view)
-        query_container.setLayout(query_layout)
-
         self.tabs = QTabWidget()
         self.tabs.addTab(self.ingestion_view, "Ingesta")
-        self.tabs.addTab(query_container, "Consulta")
+        self.tabs.addTab(self.query_view, "Consulta")
 
         container = QWidget()
         container_layout = QVBoxLayout()
@@ -47,6 +39,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(container)
 
         self.ingestion_view.ingest_button.clicked.connect(self._on_ingest)
+        self.ingestion_view.reset_button.clicked.connect(self._on_reset_all)
         self.query_view.query_button.clicked.connect(self._on_query)
 
         self._active_job_id: str | None = None
@@ -137,6 +130,56 @@ class MainWindow(QMainWindow):
             self.ingestion_view.set_progress(0)
             self.ingestion_view.append_log(f"Error de ingesta: {exc}")
 
+    def _on_reset_all(self) -> None:
+        """Request full reset of indexes, graph, metadata and workspace."""
+        if self._job_poll_enabled:
+            self.ingestion_view.set_status("error", "Error")
+            self.ingestion_view.append_log(
+                "No se puede limpiar mientras hay una ingesta en progreso."
+            )
+            return
+
+        self.ingestion_view.set_reset_running(True)
+        self.ingestion_view.set_status("running", "Limpiando")
+        self.ingestion_view.set_progress(0)
+        self.ingestion_view.append_log("Iniciando limpieza total del sistema...")
+
+        try:
+            response = requests.post(f"{API_BASE}/admin/reset", timeout=120)
+            response.raise_for_status()
+            data = response.json()
+            message = str(data.get("message") or "Limpieza total completada")
+            self.ingestion_view.append_log(message)
+
+            for item in data.get("cleared") or []:
+                self.ingestion_view.append_log(f"- {item}")
+            for warning in data.get("warnings") or []:
+                self.ingestion_view.append_log(f"Advertencia: {warning}")
+
+            self.ingestion_view.set_job_id("")
+            self.ingestion_view.set_repo_id("")
+            self.query_view.repo_id.clear()
+            self.evidence_view.set_citations([])
+
+            self.ingestion_view.set_progress(100)
+            self.ingestion_view.set_status("success", "Limpio")
+        except requests.HTTPError:
+            detail = "Error HTTP al limpiar."  # pragma: no cover - network detail
+            try:
+                error_data = response.json()
+                detail = str(error_data.get("detail") or detail)
+            except Exception:
+                pass
+            self.ingestion_view.set_status("error", "Error")
+            self.ingestion_view.set_progress(0)
+            self.ingestion_view.append_log(f"Error de limpieza: {detail}")
+        except Exception as exc:
+            self.ingestion_view.set_status("error", "Error")
+            self.ingestion_view.set_progress(0)
+            self.ingestion_view.append_log(f"Error de limpieza: {exc}")
+        finally:
+            self.ingestion_view.set_reset_running(False)
+
     def timerEvent(self, event: Any) -> None:  # noqa: N802
         """Poll ingestion job endpoint and update status widgets."""
         if event.timerId() != self._poll_timer_id:
@@ -203,21 +246,28 @@ class MainWindow(QMainWindow):
     def _on_query(self) -> None:
         """Send query request and render answer with citations."""
         repo_id = self.query_view.repo_id.text().strip()
-        question = self.query_view.query_input.toPlainText().strip()
+        question = self.query_view.get_question_text()
 
         if not repo_id:
             self.query_view.set_status("error", "Error")
-            self.query_view.set_answer("Debes indicar el ID de repositorio.")
+            self.query_view.append_assistant_message(
+                "Debes indicar el ID de repositorio.",
+                error=True,
+            )
             return
 
         if not question:
             self.query_view.set_status("error", "Error")
-            self.query_view.set_answer("Debes escribir una pregunta para consultar.")
+            self.query_view.append_assistant_message(
+                "Debes escribir una pregunta para consultar.",
+                error=True,
+            )
             return
 
+        self.query_view.append_user_message(question)
         self.query_view.set_running(True)
         self.query_view.set_status("running", "Consultando")
-        self.query_view.set_answer("Buscando evidencia y generando respuesta...")
+        self.query_view.clear_question()
 
         payload = {
             "repo_id": repo_id,
@@ -229,8 +279,9 @@ class MainWindow(QMainWindow):
             response = requests.post(f"{API_BASE}/query", json=payload, timeout=60)
             response.raise_for_status()
             data = response.json()
-            self.query_view.set_answer(str(data.get("answer") or "Sin respuesta."))
-            self.evidence_view.set_citations(data["citations"])
+            answer_text = str(data.get("answer") or "Sin respuesta.")
+            self.query_view.append_assistant_message(answer_text)
+            self.evidence_view.set_citations(data.get("citations") or [])
             self.query_view.set_status("success", "Completado")
         except requests.HTTPError:
             detail = "Error HTTP en consulta."
@@ -240,10 +291,16 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
             self.query_view.set_status("error", "Error")
-            self.query_view.set_answer(f"{detail}\n\nEndpoint: {API_BASE}/query")
+            self.query_view.append_assistant_message(
+                f"{detail}\n\nEndpoint: {API_BASE}/query",
+                error=True,
+            )
         except Exception as exc:
             self.query_view.set_status("error", "Error")
-            self.query_view.set_answer(f"Error en consulta: {exc}")
+            self.query_view.append_assistant_message(
+                f"Error en consulta: {exc}",
+                error=True,
+            )
         finally:
             self.query_view.set_running(False)
 

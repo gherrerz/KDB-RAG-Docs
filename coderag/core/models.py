@@ -66,6 +66,14 @@ class QueryResponse(BaseModel):
     diagnostics: dict[str, Any] = Field(default_factory=dict)
 
 
+class ResetResponse(BaseModel):
+    """Output model returned by full reset endpoint."""
+
+    message: str
+    cleared: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
 class ScannedFile(BaseModel):
     """Represents a source file discovered in a repository scan."""
 

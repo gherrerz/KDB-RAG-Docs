@@ -162,7 +162,7 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/repos/ingest -ContentT
 
 ```powershell
 $q = @{
-   repo_id = 'dd2ca7fffe603df3'
+   repo_id = 'mall'
    query = 'cuales son todos los controller del modulo mall-admin?'
    top_n = 80
    top_k = 20
@@ -170,6 +170,15 @@ $q = @{
 
 Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/query -ContentType 'application/json' -Body $q
 ```
+
+### 5) Limpieza total (reset)
+
+```powershell
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/admin/reset
+```
+
+Este endpoint elimina índices vectoriales, BM25 en memoria, grafo Neo4j,
+metadata de jobs y carpetas de workspace para comenzar una ingesta desde cero.
 
 ## Estructura del Proyecto
 

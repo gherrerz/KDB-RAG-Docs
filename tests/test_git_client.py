@@ -5,7 +5,19 @@ from pathlib import Path
 
 import pytest
 
-from coderag.ingestion.git_client import clone_repository
+from coderag.ingestion.git_client import build_repo_id, clone_repository
+
+
+def test_build_repo_id_uses_url_tail_for_https_url() -> None:
+    """Derives public repo identifier from final URL path segment."""
+    repo_id = build_repo_id("https://github.com/macrozheng/mall.git", "main")
+    assert repo_id == "mall"
+
+
+def test_build_repo_id_uses_url_tail_for_ssh_url() -> None:
+    """Supports git@ SSH style repository URLs as repo_id source."""
+    repo_id = build_repo_id("git@github.com:macrozheng/mall.git", "develop")
+    assert repo_id == "mall"
 
 
 def test_clone_repository_fallbacks_when_branch_missing(

@@ -15,8 +15,30 @@ class JobManager:
     def __init__(self) -> None:
         """Initialize manager with metadata storage."""
         settings = get_settings()
-        self.store = MetadataStore(settings.workspace_path.parent / "metadata.db")
+        self._metadata_path = settings.workspace_path.parent / "metadata.db"
+        self.store = MetadataStore(self._metadata_path)
         self._jobs: dict[str, JobInfo] = {}
+
+    def reset_all_data(self) -> tuple[list[str], list[str]]:
+        """Reset all persisted indexes and in-memory job/cache state."""
+        running_jobs = [
+            job_id
+            for job_id, job in self._jobs.items()
+            if job.status == JobStatus.running
+        ]
+        if running_jobs:
+            joined = ", ".join(running_jobs)
+            raise RuntimeError(
+                "No se puede limpiar mientras haya ingestas en ejecución: "
+                f"{joined}"
+            )
+
+        from coderag.maintenance.reset_service import reset_all_storage
+
+        cleared, warnings = reset_all_storage()
+        self._jobs.clear()
+        self.store = MetadataStore(self._metadata_path)
+        return cleared, warnings
 
     def create_ingest_job(self, request: RepoIngestRequest) -> JobInfo:
         """Create and start an asynchronous ingestion job."""

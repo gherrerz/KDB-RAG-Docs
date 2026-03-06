@@ -2,17 +2,44 @@
 
 import hashlib
 import os
+import re
 import shutil
 import stat
 import subprocess
 import time
 from pathlib import Path
+from urllib.parse import urlparse
 from uuid import uuid4
 
 
 def build_repo_id(repo_url: str, branch: str) -> str:
-    """Create deterministic repository identifier from URL and branch."""
-    digest = hashlib.sha1(f"{repo_url}:{branch}".encode("utf-8")).hexdigest()
+    """Create repository identifier from URL tail with deterministic fallback."""
+    del branch  # Branch no longer contributes to public repo identifier.
+
+    normalized = repo_url.strip()
+    if not normalized:
+        digest = hashlib.sha1(repo_url.encode("utf-8")).hexdigest()
+        return digest[:16]
+
+    candidate = ""
+    if normalized.startswith("git@"):
+        if ":" in normalized:
+            candidate = normalized.split(":", maxsplit=1)[-1]
+    else:
+        parsed = urlparse(normalized)
+        candidate = parsed.path
+
+    candidate = candidate.strip().strip("/")
+    if "/" in candidate:
+        candidate = candidate.rsplit("/", maxsplit=1)[-1]
+    if candidate.endswith(".git"):
+        candidate = candidate[:-4]
+
+    sanitized = re.sub(r"[^A-Za-z0-9._-]+", "-", candidate).strip("-._")
+    if sanitized:
+        return sanitized.lower()
+
+    digest = hashlib.sha1(repo_url.encode("utf-8")).hexdigest()
     return digest[:16]
 
 

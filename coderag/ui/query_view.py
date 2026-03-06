@@ -1,13 +1,14 @@
 """Query view widgets for asking repository questions."""
 
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (
     QFrame,
-    QFormLayout,
+    QHBoxLayout,
     QGridLayout,
     QLabel,
     QLineEdit,
     QPushButton,
-    QTextEdit,
+    QScrollArea,
     QVBoxLayout,
     QWidget,
 )
@@ -29,24 +30,42 @@ class QueryView(QWidget):
         self.status_chip.setProperty("state", "idle")
 
         self.repo_id = QLineEdit()
-        self.repo_id.setPlaceholderText("UUID del repositorio")
+        self.repo_id.setPlaceholderText("ID del repositorio (ej: mall)")
 
-        self.query_input = QTextEdit()
-        self.query_input.setPlaceholderText("Ejemplo: ¿Qué módulos manejan autenticación?")
+        self.query_input = QLineEdit()
+        self.query_input.setPlaceholderText("Consulta la base de conocimientos...")
+        self.query_input.returnPressed.connect(self._trigger_submit)
 
-        self.query_button = QPushButton("Consultar")
+        self.query_button = QPushButton("↑")
+        self.query_button.setFixedWidth(44)
 
-        self.answer_output = QTextEdit()
-        self.answer_output.setReadOnly(True)
-        self.answer_output.setPlaceholderText("La respuesta aparecerá aquí...")
+        self.history_container = QWidget()
+        self.history_layout = QVBoxLayout()
+        self.history_layout.setContentsMargins(0, 0, 0, 0)
+        self.history_layout.setSpacing(12)
+        self.history_layout.addStretch(1)
+        self.history_container.setLayout(self.history_layout)
 
-        form = QFormLayout()
-        form.addRow("ID de repositorio", self.repo_id)
-        form.addRow("Pregunta", self.query_input)
+        self.history_scroll = QScrollArea()
+        self.history_scroll.setWidgetResizable(True)
+        self.history_scroll.setWidget(self.history_container)
+        self.history_scroll.setFrameShape(QFrame.Shape.NoFrame)
 
-        card = QFrame()
-        card.setObjectName("queryCard")
-        card.setLayout(form)
+        self.input_bar = QFrame()
+        self.input_bar.setObjectName("inputBar")
+        self.input_bar.setProperty("state", "idle")
+
+        input_layout = QHBoxLayout()
+        input_layout.setContentsMargins(10, 8, 10, 8)
+        input_layout.setSpacing(8)
+        input_layout.addWidget(self.query_input)
+        input_layout.addWidget(self.query_button)
+        self.input_bar.setLayout(input_layout)
+
+        repo_bar = QHBoxLayout()
+        repo_label = QLabel("ID de repositorio")
+        repo_bar.addWidget(repo_label)
+        repo_bar.addWidget(self.repo_id)
 
         top_bar = QGridLayout()
         top_bar.addWidget(self.title_label, 0, 0)
@@ -55,10 +74,14 @@ class QueryView(QWidget):
 
         layout = QVBoxLayout()
         layout.addLayout(top_bar)
-        layout.addWidget(card)
-        layout.addWidget(self.query_button)
-        layout.addWidget(self.answer_output)
+        layout.addLayout(repo_bar)
+        layout.addWidget(self.history_scroll)
+        layout.addWidget(self.input_bar)
         self.setLayout(layout)
+
+        self.append_assistant_message(
+            "Listo para auditar. Haz una pregunta para comenzar."
+        )
 
         self.setStyleSheet(
             """
@@ -70,12 +93,6 @@ class QueryView(QWidget):
             }
             QueryView {
                 background-color: #111827;
-            }
-            QFrame#queryCard {
-                background-color: #1F2937;
-                border: 1px solid #374151;
-                border-radius: 10px;
-                padding: 10px;
             }
             QLabel#queryStatusChip {
                 padding: 4px 10px;
@@ -94,12 +111,47 @@ class QueryView(QWidget):
             QLabel#queryStatusChip[state="error"] {
                 background-color: #B91C1C;
             }
-            QLineEdit, QTextEdit {
+            QLineEdit {
                 background-color: #0F172A;
                 color: #E5E7EB;
                 border: 1px solid #374151;
                 border-radius: 8px;
                 padding: 6px;
+            }
+            QScrollArea {
+                background-color: transparent;
+            }
+            QFrame#inputBar {
+                background-color: #111827;
+                border: 1px solid #374151;
+                border-radius: 12px;
+            }
+            QFrame#inputBar[state="running"] {
+                border: 1px solid #F59E0B;
+                background-color: #1F2937;
+            }
+            QFrame#inputBar[state="error"] {
+                border: 1px solid #B91C1C;
+            }
+            QFrame#msgUser {
+                background-color: #1D4ED8;
+                border-radius: 12px;
+                padding: 8px;
+            }
+            QFrame#msgAssistant {
+                background-color: #1F2937;
+                border: 1px solid #374151;
+                border-radius: 12px;
+                padding: 8px;
+            }
+            QFrame#msgError {
+                background-color: #3F1D1D;
+                border: 1px solid #B91C1C;
+                border-radius: 12px;
+                padding: 8px;
+            }
+            QLabel#msgText {
+                color: #E5E7EB;
             }
             QPushButton {
                 background-color: #2563EB;
@@ -130,8 +182,67 @@ class QueryView(QWidget):
         self.repo_id.setDisabled(running)
         self.query_input.setDisabled(running)
         self.query_button.setDisabled(running)
-        self.query_button.setText("Consultando..." if running else "Consultar")
+        self.query_button.setText("…" if running else "↑")
+        self.input_bar.setProperty("state", "running" if running else "idle")
+        self.input_bar.style().unpolish(self.input_bar)
+        self.input_bar.style().polish(self.input_bar)
 
-    def set_answer(self, text: str) -> None:
-        """Render answer or informational message."""
-        self.answer_output.setPlainText(text)
+    def get_question_text(self) -> str:
+        """Return trimmed question input text."""
+        return self.query_input.text().strip()
+
+    def clear_question(self) -> None:
+        """Clear query input after successful submission."""
+        self.query_input.clear()
+
+    def append_user_message(self, text: str) -> None:
+        """Append user question to chat history."""
+        self._append_message(text=text, role="user", error=False)
+
+    def append_assistant_message(self, text: str, error: bool = False) -> None:
+        """Append assistant response or error to chat history."""
+        self._append_message(text=text, role="assistant", error=error)
+
+    def _append_message(self, text: str, role: str, error: bool) -> None:
+        """Render a chat bubble aligned by role and keep history visible."""
+        row_widget = QWidget()
+        row_layout = QHBoxLayout()
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        row_layout.setSpacing(8)
+
+        bubble = QFrame()
+        bubble_name = "msgUser" if role == "user" else "msgAssistant"
+        if error:
+            bubble_name = "msgError"
+        bubble.setObjectName(bubble_name)
+
+        bubble_layout = QVBoxLayout()
+        bubble_layout.setContentsMargins(10, 8, 10, 8)
+
+        text_label = QLabel(text)
+        text_label.setObjectName("msgText")
+        text_label.setWordWrap(True)
+        bubble_layout.addWidget(text_label)
+        bubble.setLayout(bubble_layout)
+
+        if role == "user":
+            row_layout.addStretch(1)
+            row_layout.addWidget(bubble)
+        else:
+            row_layout.addWidget(bubble)
+            row_layout.addStretch(1)
+
+        row_widget.setLayout(row_layout)
+        insert_index = max(0, self.history_layout.count() - 1)
+        self.history_layout.insertWidget(insert_index, row_widget)
+        QTimer.singleShot(0, self._scroll_to_bottom)
+
+    def _scroll_to_bottom(self) -> None:
+        """Scroll chat view to latest message."""
+        scrollbar = self.history_scroll.verticalScrollBar()
+        scrollbar.setValue(scrollbar.maximum())
+
+    def _trigger_submit(self) -> None:
+        """Trigger query button click from keyboard Enter key."""
+        if self.query_button.isEnabled():
+            self.query_button.click()

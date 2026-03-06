@@ -3,6 +3,7 @@
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QFrame,
+    QHBoxLayout,
     QComboBox,
     QFormLayout,
     QGridLayout,
@@ -41,6 +42,8 @@ class IngestionView(QWidget):
 
         self.branch = QLineEdit("main")
         self.ingest_button = QPushButton("Ingestar")
+        self.reset_button = QPushButton("Limpiar Todo")
+        self.reset_button.setObjectName("dangerButton")
 
         self.job_id = QLineEdit()
         self.job_id.setReadOnly(True)
@@ -79,7 +82,13 @@ class IngestionView(QWidget):
         layout.addLayout(top_bar)
         layout.addWidget(card)
         layout.addWidget(self.progress_bar)
-        layout.addWidget(self.ingest_button)
+
+        actions = QHBoxLayout()
+        actions.setSpacing(8)
+        actions.addWidget(self.ingest_button)
+        actions.addWidget(self.reset_button)
+
+        layout.addLayout(actions)
         layout.addWidget(self.logs)
         self.setLayout(layout)
 
@@ -146,6 +155,9 @@ class IngestionView(QWidget):
                 background-color: #334155;
                 color: #CBD5E1;
             }
+            QPushButton#dangerButton {
+                background-color: #B91C1C;
+            }
             """
         )
 
@@ -177,7 +189,18 @@ class IngestionView(QWidget):
         self.token.setDisabled(running)
         self.branch.setDisabled(running)
         self.ingest_button.setDisabled(running)
+        self.reset_button.setDisabled(running)
         self.ingest_button.setText("Ingestando..." if running else "Ingestar")
+
+    def set_reset_running(self, running: bool) -> None:
+        """Update UI while full reset operation is executing."""
+        self.provider.setDisabled(running)
+        self.repo_url.setDisabled(running)
+        self.token.setDisabled(running)
+        self.branch.setDisabled(running)
+        self.ingest_button.setDisabled(running)
+        self.reset_button.setDisabled(running)
+        self.reset_button.setText("Limpiando..." if running else "Limpiar Todo")
 
     def set_logs(self, lines: list[str]) -> None:
         """Render all ingestion log lines in console panel."""
