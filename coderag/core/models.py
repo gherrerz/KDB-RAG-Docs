@@ -48,6 +48,15 @@ class QueryRequest(BaseModel):
     top_k: int = 20
 
 
+class InventoryQueryRequest(BaseModel):
+    """Input model for graph-first inventory queries."""
+
+    repo_id: str
+    query: str
+    page: int = 1
+    page_size: int = 80
+
+
 class Citation(BaseModel):
     """Evidence metadata for each supported claim in an answer."""
 
@@ -63,6 +72,30 @@ class QueryResponse(BaseModel):
 
     answer: str
     citations: list[Citation]
+    diagnostics: dict[str, Any] = Field(default_factory=dict)
+
+
+class InventoryItem(BaseModel):
+    """Structured inventory item discovered in repository graph."""
+
+    label: str
+    path: str
+    kind: str = "file"
+    start_line: int = 1
+    end_line: int = 1
+
+
+class InventoryQueryResponse(BaseModel):
+    """Output model returned by paginated inventory endpoint."""
+
+    answer: str
+    target: str | None = None
+    module_name: str | None = None
+    total: int = 0
+    page: int = 1
+    page_size: int = 80
+    items: list[InventoryItem] = Field(default_factory=list)
+    citations: list[Citation] = Field(default_factory=list)
     diagnostics: dict[str, Any] = Field(default_factory=dict)
 
 

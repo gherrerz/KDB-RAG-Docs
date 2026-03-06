@@ -4,6 +4,8 @@ from fastapi import FastAPI, HTTPException
 
 from coderag.core.logging import configure_logging
 from coderag.core.models import (
+    InventoryQueryRequest,
+    InventoryQueryResponse,
     JobInfo,
     QueryRequest,
     QueryResponse,
@@ -43,6 +45,19 @@ def query_repo(request: QueryRequest) -> QueryResponse:
         query=request.query,
         top_n=request.top_n,
         top_k=request.top_k,
+    )
+
+
+@app.post("/inventory/query", response_model=InventoryQueryResponse)
+def query_inventory(request: InventoryQueryRequest) -> InventoryQueryResponse:
+    """Run graph-first paginated inventory query for broad list intents."""
+    from coderag.api.query_service import run_inventory_query
+
+    return run_inventory_query(
+        repo_id=request.repo_id,
+        query=request.query,
+        page=request.page,
+        page_size=request.page_size,
     )
 
 

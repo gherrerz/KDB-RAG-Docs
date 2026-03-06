@@ -162,6 +162,11 @@ Variables relevantes en `.env`:
 - `REDIS_URL` (opcional/futuro): endpoint para cola de jobs distribuida.
 - `WORKSPACE_PATH`: ruta de repos clonados.
 - `MAX_CONTEXT_TOKENS`, `GRAPH_HOPS`.
+- `QUERY_MAX_SECONDS`: presupuesto total por consulta en API.
+- `OPENAI_TIMEOUT_SECONDS`: timeout máximo por llamada OpenAI (answer/verify).
+- `UI_REQUEST_TIMEOUT_SECONDS`: timeout HTTP de la UI hacia API.
+- `INVENTORY_PAGE_SIZE`, `INVENTORY_MAX_PAGE_SIZE`: paginación para inventario.
+- `INVENTORY_ALIAS_LIMIT`, `INVENTORY_ENTITY_LIMIT`: límites de expansión de inventario.
 
 > Nota: en esta configuración se recomienda `NEO4J_URI=bolt://127.0.0.1:17687`
 para evitar conflictos de puertos locales comunes.
@@ -221,7 +226,25 @@ Invoke-RestMethod -Method Get -Uri http://127.0.0.1:8000/repos
 
 Usa este endpoint para poblar/validar el selector de `repo_id` en la UI.
 
-### 6) Limpieza total (reset)
+### 6) Consulta de inventario paginada (graph-first)
+
+Para consultas amplias tipo “todos los X”, usa la ruta estructural dedicada:
+
+```powershell
+$inv = @{
+   repo_id = 'mall'
+   query = 'cuales son todos los modelos de mall-mbg'
+   page = 1
+   page_size = 50
+} | ConvertTo-Json
+
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/inventory/query -ContentType 'application/json' -Body $inv
+```
+
+Esta ruta evita la carga completa del pipeline híbrido y devuelve resultados paginados
+con `total`, `page`, `page_size`, `items`, `citations` y `diagnostics`.
+
+### 7) Limpieza total (reset)
 
 ```powershell
 Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/admin/reset

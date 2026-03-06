@@ -213,3 +213,88 @@ def test_extractive_fallback_verification_failed_message() -> None:
     )
     assert "OpenAI no está configurado" not in answer
     assert "No se pudo validar completamente" in answer
+
+
+def test_run_query_uses_inventory_short_circuit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Delegates inventory intents to graph-first inventory route."""
+
+    def _fail_hybrid(*args, **kwargs):
+        raise AssertionError("hybrid_search should not run for inventory query")
+
+    def _fake_inventory(
+        repo_id: str,
+        query: str,
+        page: int,
+        page_size: int,
+    ) -> query_service.InventoryQueryResponse:
+        assert repo_id == "repo1"
+        assert page == 1
+        assert page_size > 0
+        return query_service.InventoryQueryResponse(
+            answer="inventario",
+            target="modelo",
+            module_name="mall-mbg",
+            total=2,
+            page=1,
+            page_size=80,
+            items=[],
+            citations=[
+                Citation(
+                    path="mall-mbg/src/main/java/com/macro/mall/model/A.java",
+                    start_line=1,
+                    end_line=1,
+                    score=1.0,
+                    reason="inventory_graph_match",
+                )
+            ],
+            diagnostics={"inventory_count": 2},
+        )
+
+    monkeypatch.setattr(query_service, "hybrid_search", _fail_hybrid)
+    monkeypatch.setattr(query_service, "run_inventory_query", _fake_inventory)
+
+    result = query_service.run_query(
+        repo_id="repo1",
+        query="cuales son todos los modelos de mall-mbg",
+        top_n=80,
+        top_k=20,
+    )
+
+    assert result.answer == "inventario"
+    assert result.diagnostics["inventory_route"] == "graph_first"
+    assert result.diagnostics["inventory_total"] == 2
+
+
+def test_run_inventory_query_applies_pagination(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Returns requested page slice for inventory entities."""
+
+    discovered = [
+        {
+            "label": f"Model{i}.java",
+            "path": f"mall-mbg/src/main/java/com/macro/mall/model/Model{i}.java",
+            "kind": "file",
+            "start_line": 1,
+            "end_line": 1,
+        }
+        for i in range(1, 6)
+    ]
+
+    monkeypatch.setattr(query_service, "_query_inventory_entities", lambda **_: discovered)
+
+    result = query_service.run_inventory_query(
+        repo_id="repo1",
+        query="cuales son todos los modelos de mall-mbg",
+        page=2,
+        page_size=2,
+    )
+
+    assert result.total == 5
+    assert result.page == 2
+    assert result.page_size == 2
+    assert len(result.items) == 2
+    assert result.items[0].label == "Model3.java"
+    assert result.items[1].label == "Model4.java"

@@ -77,6 +77,7 @@ class GraphBuilder:
         target_term: str,
         module_name: str | None = None,
         limit: int = 500,
+        offset: int = 0,
     ) -> list[dict[str, Any]]:
         """Query graph for entities matching target term within optional module."""
         query = """
@@ -111,6 +112,7 @@ class GraphBuilder:
             1 AS start_line,
             1 AS end_line
         ORDER BY path
+        SKIP $offset
         LIMIT $limit
         """
         with self.driver.session() as session:
@@ -120,8 +122,54 @@ class GraphBuilder:
                 target_term=target_term,
                 module_name=module_name,
                 limit=limit,
+                offset=offset,
             )
             return [record.data() for record in records]
+
+    def query_inventory_total(
+        self,
+        repo_id: str,
+        target_term: str,
+        module_name: str | None = None,
+    ) -> int:
+        """Count graph inventory entities matching target term and module filter."""
+        query = """
+        MATCH (f:File {repo_id: $repo_id})
+        WHERE ($module_name IS NULL OR f.path STARTS WITH $module_name + '/')
+        OPTIONAL MATCH (f)-[:DECLARES]->(s:Symbol)
+        WITH f,
+             collect({
+                 name: toLower(coalesce(s.name, '')),
+                 type: toLower(coalesce(s.type, ''))
+             }) AS symbols,
+             split(f.path, '/')[size(split(f.path, '/')) - 1] AS file_name,
+             toLower($target_term) AS target
+        WHERE (
+            toLower(f.path) CONTAINS target OR
+            toLower(file_name) CONTAINS target OR
+            any(symbol IN symbols WHERE
+                (
+                    symbol.type IN [
+                        'class', 'interface', 'struct', 'enum',
+                        'trait', 'record', 'type', 'component'
+                    ]
+                    AND symbol.name CONTAINS target
+                )
+                OR symbol.type = target
+            )
+        )
+        RETURN count(DISTINCT f.path) AS total
+        """
+        with self.driver.session() as session:
+            record = session.run(
+                query,
+                repo_id=repo_id,
+                target_term=target_term,
+                module_name=module_name,
+            ).single()
+            if record is None:
+                return 0
+            return int(record.get("total", 0) or 0)
 
     def expand_symbols(self, symbol_ids: list[str], hops: int = 2) -> list[dict[str, Any]]:
         """Expand graph neighborhood for symbols using variable-length path."""

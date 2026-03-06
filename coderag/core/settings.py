@@ -36,6 +36,16 @@ class Settings(BaseSettings):
     )
     max_context_tokens: int = Field(default=8000, alias="MAX_CONTEXT_TOKENS")
     graph_hops: int = Field(default=2, alias="GRAPH_HOPS")
+    query_max_seconds: float = Field(default=55.0, alias="QUERY_MAX_SECONDS")
+    openai_timeout_seconds: float = Field(default=20.0, alias="OPENAI_TIMEOUT_SECONDS")
+    ui_request_timeout_seconds: float = Field(
+        default=90.0,
+        alias="UI_REQUEST_TIMEOUT_SECONDS",
+    )
+    inventory_page_size: int = Field(default=80, alias="INVENTORY_PAGE_SIZE")
+    inventory_max_page_size: int = Field(default=300, alias="INVENTORY_MAX_PAGE_SIZE")
+    inventory_alias_limit: int = Field(default=8, alias="INVENTORY_ALIAS_LIMIT")
+    inventory_entity_limit: int = Field(default=500, alias="INVENTORY_ENTITY_LIMIT")
 
 
 @lru_cache(maxsize=1)

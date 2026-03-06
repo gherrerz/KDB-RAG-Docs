@@ -3,9 +3,15 @@
 from collections import Counter
 from pathlib import Path, PurePosixPath
 import re
+from time import monotonic
 import unicodedata
 
-from coderag.core.models import Citation, QueryResponse
+from coderag.core.models import (
+    Citation,
+    InventoryItem,
+    InventoryQueryResponse,
+    QueryResponse,
+)
 from coderag.core.settings import get_settings
 from coderag.ingestion.graph_builder import GraphBuilder
 from coderag.llm.openai_client import AnswerClient
@@ -48,6 +54,10 @@ def _fallback_header(fallback_reason: str) -> str:
         "generation_error": (
             "Ocurrió un error al generar respuesta con OpenAI; mostrando "
             "evidencia trazable."
+        ),
+        "time_budget_exhausted": (
+            "Se alcanzó el presupuesto de tiempo de consulta; mostrando "
+            "evidencia trazable disponible."
         ),
     }
     return messages.get(
@@ -360,15 +370,17 @@ def _query_inventory_entities(
     module_name: str | None,
 ) -> list[dict]:
     """Query inventory entities from graph using generic target term."""
+    settings = get_settings()
     graph = GraphBuilder()
     try:
         entities_by_key: dict[tuple[str, int, int], dict] = {}
-        for alias in _inventory_term_aliases(target_term):
+        aliases = _inventory_term_aliases(target_term)[: settings.inventory_alias_limit]
+        for alias in aliases:
             entities = graph.query_inventory(
                 repo_id=repo_id,
                 target_term=alias,
                 module_name=module_name,
-                limit=800,
+                limit=settings.inventory_entity_limit,
             )
             for item in entities:
                 path = str(item.get("path", ""))
@@ -382,6 +394,27 @@ def _query_inventory_entities(
         return []
     finally:
         graph.close()
+
+
+def _sanitize_inventory_pagination(page: int, page_size: int) -> tuple[int, int]:
+    """Normalize inventory pagination arguments against configured limits."""
+    settings = get_settings()
+    safe_page = max(1, int(page))
+    default_size = max(1, settings.inventory_page_size)
+    requested_size = int(page_size) if int(page_size) > 0 else default_size
+    safe_page_size = min(max(1, requested_size), settings.inventory_max_page_size)
+    return safe_page, safe_page_size
+
+
+def _remaining_budget_seconds(started_at: float, budget_seconds: float) -> float:
+    """Return remaining budget (seconds) for a running query pipeline."""
+    elapsed = monotonic() - started_at
+    return max(0.0, budget_seconds - elapsed)
+
+
+def _elapsed_milliseconds(started_at: float) -> float:
+    """Return elapsed milliseconds rounded for diagnostics readability."""
+    return round((monotonic() - started_at) * 1000, 2)
 
 
 def _is_noisy_path(path: str) -> bool:
@@ -417,24 +450,174 @@ def _citation_priority(citation: Citation) -> tuple[int, float]:
     return (rank, -citation.score)
 
 
-def run_query(repo_id: str, query: str, top_n: int, top_k: int) -> QueryResponse:
-    """Run full query pipeline and return answer with citations."""
+def run_inventory_query(
+    repo_id: str,
+    query: str,
+    page: int,
+    page_size: int,
+) -> InventoryQueryResponse:
+    """Run graph-first inventory query with pagination and time budget."""
     settings = get_settings()
-    initial = hybrid_search(repo_id=repo_id, query=query, top_n=top_n)
-    reranked = rerank(chunks=initial, top_k=top_k)
-    graph_context = expand_with_graph(chunks=reranked)
-    discovered_modules = _discover_repo_modules(repo_id) if _is_module_query(query) else []
-    module_name = _extract_module_name(query)
+    budget_seconds = max(1.0, float(settings.query_max_seconds))
+    pipeline_started_at = monotonic()
+    stage_timings: dict[str, float] = {}
+
+    parse_started_at = monotonic()
     inventory_target = _extract_inventory_target(query) if _is_inventory_query(query) else None
+    module_name = _extract_module_name(query)
     inventory_terms = _inventory_term_aliases(inventory_target) if inventory_target else []
+    safe_page, safe_page_size = _sanitize_inventory_pagination(page, page_size)
+    stage_timings["parse_ms"] = _elapsed_milliseconds(parse_started_at)
+
+    if not inventory_target:
+        diagnostics = {
+            "inventory_target": None,
+            "inventory_terms": [],
+            "inventory_count": 0,
+            "query_budget_seconds": budget_seconds,
+            "budget_exhausted": False,
+            "stage_timings_ms": stage_timings,
+            "fallback_reason": "inventory_target_missing",
+        }
+        return InventoryQueryResponse(
+            answer="No se detectó un objetivo de inventario en la consulta.",
+            target=None,
+            module_name=module_name,
+            total=0,
+            page=safe_page,
+            page_size=safe_page_size,
+            items=[],
+            citations=[],
+            diagnostics=diagnostics,
+        )
+
+    fallback_reason: str | None = None
     discovered_inventory: list[dict] = []
-    if inventory_target:
+
+    if _remaining_budget_seconds(pipeline_started_at, budget_seconds) <= 0:
+        fallback_reason = "time_budget_exhausted"
+    else:
+        graph_started_at = monotonic()
         discovered_inventory = _query_inventory_entities(
             repo_id=repo_id,
             target_term=inventory_target,
             module_name=module_name,
         )
+        stage_timings["graph_inventory_ms"] = _elapsed_milliseconds(graph_started_at)
 
+    pagination_started_at = monotonic()
+    total_items = len(discovered_inventory)
+    offset = (safe_page - 1) * safe_page_size
+    paged_inventory = discovered_inventory[offset:offset + safe_page_size]
+    stage_timings["pagination_ms"] = _elapsed_milliseconds(pagination_started_at)
+
+    items = [
+        InventoryItem(
+            label=str(item.get("label", "")),
+            path=str(item.get("path", "unknown")),
+            kind=str(item.get("kind", "file")),
+            start_line=int(item.get("start_line", 1)),
+            end_line=int(item.get("end_line", 1)),
+        )
+        for item in paged_inventory
+    ]
+
+    citations = [
+        Citation(
+            path=item.path,
+            start_line=item.start_line,
+            end_line=item.end_line,
+            score=1.0,
+            reason="inventory_graph_match",
+        )
+        for item in items
+        if not _is_noisy_path(item.path)
+    ]
+
+    if (
+        fallback_reason is None
+        and _remaining_budget_seconds(pipeline_started_at, budget_seconds) <= 0
+    ):
+        fallback_reason = "time_budget_exhausted"
+
+    answer = _build_extractive_fallback(
+        citations,
+        inventory_mode=True,
+        inventory_target=inventory_target,
+        query=query,
+        fallback_reason=fallback_reason or "inventory_structured",
+    )
+
+    stage_timings["total_ms"] = _elapsed_milliseconds(pipeline_started_at)
+    diagnostics = {
+        "inventory_target": inventory_target,
+        "inventory_terms": inventory_terms,
+        "inventory_count": total_items,
+        "query_budget_seconds": budget_seconds,
+        "budget_exhausted": _remaining_budget_seconds(pipeline_started_at, budget_seconds) <= 0,
+        "stage_timings_ms": stage_timings,
+        "fallback_reason": fallback_reason,
+    }
+
+    return InventoryQueryResponse(
+        answer=answer,
+        target=inventory_target,
+        module_name=module_name,
+        total=total_items,
+        page=safe_page,
+        page_size=safe_page_size,
+        items=items,
+        citations=citations,
+        diagnostics=diagnostics,
+    )
+
+
+def run_query(repo_id: str, query: str, top_n: int, top_k: int) -> QueryResponse:
+    """Run full query pipeline and return answer with citations."""
+    settings = get_settings()
+    if _is_inventory_query(query):
+        inventory_response = run_inventory_query(
+            repo_id=repo_id,
+            query=query,
+            page=1,
+            page_size=settings.inventory_page_size,
+        )
+        diagnostics = dict(inventory_response.diagnostics)
+        diagnostics.update(
+            {
+                "inventory_route": "graph_first",
+                "inventory_page": inventory_response.page,
+                "inventory_page_size": inventory_response.page_size,
+                "inventory_total": inventory_response.total,
+            }
+        )
+        return QueryResponse(
+            answer=inventory_response.answer,
+            citations=inventory_response.citations,
+            diagnostics=diagnostics,
+        )
+
+    budget_seconds = max(1.0, float(settings.query_max_seconds))
+    pipeline_started_at = monotonic()
+    stage_timings: dict[str, float] = {}
+
+    retrieval_started_at = monotonic()
+    initial = hybrid_search(repo_id=repo_id, query=query, top_n=top_n)
+    stage_timings["hybrid_search_ms"] = _elapsed_milliseconds(retrieval_started_at)
+
+    rerank_started_at = monotonic()
+    reranked = rerank(chunks=initial, top_k=top_k)
+    stage_timings["rerank_ms"] = _elapsed_milliseconds(rerank_started_at)
+
+    graph_started_at = monotonic()
+    graph_context = expand_with_graph(chunks=reranked)
+    stage_timings["graph_expand_ms"] = _elapsed_milliseconds(graph_started_at)
+
+    module_started_at = monotonic()
+    discovered_modules = _discover_repo_modules(repo_id) if _is_module_query(query) else []
+    stage_timings["module_discovery_ms"] = _elapsed_milliseconds(module_started_at)
+
+    context_started_at = monotonic()
     context = assemble_context(
         chunks=reranked,
         graph_records=graph_context,
@@ -448,19 +631,7 @@ def run_query(repo_id: str, query: str, top_n: int, top_k: int) -> QueryResponse
             ]
         )
         context = f"{module_block}\n\n{context}"
-    if discovered_inventory:
-        inventory_lines = [
-            f"- {item.get('label')} | {item.get('path')} | "
-            f"{item.get('start_line')}-{item.get('end_line')}"
-            for item in discovered_inventory
-        ]
-        service_block = "\n".join(
-            [
-                f"INVENTORY[{inventory_target}]",
-                *inventory_lines,
-            ]
-        )
-        context = f"{service_block}\n\n{context}"
+    stage_timings["context_assembly_ms"] = _elapsed_milliseconds(context_started_at)
 
     raw_citations = [
         Citation(
@@ -477,83 +648,91 @@ def run_query(repo_id: str, query: str, top_n: int, top_k: int) -> QueryResponse
         item for item in raw_citations if not _is_noisy_path(item.path)
     ]
     citations = sorted(filtered_citations, key=_citation_priority)
-    if inventory_target and module_name:
-        module_prefix = f"{module_name.strip('/')}/"
-        module_scoped = [
-            item for item in citations
-            if item.path.strip().lower().startswith(module_prefix.lower())
-        ]
-        alias_scoped = [
-            item for item in module_scoped
-            if any(alias in item.path.strip().lower() for alias in inventory_terms)
-        ]
-        if alias_scoped:
-            citations = alias_scoped
-        elif module_scoped:
-            citations = module_scoped
-    if discovered_inventory:
-        inventory_citations = [
-            Citation(
-                path=str(item.get("path", "unknown")),
-                start_line=int(item.get("start_line", 1)),
-                end_line=int(item.get("end_line", 1)),
-                score=1.0,
-                reason="inventory_graph_match",
-            )
-            for item in discovered_inventory
-            if not _is_noisy_path(str(item.get("path", "")))
-        ]
-        citations = _deduplicate_citations(inventory_citations + citations)
-        citations = _deduplicate_citations_by_path(citations)
 
     client = AnswerClient()
     fallback_reason: str | None = None
     verify_valid: bool | None = None
+    verify_skipped = False
     llm_error: str | None = None
-    if client.enabled:
+
+    if client.enabled and _remaining_budget_seconds(pipeline_started_at, budget_seconds) > 0:
         try:
-            answer = client.answer(query=query, context=context)
-            verify_valid = client.verify(answer=answer, context=context)
-            if not verify_valid:
-                fallback_reason = "verification_failed"
+            answer_started_at = monotonic()
+            answer_timeout = min(
+                float(settings.openai_timeout_seconds),
+                _remaining_budget_seconds(pipeline_started_at, budget_seconds),
+            )
+            if answer_timeout <= 0:
+                fallback_reason = "time_budget_exhausted"
                 answer = _build_extractive_fallback(
                     citations,
-                    inventory_mode=bool(inventory_target),
-                    inventory_target=inventory_target,
                     query=query,
                     fallback_reason=fallback_reason,
                 )
+            else:
+                answer = client.answer(
+                    query=query,
+                    context=context,
+                    timeout_seconds=answer_timeout,
+                )
+                stage_timings["llm_answer_ms"] = _elapsed_milliseconds(answer_started_at)
+
+                verify_timeout = min(
+                    float(settings.openai_timeout_seconds),
+                    _remaining_budget_seconds(pipeline_started_at, budget_seconds),
+                )
+                if verify_timeout <= 0:
+                    verify_skipped = True
+                else:
+                    verify_started_at = monotonic()
+                    verify_valid = client.verify(
+                        answer=answer,
+                        context=context,
+                        timeout_seconds=verify_timeout,
+                    )
+                    stage_timings["llm_verify_ms"] = _elapsed_milliseconds(verify_started_at)
+                    if not verify_valid:
+                        fallback_reason = "verification_failed"
+                        answer = _build_extractive_fallback(
+                            citations,
+                            query=query,
+                            fallback_reason=fallback_reason,
+                        )
         except Exception as exc:
             fallback_reason = "generation_error"
             llm_error = str(exc)
             answer = _build_extractive_fallback(
                 citations,
-                inventory_mode=bool(inventory_target),
-                inventory_target=inventory_target,
                 query=query,
                 fallback_reason=fallback_reason,
             )
     else:
-        fallback_reason = "not_configured"
+        if not client.enabled:
+            fallback_reason = "not_configured"
+        else:
+            fallback_reason = "time_budget_exhausted"
         answer = _build_extractive_fallback(
             citations,
-            inventory_mode=bool(inventory_target),
-            inventory_target=inventory_target,
             query=query,
             fallback_reason=fallback_reason,
         )
 
+    stage_timings["total_ms"] = _elapsed_milliseconds(pipeline_started_at)
     diagnostics = {
         "retrieved": len(initial),
         "reranked": len(reranked),
         "graph_nodes": len(graph_context),
         "openai_enabled": client.enabled,
         "discovered_modules": discovered_modules,
-        "inventory_target": inventory_target,
-        "inventory_terms": inventory_terms,
-        "inventory_count": len(discovered_inventory),
+        "inventory_target": None,
+        "inventory_terms": [],
+        "inventory_count": 0,
         "fallback_reason": fallback_reason,
         "verify_valid": verify_valid,
+        "verify_skipped": verify_skipped,
+        "query_budget_seconds": budget_seconds,
+        "budget_exhausted": _remaining_budget_seconds(pipeline_started_at, budget_seconds) <= 0,
+        "stage_timings_ms": stage_timings,
     }
     if llm_error is not None:
         diagnostics["llm_error"] = llm_error

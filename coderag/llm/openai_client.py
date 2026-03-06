@@ -49,7 +49,12 @@ class AnswerClient:
         self.verifier_model = settings.openai_verifier_model
         self.client = OpenAI(api_key=self.api_key) if self.api_key else None
 
-    def _call(self, model: str, prompt: str) -> str:
+    def _call(
+        self,
+        model: str,
+        prompt: str,
+        timeout_seconds: float | None = None,
+    ) -> str:
         """Execute Responses API call and return plain text output."""
         if self.client is None:
             return "No se encontró información en el repositorio."
@@ -59,33 +64,60 @@ class AnswerClient:
             {"role": "user", "content": prompt},
         ]
 
+        request_kwargs: dict[str, object] = {}
+        if timeout_seconds is not None:
+            request_kwargs["timeout"] = max(1.0, float(timeout_seconds))
+
         if hasattr(self.client, "responses"):
-            response = self.client.responses.create(model=model, input=messages)
+            response = self.client.responses.create(
+                model=model,
+                input=messages,
+                **request_kwargs,
+            )
             return (response.output_text or "").strip()
 
         completion = self.client.chat.completions.create(
             model=model,
             messages=messages,
             temperature=0,
+            **request_kwargs,
         )
         content = completion.choices[0].message.content
         return (content or "").strip()
 
-    def answer(self, query: str, context: str) -> str:
+    def answer(
+        self,
+        query: str,
+        context: str,
+        timeout_seconds: float | None = None,
+    ) -> str:
         """Generate context-grounded answer for a user question."""
         prompt = build_answer_prompt(query=query, context=context)
-        return self._call(self.answer_model, prompt)
+        return self._call(
+            self.answer_model,
+            prompt,
+            timeout_seconds=timeout_seconds,
+        )
 
     @property
     def enabled(self) -> bool:
         """Return whether OpenAI-backed generation is enabled."""
         return self.client is not None
 
-    def verify(self, answer: str, context: str) -> bool:
+    def verify(
+        self,
+        answer: str,
+        context: str,
+        timeout_seconds: float | None = None,
+    ) -> bool:
         """Validate whether answer is grounded in provided context."""
         if self.client is None:
             return True
 
         prompt = build_verify_prompt(answer=answer, context=context)
-        result = self._call(self.verifier_model, prompt)
+        result = self._call(
+            self.verifier_model,
+            prompt,
+            timeout_seconds=timeout_seconds,
+        )
         return _is_verifier_result_valid(result)

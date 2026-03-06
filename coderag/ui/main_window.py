@@ -6,11 +6,13 @@ from typing import Any
 import requests
 from PySide6.QtWidgets import QApplication, QMainWindow, QTabWidget, QVBoxLayout, QWidget
 
+from coderag.core.settings import get_settings
 from coderag.ui.evidence_view import EvidenceView
 from coderag.ui.ingestion_view import IngestionView
 from coderag.ui.query_view import QueryView
 
 API_BASE = "http://127.0.0.1:8000"
+UI_REQUEST_TIMEOUT_SECONDS = get_settings().ui_request_timeout_seconds
 
 
 class MainWindow(QMainWindow):
@@ -291,7 +293,11 @@ class MainWindow(QMainWindow):
             "top_k": 20,
         }
         try:
-            response = requests.post(f"{API_BASE}/query", json=payload, timeout=60)
+            response = requests.post(
+                f"{API_BASE}/query",
+                json=payload,
+                timeout=UI_REQUEST_TIMEOUT_SECONDS,
+            )
             response.raise_for_status()
             data = response.json()
             answer_text = str(data.get("answer") or "Sin respuesta.")
