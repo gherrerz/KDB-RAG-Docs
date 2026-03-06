@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 import coderag.api.query_service as query_service
+from coderag.core.models import Citation
 
 
 def test_is_module_query_detects_spanish_and_english_terms() -> None:
@@ -148,3 +149,67 @@ def test_extract_module_name_is_generic() -> None:
         )
         == "mall-portal"
     )
+
+
+def test_extractive_fallback_limits_non_inventory_results() -> None:
+    """Shows a compact extractive list for non-inventory queries."""
+    citations = [
+        Citation(
+            path=f"src/File{i}.java",
+            start_line=1,
+            end_line=1,
+            score=1.0,
+            reason="inventory_graph_match",
+        )
+        for i in range(1, 8)
+    ]
+    answer = query_service._build_extractive_fallback(citations)
+    assert "1. src/File1.java" in answer
+    assert "5. src/File5.java" in answer
+    assert "6. src/File6.java" not in answer
+
+
+def test_extractive_fallback_lists_all_inventory_results() -> None:
+    """Builds structured full inventory answer in extractive mode."""
+    citations = [
+        Citation(
+            path=f"src/File{i}.java",
+            start_line=1,
+            end_line=1,
+            score=1.0,
+            reason="inventory_graph_match",
+        )
+        for i in range(1, 8)
+    ]
+    answer = query_service._build_extractive_fallback(
+        citations,
+        inventory_mode=True,
+        inventory_target="controller",
+        query="dame todos los controllers",
+    )
+    assert "1) Respuesta principal:" in answer
+    assert "2) Componentes/archivos clave:" in answer
+    assert "3) Organización observada en el contexto:" in answer
+    assert "4) Citas de archivos con líneas:" in answer
+    assert "- File1.java" in answer
+    assert "- File7.java" in answer
+    assert "Consulta original: dame todos los controllers" in answer
+
+
+def test_extractive_fallback_verification_failed_message() -> None:
+    """Uses verification_failed message and avoids not_configured text."""
+    citations = [
+        Citation(
+            path="src/AuthService.java",
+            start_line=10,
+            end_line=20,
+            score=0.95,
+            reason="hybrid_rag_match",
+        )
+    ]
+    answer = query_service._build_extractive_fallback(
+        citations,
+        fallback_reason="verification_failed",
+    )
+    assert "OpenAI no está configurado" not in answer
+    assert "No se pudo validar completamente" in answer

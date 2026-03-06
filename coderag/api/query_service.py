@@ -1,6 +1,7 @@
 """End-to-end query orchestration for Hybrid RAG + GraphRAG."""
 
-from pathlib import Path
+from collections import Counter
+from pathlib import Path, PurePosixPath
 import re
 import unicodedata
 
@@ -33,15 +34,99 @@ INVENTORY_EQUIVALENT_GROUPS = [
 ]
 
 
-def _build_extractive_fallback(citations: list[Citation]) -> str:
+def _fallback_header(fallback_reason: str) -> str:
+    """Return fallback header message based on root cause."""
+    messages = {
+        "not_configured": (
+            "OpenAI no está configurado; respuesta extractiva basada en "
+            "evidencia."
+        ),
+        "verification_failed": (
+            "No se pudo validar completamente la respuesta generada; "
+            "mostrando evidencia trazable."
+        ),
+        "generation_error": (
+            "Ocurrió un error al generar respuesta con OpenAI; mostrando "
+            "evidencia trazable."
+        ),
+    }
+    return messages.get(
+        fallback_reason,
+        "Mostrando evidencia trazable del repositorio.",
+    )
+
+
+def _build_extractive_fallback(
+    citations: list[Citation],
+    inventory_mode: bool = False,
+    inventory_target: str | None = None,
+    query: str = "",
+    fallback_reason: str = "not_configured",
+) -> str:
     """Build a local evidence-only answer when LLM is unavailable."""
     if not citations:
         return "No se encontró información en el repositorio."
 
+    if inventory_mode:
+        unique_citations = _deduplicate_citations_by_path(citations)
+        file_paths = [item.path for item in unique_citations]
+        component_names = [PurePosixPath(path).name for path in file_paths]
+
+        folders = [
+            str(PurePosixPath(path).parent)
+            for path in file_paths
+            if str(PurePosixPath(path).parent) not in {"", "."}
+        ]
+        folder_counter = Counter(folders)
+        top_folders = [
+            folder for folder, _count in folder_counter.most_common(3)
+        ]
+
+        target_label = inventory_target or "componentes"
+        lines = [
+            _fallback_header(fallback_reason),
+            "1) Respuesta principal:",
+            (
+                f"Se identificaron {len(unique_citations)} elementos para "
+                f"'{target_label}' en el repositorio consultado."
+            ),
+            "",
+            "2) Componentes/archivos clave:",
+        ]
+        lines.extend(f"- {name}" for name in component_names)
+
+        if top_folders:
+            lines.extend([
+                "",
+                "3) Organización observada en el contexto:",
+            ])
+            lines.extend(f"- {folder}" for folder in top_folders)
+
+        lines.extend([
+            "",
+            "4) Citas de archivos con líneas:",
+        ])
+        lines.extend(
+            (
+                f"- {citation.path} "
+                f"(líneas {citation.start_line}-{citation.end_line}, "
+                f"score {citation.score:.4f})"
+            )
+            for citation in unique_citations
+        )
+
+        if query.strip():
+            lines.extend([
+                "",
+                f"Consulta original: {query.strip()}",
+            ])
+        return "\n".join(lines)
+
     lines = [
-        "OpenAI no está configurado; mostrando evidencias relevantes encontradas:",
+        _fallback_header(fallback_reason),
     ]
-    for index, citation in enumerate(citations[:5], start=1):
+    limit = len(citations) if inventory_mode else 5
+    for index, citation in enumerate(citations[:limit], start=1):
         lines.append(
             (
                 f"{index}. {citation.path} "
@@ -422,13 +507,41 @@ def run_query(repo_id: str, query: str, top_n: int, top_k: int) -> QueryResponse
         citations = _deduplicate_citations_by_path(citations)
 
     client = AnswerClient()
+    fallback_reason: str | None = None
+    verify_valid: bool | None = None
+    llm_error: str | None = None
     if client.enabled:
-        answer = client.answer(query=query, context=context)
-        valid = client.verify(answer=answer, context=context)
-        if not valid:
-            answer = _build_extractive_fallback(citations)
+        try:
+            answer = client.answer(query=query, context=context)
+            verify_valid = client.verify(answer=answer, context=context)
+            if not verify_valid:
+                fallback_reason = "verification_failed"
+                answer = _build_extractive_fallback(
+                    citations,
+                    inventory_mode=bool(inventory_target),
+                    inventory_target=inventory_target,
+                    query=query,
+                    fallback_reason=fallback_reason,
+                )
+        except Exception as exc:
+            fallback_reason = "generation_error"
+            llm_error = str(exc)
+            answer = _build_extractive_fallback(
+                citations,
+                inventory_mode=bool(inventory_target),
+                inventory_target=inventory_target,
+                query=query,
+                fallback_reason=fallback_reason,
+            )
     else:
-        answer = _build_extractive_fallback(citations)
+        fallback_reason = "not_configured"
+        answer = _build_extractive_fallback(
+            citations,
+            inventory_mode=bool(inventory_target),
+            inventory_target=inventory_target,
+            query=query,
+            fallback_reason=fallback_reason,
+        )
 
     diagnostics = {
         "retrieved": len(initial),
@@ -439,5 +552,9 @@ def run_query(repo_id: str, query: str, top_n: int, top_k: int) -> QueryResponse
         "inventory_target": inventory_target,
         "inventory_terms": inventory_terms,
         "inventory_count": len(discovered_inventory),
+        "fallback_reason": fallback_reason,
+        "verify_valid": verify_valid,
     }
+    if llm_error is not None:
+        diagnostics["llm_error"] = llm_error
     return QueryResponse(answer=answer, citations=citations, diagnostics=diagnostics)
