@@ -65,7 +65,11 @@ def test_upsert_is_split_by_chroma_max_batch_size(monkeypatch: pytest.MonkeyPatc
 
     import coderag.ingestion.index_chroma as module
 
-    monkeypatch.setattr(module.chromadb, "PersistentClient", lambda path: fake_client)
+    monkeypatch.setattr(
+        module.chromadb,
+        "PersistentClient",
+        lambda *args, **kwargs: fake_client,
+    )
     index = ChromaIndex()
 
     ids = [f"id{i}" for i in range(7)]

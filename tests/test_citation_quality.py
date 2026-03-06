@@ -9,33 +9,33 @@ def test_is_noisy_path_filters_non_informative_paths() -> None:
     assert _is_noisy_path(".")
     assert _is_noisy_path("document")
     assert _is_noisy_path("document/reference/file.md")
-    assert not _is_noisy_path("mall-admin/pom.xml")
+    assert not _is_noisy_path("services/api/index.ts")
 
 
-def test_citation_priority_prefers_pom_and_source_paths() -> None:
-    """Prioritizes pom and source code paths above generic module names."""
-    pom = Citation(
-        path="pom.xml",
+def test_citation_priority_prefers_code_files_and_structured_paths() -> None:
+    """Prioritizes file paths above module-only labels in a generic way."""
+    file_path = Citation(
+        path="services/api/index.ts",
         start_line=1,
         end_line=10,
         score=0.5,
         reason="x",
     )
-    source = Citation(
-        path="mall-admin/src/main/java/App.java",
+    structured_path = Citation(
+        path="services/api",
         start_line=1,
         end_line=10,
         score=0.6,
         reason="x",
     )
     module = Citation(
-        path="mall-admin",
+        path="api",
         start_line=1,
         end_line=1,
         score=0.9,
         reason="x",
     )
 
-    ordered = sorted([module, source, pom], key=_citation_priority)
-    assert ordered[0].path == "pom.xml"
-    assert ordered[1].path == "mall-admin/src/main/java/App.java"
+    ordered = sorted([module, structured_path, file_path], key=_citation_priority)
+    assert ordered[0].path == "services/api/index.ts"
+    assert ordered[1].path == "services/api"

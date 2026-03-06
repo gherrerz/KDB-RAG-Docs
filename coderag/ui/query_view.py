@@ -2,13 +2,15 @@
 
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (
+    QApplication,
+    QComboBox,
     QFrame,
     QHBoxLayout,
     QGridLayout,
     QLabel,
     QLineEdit,
+    QPlainTextEdit,
     QPushButton,
-    QScrollArea,
     QVBoxLayout,
     QWidget,
 )
@@ -28,9 +30,14 @@ class QueryView(QWidget):
         self.status_chip = QLabel("Lista")
         self.status_chip.setObjectName("queryStatusChip")
         self.status_chip.setProperty("state", "idle")
+        self.copy_history_button = QPushButton("Copiar Historial")
+        self.refresh_repo_ids_button = QPushButton("Actualizar IDs")
 
-        self.repo_id = QLineEdit()
-        self.repo_id.setPlaceholderText("ID del repositorio (ej: mall)")
+        self.repo_id = QComboBox()
+        self.repo_id.setEditable(False)
+        self.repo_id.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self.repo_id.setMaxVisibleItems(20)
+        self._repo_ids: list[str] = []
 
         self.query_input = QLineEdit()
         self.query_input.setPlaceholderText("Consulta la base de conocimientos...")
@@ -39,17 +46,9 @@ class QueryView(QWidget):
         self.query_button = QPushButton("↑")
         self.query_button.setFixedWidth(44)
 
-        self.history_container = QWidget()
-        self.history_layout = QVBoxLayout()
-        self.history_layout.setContentsMargins(0, 0, 0, 0)
-        self.history_layout.setSpacing(12)
-        self.history_layout.addStretch(1)
-        self.history_container.setLayout(self.history_layout)
-
-        self.history_scroll = QScrollArea()
-        self.history_scroll.setWidgetResizable(True)
-        self.history_scroll.setWidget(self.history_container)
-        self.history_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.history_output = QPlainTextEdit()
+        self.history_output.setReadOnly(True)
+        self.history_output.setPlaceholderText("El historial de preguntas y respuestas aparecerá aquí...")
 
         self.input_bar = QFrame()
         self.input_bar.setObjectName("inputBar")
@@ -66,18 +65,22 @@ class QueryView(QWidget):
         repo_label = QLabel("ID de repositorio")
         repo_bar.addWidget(repo_label)
         repo_bar.addWidget(self.repo_id)
+        repo_bar.addWidget(self.refresh_repo_ids_button)
 
         top_bar = QGridLayout()
         top_bar.addWidget(self.title_label, 0, 0)
         top_bar.addWidget(self.status_chip, 0, 1)
-        top_bar.addWidget(self.subtitle_label, 1, 0, 1, 2)
+        top_bar.addWidget(self.copy_history_button, 0, 2)
+        top_bar.addWidget(self.subtitle_label, 1, 0, 1, 3)
 
         layout = QVBoxLayout()
         layout.addLayout(top_bar)
         layout.addLayout(repo_bar)
-        layout.addWidget(self.history_scroll)
+        layout.addWidget(self.history_output)
         layout.addWidget(self.input_bar)
         self.setLayout(layout)
+
+        self.copy_history_button.clicked.connect(self.copy_all_history)
 
         self.append_assistant_message(
             "Listo para auditar. Haz una pregunta para comenzar."
@@ -111,15 +114,20 @@ class QueryView(QWidget):
             QLabel#queryStatusChip[state="error"] {
                 background-color: #B91C1C;
             }
-            QLineEdit {
+            QLineEdit, QComboBox {
                 background-color: #0F172A;
                 color: #E5E7EB;
                 border: 1px solid #374151;
                 border-radius: 8px;
                 padding: 6px;
             }
-            QScrollArea {
-                background-color: transparent;
+            QPlainTextEdit {
+                background-color: #0F172A;
+                color: #E5E7EB;
+                border: 1px solid #374151;
+                border-radius: 10px;
+                padding: 8px;
+                selection-background-color: #1D4ED8;
             }
             QFrame#inputBar {
                 background-color: #111827;
@@ -132,26 +140,6 @@ class QueryView(QWidget):
             }
             QFrame#inputBar[state="error"] {
                 border: 1px solid #B91C1C;
-            }
-            QFrame#msgUser {
-                background-color: #1D4ED8;
-                border-radius: 12px;
-                padding: 8px;
-            }
-            QFrame#msgAssistant {
-                background-color: #1F2937;
-                border: 1px solid #374151;
-                border-radius: 12px;
-                padding: 8px;
-            }
-            QFrame#msgError {
-                background-color: #3F1D1D;
-                border: 1px solid #B91C1C;
-                border-radius: 12px;
-                padding: 8px;
-            }
-            QLabel#msgText {
-                color: #E5E7EB;
             }
             QPushButton {
                 background-color: #2563EB;
@@ -176,14 +164,53 @@ class QueryView(QWidget):
         self.status_chip.setText(text)
         self.status_chip.style().unpolish(self.status_chip)
         self.status_chip.style().polish(self.status_chip)
+        if selected_state == "error":
+            self._set_input_bar_state("error")
+        elif selected_state == "running":
+            self._set_input_bar_state("running")
+        else:
+            self._set_input_bar_state("idle")
 
     def set_running(self, running: bool) -> None:
         """Enable and disable controls while query request is in progress."""
         self.repo_id.setDisabled(running)
+        self.refresh_repo_ids_button.setDisabled(running)
         self.query_input.setDisabled(running)
         self.query_button.setDisabled(running)
         self.query_button.setText("…" if running else "↑")
-        self.input_bar.setProperty("state", "running" if running else "idle")
+        self._set_input_bar_state("running" if running else "idle")
+
+    def get_repo_id_text(self) -> str:
+        """Return current repository id entered or selected by user."""
+        return self.repo_id.currentText().strip()
+
+    def clear_repo_id(self) -> None:
+        """Clear repository id combo editable text."""
+        self.repo_id.setCurrentIndex(-1)
+
+    def set_repo_ids(self, repo_ids: list[str]) -> None:
+        """Load available repository ids in dropdown, preserving current value."""
+        current = self.repo_id.currentText().strip()
+        self._repo_ids = [item for item in repo_ids if item.strip()]
+        self.repo_id.blockSignals(True)
+        self.repo_id.clear()
+        if self._repo_ids:
+            self.repo_id.addItems(self._repo_ids)
+            if current in self._repo_ids:
+                self.repo_id.setCurrentText(current)
+            else:
+                self.repo_id.setCurrentIndex(0)
+        else:
+            self.repo_id.setCurrentIndex(-1)
+        self.repo_id.blockSignals(False)
+
+    def has_repo_id(self, repo_id: str) -> bool:
+        """Return whether a repository id exists in the loaded catalog."""
+        return repo_id in self._repo_ids
+
+    def _set_input_bar_state(self, state: str) -> None:
+        """Apply visual state to query input bar."""
+        self.input_bar.setProperty("state", state)
         self.input_bar.style().unpolish(self.input_bar)
         self.input_bar.style().polish(self.input_bar)
 
@@ -204,43 +231,26 @@ class QueryView(QWidget):
         self._append_message(text=text, role="assistant", error=error)
 
     def _append_message(self, text: str, role: str, error: bool) -> None:
-        """Render a chat bubble aligned by role and keep history visible."""
-        row_widget = QWidget()
-        row_layout = QHBoxLayout()
-        row_layout.setContentsMargins(0, 0, 0, 0)
-        row_layout.setSpacing(8)
-
-        bubble = QFrame()
-        bubble_name = "msgUser" if role == "user" else "msgAssistant"
+        """Append a full-width, selectable chat transcript entry."""
+        icon = "👤" if role == "user" else "🤖"
+        title = "Pregunta" if role == "user" else "Respuesta"
         if error:
-            bubble_name = "msgError"
-        bubble.setObjectName(bubble_name)
+            title = "Error"
 
-        bubble_layout = QVBoxLayout()
-        bubble_layout.setContentsMargins(10, 8, 10, 8)
-
-        text_label = QLabel(text)
-        text_label.setObjectName("msgText")
-        text_label.setWordWrap(True)
-        bubble_layout.addWidget(text_label)
-        bubble.setLayout(bubble_layout)
-
-        if role == "user":
-            row_layout.addStretch(1)
-            row_layout.addWidget(bubble)
-        else:
-            row_layout.addWidget(bubble)
-            row_layout.addStretch(1)
-
-        row_widget.setLayout(row_layout)
-        insert_index = max(0, self.history_layout.count() - 1)
-        self.history_layout.insertWidget(insert_index, row_widget)
+        entry = f"{icon} {title}\n{text}\n"
+        if self.history_output.toPlainText().strip():
+            self.history_output.appendPlainText("")
+        self.history_output.appendPlainText(entry)
         QTimer.singleShot(0, self._scroll_to_bottom)
 
     def _scroll_to_bottom(self) -> None:
         """Scroll chat view to latest message."""
-        scrollbar = self.history_scroll.verticalScrollBar()
+        scrollbar = self.history_output.verticalScrollBar()
         scrollbar.setValue(scrollbar.maximum())
+
+    def copy_all_history(self) -> None:
+        """Copy entire conversation history to clipboard."""
+        QApplication.clipboard().setText(self.history_output.toPlainText())
 
     def _trigger_submit(self) -> None:
         """Trigger query button click from keyboard Enter key."""

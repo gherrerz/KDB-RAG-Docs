@@ -83,16 +83,29 @@ class GraphBuilder:
         MATCH (f:File {repo_id: $repo_id})
         WHERE ($module_name IS NULL OR f.path STARTS WITH $module_name + '/')
         OPTIONAL MATCH (f)-[:DECLARES]->(s:Symbol)
-        WITH f, collect(toLower(coalesce(s.name, ''))) AS symbol_names,
-             collect(toLower(coalesce(s.type, ''))) AS symbol_types,
+        WITH f,
+             collect({
+                 name: toLower(coalesce(s.name, '')),
+                 type: toLower(coalesce(s.type, ''))
+             }) AS symbols,
+             split(f.path, '/')[size(split(f.path, '/')) - 1] AS file_name,
              toLower($target_term) AS target
         WHERE (
             toLower(f.path) CONTAINS target OR
-            any(name IN symbol_names WHERE name CONTAINS target) OR
-            any(kind IN symbol_types WHERE kind CONTAINS target)
+            toLower(file_name) CONTAINS target OR
+            any(symbol IN symbols WHERE
+                (
+                    symbol.type IN [
+                        'class', 'interface', 'struct', 'enum',
+                        'trait', 'record', 'type', 'component'
+                    ]
+                    AND symbol.name CONTAINS target
+                )
+                OR symbol.type = target
+            )
         )
         RETURN DISTINCT
-            split(f.path, '/')[size(split(f.path, '/')) - 1] AS label,
+            file_name AS label,
             f.path AS path,
             'file' AS kind,
             1 AS start_line,

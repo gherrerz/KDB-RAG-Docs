@@ -30,3 +30,17 @@ def test_admin_reset_returns_summary(monkeypatch) -> None:
     assert payload["message"] == "Limpieza total completada"
     assert "BM25 en memoria" in payload["cleared"]
     assert "warning de prueba" in payload["warnings"]
+
+
+def test_list_repos_returns_repo_id_catalog(monkeypatch) -> None:
+    """Returns known repository identifiers for query dropdown."""
+
+    def fake_list_repo_ids() -> list[str]:
+        return ["mall", "api-service"]
+
+    monkeypatch.setattr(server.jobs, "list_repo_ids", fake_list_repo_ids)
+    client = TestClient(app)
+
+    response = client.get("/repos")
+    assert response.status_code == 200
+    assert response.json()["repo_ids"] == ["mall", "api-service"]

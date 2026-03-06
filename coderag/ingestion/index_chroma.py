@@ -3,6 +3,7 @@
 from typing import Any
 
 import chromadb
+from chromadb.config import Settings as ChromaSettings
 from chromadb.errors import InvalidDimensionException
 
 from coderag.core.settings import get_settings
@@ -22,7 +23,10 @@ class ChromaIndex:
     def __init__(self) -> None:
         """Initialize persistent Chroma client and collections."""
         settings = get_settings()
-        self.client = chromadb.PersistentClient(path=str(settings.chroma_path))
+        self.client = chromadb.PersistentClient(
+            path=str(settings.chroma_path),
+            settings=ChromaSettings(anonymized_telemetry=False),
+        )
         self.collections = {
             name: self.client.get_or_create_collection(name)
             for name in COLLECTIONS

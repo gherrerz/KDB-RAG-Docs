@@ -74,6 +74,12 @@ class ResetResponse(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+class RepoCatalogResponse(BaseModel):
+    """Output model for repository identifiers available for querying."""
+
+    repo_ids: list[str] = Field(default_factory=list)
+
+
 class ScannedFile(BaseModel):
     """Represents a source file discovered in a repository scan."""
 

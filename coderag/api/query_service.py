@@ -48,6 +48,24 @@ def _discover_repo_modules(repo_id: str) -> list[str]:
     if not repo_path.exists() or not repo_path.is_dir():
         return []
 
+    excluded_names = {
+        ".git",
+        ".github",
+        ".vscode",
+        "docs",
+        "doc",
+        "test",
+        "tests",
+        "node_modules",
+        "venv",
+        ".venv",
+        "__pycache__",
+        "dist",
+        "build",
+        "target",
+        "scripts",
+    }
+
     modules: list[str] = []
     for child in sorted(repo_path.iterdir()):
         if not child.is_dir():
@@ -55,8 +73,9 @@ def _discover_repo_modules(repo_id: str) -> list[str]:
         name = child.name
         if name.startswith("."):
             continue
-        if (child / "pom.xml").exists() or name.startswith("mall-"):
-            modules.append(name)
+        if name.lower() in excluded_names:
+            continue
+        modules.append(name)
     return modules
 
 
@@ -71,11 +90,42 @@ def _is_inventory_query(query: str) -> bool:
 
 
 def _extract_module_name(query: str) -> str | None:
-    """Extract mall-* module token from query text when present."""
-    match = re.search(r"(mall-[a-z0-9-]+)", query.lower())
-    if match is None:
-        return None
-    return match.group(1)
+    """Extract module or package token from natural language query."""
+    normalized = query.lower()
+
+    quoted = re.search(r"['\"]([a-z0-9_./-]+)['\"]", normalized)
+    if quoted:
+        return quoted.group(1)
+
+    patterns = [
+        r"(?:modulo|módulo|module|package|servicio|service)\s+([a-z0-9_./-]+)",
+        r"(?:in|en|de|del|of|for)\s+([a-z0-9_./-]+)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, normalized)
+        if match:
+            token = match.group(1).strip(".,;:!?()[]{}")
+            if token and token not in {"el", "la", "los", "las", "the", "a", "an"}:
+                return token
+
+    module_like = re.search(r"\b([a-z0-9]+(?:[-_/][a-z0-9]+)+)\b", normalized)
+    if module_like:
+        return module_like.group(1)
+    return None
+
+
+def _normalize_inventory_token(token: str) -> str:
+    """Normalize inventory tokens to a singular-like form."""
+    normalized = token.lower().strip(".,;:!?()[]{}")
+    if normalized.endswith("ies") and len(normalized) > 3:
+        return normalized[:-3] + "y"
+    if normalized.endswith(("ches", "shes", "sses", "xes", "zes")):
+        return normalized[:-2]
+    if normalized.endswith("es") and len(normalized) > 3:
+        return normalized[:-1]
+    if normalized.endswith("s") and len(normalized) > 2:
+        return normalized[:-1]
+    return normalized
 
 
 def _extract_inventory_target(query: str) -> str | None:
@@ -84,15 +134,49 @@ def _extract_inventory_target(query: str) -> str | None:
 
     match_es = re.search(r"todos?\s+(?:los|las)?\s*([a-z0-9_-]+)", normalized)
     if match_es:
-        token = match_es.group(1)
-        return token[:-1] if token.endswith("s") else token
+        return _normalize_inventory_token(match_es.group(1))
 
     match_en = re.search(r"all\s+([a-z0-9_-]+)", normalized)
     if match_en:
-        token = match_en.group(1)
-        return token[:-1] if token.endswith("s") else token
+        return _normalize_inventory_token(match_en.group(1))
+
+    match_which = re.search(r"which\s+([a-z0-9_-]+)", normalized)
+    if match_which:
+        return _normalize_inventory_token(match_which.group(1))
 
     return None
+
+
+def _inventory_term_aliases(target_term: str) -> list[str]:
+    """Expand inventory target with plural and cross-language aliases."""
+    normalized = _normalize_inventory_token(target_term)
+    aliases = {normalized}
+
+    if normalized.endswith("y") and len(normalized) > 1:
+        aliases.add(f"{normalized[:-1]}ies")
+    aliases.add(f"{normalized}s")
+    aliases.add(f"{normalized}es")
+
+    equivalent_groups = [
+        {"service", "servicio"},
+        {"controller", "controlador"},
+        {"repository", "repositorio"},
+        {"handler", "manejador"},
+        {"model", "modelo"},
+        {"entity", "entidad"},
+        {"client", "cliente"},
+        {"adapter", "adaptador"},
+        {"gateway", "pasarela"},
+    ]
+    for group in equivalent_groups:
+        if normalized in group:
+            for token in group:
+                aliases.add(token)
+                aliases.add(f"{token}s")
+                aliases.add(f"{token}es")
+            break
+
+    return sorted(aliases)
 
 
 def _query_inventory_entities(
@@ -103,12 +187,22 @@ def _query_inventory_entities(
     """Query inventory entities from graph using generic target term."""
     graph = GraphBuilder()
     try:
-        return graph.query_inventory(
-            repo_id=repo_id,
-            target_term=target_term,
-            module_name=module_name,
-            limit=800,
-        )
+        entities_by_key: dict[tuple[str, int, int], dict] = {}
+        for alias in _inventory_term_aliases(target_term):
+            entities = graph.query_inventory(
+                repo_id=repo_id,
+                target_term=alias,
+                module_name=module_name,
+                limit=800,
+            )
+            for item in entities:
+                path = str(item.get("path", ""))
+                start_line = int(item.get("start_line", 1))
+                end_line = int(item.get("end_line", 1))
+                key = (path, start_line, end_line)
+                if key not in entities_by_key:
+                    entities_by_key[key] = item
+        return sorted(entities_by_key.values(), key=lambda item: item.get("path", ""))
     except Exception:
         return []
     finally:
@@ -128,13 +222,20 @@ def _is_noisy_path(path: str) -> bool:
 
 
 def _citation_priority(citation: Citation) -> tuple[int, float]:
-    """Assign sorting priority: code/module paths first, then score."""
-    path = citation.path.lower()
-    if path.endswith("pom.xml"):
+    """Assign sorting priority using generic path quality signals."""
+    path = citation.path.strip().lower()
+    suffix = Path(path).suffix
+    code_like_suffixes = {
+        ".py", ".js", ".ts", ".tsx", ".jsx", ".java", ".kt", ".go",
+        ".rs", ".cs", ".cpp", ".cc", ".c", ".h", ".hpp", ".php",
+        ".rb", ".swift", ".scala", ".sql", ".sh", ".ps1", ".yaml",
+        ".yml", ".json", ".toml", ".md", ".xml",
+    }
+    if suffix in code_like_suffixes:
         rank = 0
-    elif "src/main/" in path or path.endswith(".java") or path.endswith(".py"):
+    elif "/" in path or "\\" in path:
         rank = 1
-    elif "/" not in path and path.startswith("mall-"):
+    elif path:
         rank = 2
     else:
         rank = 3
@@ -230,6 +331,9 @@ def run_query(repo_id: str, query: str, top_n: int, top_k: int) -> QueryResponse
         "openai_enabled": client.enabled,
         "discovered_modules": discovered_modules,
         "inventory_target": inventory_target,
+        "inventory_terms": (
+            _inventory_term_aliases(inventory_target) if inventory_target else []
+        ),
         "inventory_count": len(discovered_inventory),
     }
     return QueryResponse(answer=answer, citations=citations, diagnostics=diagnostics)

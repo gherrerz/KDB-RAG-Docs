@@ -16,8 +16,18 @@ class JobManager:
         """Initialize manager with metadata storage."""
         settings = get_settings()
         self._metadata_path = settings.workspace_path.parent / "metadata.db"
+        self._workspace_path = settings.workspace_path
         self.store = MetadataStore(self._metadata_path)
         self._jobs: dict[str, JobInfo] = {}
+
+    def list_repo_ids(self) -> list[str]:
+        """Return known repository ids from metadata and local workspace."""
+        repo_ids = set(self.store.list_repo_ids())
+        if self._workspace_path.exists() and self._workspace_path.is_dir():
+            for child in self._workspace_path.iterdir():
+                if child.is_dir() and not child.name.startswith("."):
+                    repo_ids.add(child.name)
+        return sorted(repo_ids)
 
     def reset_all_data(self) -> tuple[list[str], list[str]]:
         """Reset all persisted indexes and in-memory job/cache state."""

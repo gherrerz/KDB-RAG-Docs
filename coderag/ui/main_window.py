@@ -41,6 +41,9 @@ class MainWindow(QMainWindow):
         self.ingestion_view.ingest_button.clicked.connect(self._on_ingest)
         self.ingestion_view.reset_button.clicked.connect(self._on_reset_all)
         self.query_view.query_button.clicked.connect(self._on_query)
+        self.query_view.refresh_repo_ids_button.clicked.connect(
+            lambda: self._refresh_repo_ids(log_on_error=True)
+        )
 
         self._active_job_id: str | None = None
         self._job_poll_enabled = False
@@ -49,6 +52,7 @@ class MainWindow(QMainWindow):
 
         self.ingestion_view.set_status("idle", "Idle")
         self._apply_window_theme()
+        self._refresh_repo_ids(log_on_error=False)
 
     def _apply_window_theme(self) -> None:
         """Set consistent dark style for shell widgets and tabs."""
@@ -158,8 +162,9 @@ class MainWindow(QMainWindow):
 
             self.ingestion_view.set_job_id("")
             self.ingestion_view.set_repo_id("")
-            self.query_view.repo_id.clear()
+            self.query_view.clear_repo_id()
             self.evidence_view.set_citations([])
+            self._refresh_repo_ids(log_on_error=True)
 
             self.ingestion_view.set_progress(100)
             self.ingestion_view.set_status("success", "Limpio")
@@ -211,6 +216,7 @@ class MainWindow(QMainWindow):
         repo_id = str(data.get("repo_id") or "")
         if repo_id:
             self.ingestion_view.set_repo_id(repo_id)
+            self._refresh_repo_ids(selected_repo_id=repo_id, log_on_error=True)
 
         if status in {"pending", "queued"}:
             self.ingestion_view.set_status("running", "En progreso")
@@ -245,13 +251,22 @@ class MainWindow(QMainWindow):
 
     def _on_query(self) -> None:
         """Send query request and render answer with citations."""
-        repo_id = self.query_view.repo_id.text().strip()
+        repo_id = self.query_view.get_repo_id_text()
         question = self.query_view.get_question_text()
 
         if not repo_id:
             self.query_view.set_status("error", "Error")
             self.query_view.append_assistant_message(
-                "Debes indicar el ID de repositorio.",
+                "Debes seleccionar un ID de repositorio del listado.",
+                error=True,
+            )
+            return
+
+        if not self.query_view.has_repo_id(repo_id):
+            self.query_view.set_status("error", "Error")
+            self.query_view.append_assistant_message(
+                "El ID seleccionado no existe en la base de conocimiento. "
+                "Actualiza la lista e intenta nuevamente.",
                 error=True,
             )
             return
@@ -303,6 +318,27 @@ class MainWindow(QMainWindow):
             )
         finally:
             self.query_view.set_running(False)
+
+    def _refresh_repo_ids(
+        self,
+        selected_repo_id: str | None = None,
+        log_on_error: bool = False,
+    ) -> None:
+        """Refresh query repo-id dropdown from API catalog endpoint."""
+        try:
+            response = requests.get(f"{API_BASE}/repos", timeout=10)
+            response.raise_for_status()
+            data = response.json()
+            repo_ids_raw = data.get("repo_ids") or []
+            repo_ids = [str(value) for value in repo_ids_raw if str(value).strip()]
+            self.query_view.set_repo_ids(repo_ids)
+            if selected_repo_id and self.query_view.has_repo_id(selected_repo_id):
+                self.query_view.repo_id.setCurrentText(selected_repo_id)
+        except Exception as exc:
+            if log_on_error:
+                self.ingestion_view.append_log(
+                    f"No se pudo actualizar lista de repos: {exc}"
+                )
 
 
 def main() -> None:

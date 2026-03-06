@@ -7,6 +7,7 @@ from coderag.core.models import (
     JobInfo,
     QueryRequest,
     QueryResponse,
+    RepoCatalogResponse,
     RepoIngestRequest,
     ResetResponse,
 )
@@ -43,6 +44,12 @@ def query_repo(request: QueryRequest) -> QueryResponse:
         top_n=request.top_n,
         top_k=request.top_k,
     )
+
+
+@app.get("/repos", response_model=RepoCatalogResponse)
+def list_repos() -> RepoCatalogResponse:
+    """Return repository identifiers currently available for querying."""
+    return RepoCatalogResponse(repo_ids=jobs.list_repo_ids())
 
 
 @app.post("/admin/reset", response_model=ResetResponse)

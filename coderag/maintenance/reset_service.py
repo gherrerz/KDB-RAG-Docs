@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 
 import chromadb
+from chromadb.config import Settings as ChromaSettings
 
 from coderag.core.settings import get_settings
 from coderag.ingestion.graph_builder import GraphBuilder
@@ -70,7 +71,10 @@ def reset_all_storage() -> tuple[list[str], list[str]]:
 
     chroma_reset_done = False
     try:
-        client = chromadb.PersistentClient(path=str(settings.chroma_path))
+        client = chromadb.PersistentClient(
+            path=str(settings.chroma_path),
+            settings=ChromaSettings(anonymized_telemetry=False),
+        )
         for collection_name in COLLECTIONS:
             try:
                 client.delete_collection(collection_name)

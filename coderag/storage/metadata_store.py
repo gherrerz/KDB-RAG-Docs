@@ -93,3 +93,17 @@ class MetadataStore:
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
+
+    def list_repo_ids(self) -> list[str]:
+        """List known repository ids from jobs and repos metadata tables."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT DISTINCT id as repo_id FROM repos
+                UNION
+                SELECT DISTINCT repo_id as repo_id FROM jobs
+                WHERE repo_id IS NOT NULL AND repo_id <> ''
+                ORDER BY repo_id ASC
+                """
+            ).fetchall()
+        return [str(row["repo_id"]) for row in rows if row["repo_id"]]
