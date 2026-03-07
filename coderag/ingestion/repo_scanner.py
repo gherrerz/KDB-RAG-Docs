@@ -17,30 +17,32 @@ LANG_MAP = {
     ".toml": "toml",
 }
 
-EXCLUDED_DIRS = {
-    ".git",
-    "node_modules",
-    "dist",
-    "build",
-    "venv",
-    ".venv",
-    "__pycache__",
-}
-
-
 def detect_language(path: Path) -> str:
     """Detecta una etiqueta de lenguaje lógico a partir de una extensión de archivo."""
     return LANG_MAP.get(path.suffix.lower(), "text")
 
 
-def scan_repository(repo_path: Path, max_file_size: int = 200_000) -> list[ScannedFile]:
-    """Recopile archivos fuente y de documentación del repositorio."""
+def scan_repository(
+    repo_path: Path,
+    max_file_size: int,
+    excluded_dirs: set[str] | None = None,
+    excluded_extensions: set[str] | None = None,
+) -> list[ScannedFile]:
+    """Recopila archivos de código, configuración y documentación con filtros."""
     scanned: list[ScannedFile] = []
+    excluded_dir_names = {item.lower() for item in (excluded_dirs or set())}
+    excluded_file_extensions = {
+        item.lower() for item in (excluded_extensions or set())
+    }
+
     for file_path in repo_path.rglob("*"):
         if not file_path.is_file():
             continue
 
-        if any(part in EXCLUDED_DIRS for part in file_path.parts):
+        if any(part.lower() in excluded_dir_names for part in file_path.parts):
+            continue
+
+        if file_path.suffix.lower() in excluded_file_extensions:
             continue
 
         if file_path.stat().st_size > max_file_size:

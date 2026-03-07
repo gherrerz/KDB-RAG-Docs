@@ -167,6 +167,9 @@ Variables relevantes en `.env`:
 - `UI_REQUEST_TIMEOUT_SECONDS`: timeout HTTP de la UI hacia API.
 - `INVENTORY_PAGE_SIZE`, `INVENTORY_MAX_PAGE_SIZE`: paginación para inventario.
 - `INVENTORY_ALIAS_LIMIT`, `INVENTORY_ENTITY_LIMIT`: límites de expansión de inventario.
+- `SCAN_MAX_FILE_SIZE_BYTES`: tamaño máximo por archivo durante escaneo de ingesta.
+- `SCAN_EXCLUDED_DIRS`: carpetas excluidas de la ingesta (CSV).
+- `SCAN_EXCLUDED_EXTENSIONS`: extensiones excluidas de la ingesta (CSV).
 
 > Nota: en esta configuración se recomienda `NEO4J_URI=bolt://127.0.0.1:17687`
 para evitar conflictos de puertos locales comunes.

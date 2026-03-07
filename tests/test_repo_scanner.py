@@ -1,0 +1,61 @@
+"""Pruebas para filtros de escaneo del repositorio en la ingesta."""
+
+from pathlib import Path
+
+from coderag.ingestion.repo_scanner import scan_repository
+
+
+def test_scan_repository_excludes_dirs_extensions_and_large_files(tmp_path: Path) -> None:
+    """Excluye carpetas, extensiones binarias y archivos que superan el límite."""
+    (tmp_path / "src").mkdir(parents=True)
+    (tmp_path / "node_modules").mkdir(parents=True)
+    (tmp_path / "dist").mkdir(parents=True)
+
+    (tmp_path / "src" / "app.py").write_text("print('ok')\n", encoding="utf-8")
+    (tmp_path / "README.md").write_text("documentación útil\n", encoding="utf-8")
+    (tmp_path / "config.yaml").write_text("version: 1\n", encoding="utf-8")
+
+    (tmp_path / "src" / "image.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    (tmp_path / "node_modules" / "lib.js").write_text("console.log(1);\n", encoding="utf-8")
+    (tmp_path / "dist" / "bundle.js").write_text("console.log(2);\n", encoding="utf-8")
+
+    large_file = tmp_path / "src" / "big.txt"
+    large_file.write_text("x" * 500, encoding="utf-8")
+
+    scanned = scan_repository(
+        tmp_path,
+        max_file_size=200,
+        excluded_dirs={"node_modules", "dist"},
+        excluded_extensions={".png"},
+    )
+    scanned_paths = {item.path for item in scanned}
+
+    assert "src/app.py" in scanned_paths
+    assert "README.md" in scanned_paths
+    assert "config.yaml" in scanned_paths
+    assert "src/image.png" not in scanned_paths
+    assert "node_modules/lib.js" not in scanned_paths
+    assert "dist/bundle.js" not in scanned_paths
+    assert "src/big.txt" not in scanned_paths
+
+
+def test_scan_repository_allows_custom_exclusion_sets(tmp_path: Path) -> None:
+    """Permite sobrescribir directorios y extensiones excluidas por llamada."""
+    (tmp_path / "vendor").mkdir(parents=True)
+    (tmp_path / "src").mkdir(parents=True)
+
+    (tmp_path / "vendor" / "lib.ts").write_text("export const x = 1;\n", encoding="utf-8")
+    (tmp_path / "src" / "notes.lock").write_text("lock\n", encoding="utf-8")
+    (tmp_path / "src" / "ok.py").write_text("print('ok')\n", encoding="utf-8")
+
+    scanned = scan_repository(
+        tmp_path,
+        max_file_size=100_000,
+        excluded_dirs={"vendor"},
+        excluded_extensions={".lock"},
+    )
+    scanned_paths = {item.path for item in scanned}
+
+    assert "src/ok.py" in scanned_paths
+    assert "vendor/lib.ts" not in scanned_paths
+    assert "src/notes.lock" not in scanned_paths

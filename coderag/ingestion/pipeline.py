@@ -16,6 +16,45 @@ from coderag.ingestion.summarizer import summarize_file, summarize_modules
 LoggerFn = Callable[[str], None]
 
 
+def _parse_csv_set(raw_value: str, prefix_dot: bool = False) -> set[str]:
+    """Convierte una cadena CSV en un conjunto normalizado de tokens."""
+    values: set[str] = set()
+    for token in raw_value.split(","):
+        cleaned = token.strip().lower()
+        if not cleaned:
+            continue
+        if prefix_dot and not cleaned.startswith("."):
+            cleaned = f".{cleaned}"
+        values.add(cleaned)
+    return values
+
+
+def _read_scan_filters_from_settings(settings: object) -> tuple[int, set[str], set[str]]:
+    """Lee y valida filtros de escaneo definidos en variables de entorno."""
+    max_file_size = getattr(settings, "scan_max_file_size_bytes", None)
+    excluded_dirs_raw = str(getattr(settings, "scan_excluded_dirs", "") or "").strip()
+    excluded_extensions_raw = str(
+        getattr(settings, "scan_excluded_extensions", "") or ""
+    ).strip()
+
+    if max_file_size is None or int(max_file_size) <= 0:
+        raise RuntimeError(
+            "Falta configurar SCAN_MAX_FILE_SIZE_BYTES (>0) en variables de entorno."
+        )
+    if not excluded_dirs_raw:
+        raise RuntimeError(
+            "Falta configurar SCAN_EXCLUDED_DIRS en variables de entorno."
+        )
+    if not excluded_extensions_raw:
+        raise RuntimeError(
+            "Falta configurar SCAN_EXCLUDED_EXTENSIONS en variables de entorno."
+        )
+
+    excluded_dirs = _parse_csv_set(excluded_dirs_raw, prefix_dot=False)
+    excluded_extensions = _parse_csv_set(excluded_extensions_raw, prefix_dot=True)
+    return int(max_file_size), excluded_dirs, excluded_extensions
+
+
 def ingest_repository(
     repo_url: str,
     branch: str,
@@ -32,8 +71,17 @@ def ingest_repository(
         commit=commit,
     )
 
+    max_file_size, excluded_dirs, excluded_extensions = _read_scan_filters_from_settings(
+        settings
+    )
+
     logger("Escaneando archivos...")
-    scanned_files = scan_repository(repo_path)
+    scanned_files = scan_repository(
+        repo_path,
+        max_file_size=max_file_size,
+        excluded_dirs=excluded_dirs,
+        excluded_extensions=excluded_extensions,
+    )
 
     logger("Extrayendo símbolos...")
     symbol_chunks = extract_symbol_chunks(repo_id=repo_id, scanned_files=scanned_files)

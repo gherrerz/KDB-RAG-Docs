@@ -46,6 +46,18 @@ class Settings(BaseSettings):
     inventory_max_page_size: int = Field(default=300, alias="INVENTORY_MAX_PAGE_SIZE")
     inventory_alias_limit: int = Field(default=8, alias="INVENTORY_ALIAS_LIMIT")
     inventory_entity_limit: int = Field(default=500, alias="INVENTORY_ENTITY_LIMIT")
+    scan_max_file_size_bytes: int | None = Field(
+        default=None,
+        alias="SCAN_MAX_FILE_SIZE_BYTES",
+    )
+    scan_excluded_dirs: str = Field(
+        default="",
+        alias="SCAN_EXCLUDED_DIRS",
+    )
+    scan_excluded_extensions: str = Field(
+        default="",
+        alias="SCAN_EXCLUDED_EXTENSIONS",
+    )
 
 
 @lru_cache(maxsize=1)
