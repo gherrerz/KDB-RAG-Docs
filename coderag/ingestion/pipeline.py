@@ -29,13 +29,16 @@ def _parse_csv_set(raw_value: str, prefix_dot: bool = False) -> set[str]:
     return values
 
 
-def _read_scan_filters_from_settings(settings: object) -> tuple[int, set[str], set[str]]:
+def _read_scan_filters_from_settings(
+    settings: object,
+) -> tuple[int, set[str], set[str], set[str]]:
     """Lee y valida filtros de escaneo definidos en variables de entorno."""
     max_file_size = getattr(settings, "scan_max_file_size_bytes", None)
     excluded_dirs_raw = str(getattr(settings, "scan_excluded_dirs", "") or "").strip()
     excluded_extensions_raw = str(
         getattr(settings, "scan_excluded_extensions", "") or ""
     ).strip()
+    excluded_files_raw = str(getattr(settings, "scan_excluded_files", "") or "").strip()
 
     if max_file_size is None or int(max_file_size) <= 0:
         raise RuntimeError(
@@ -52,7 +55,8 @@ def _read_scan_filters_from_settings(settings: object) -> tuple[int, set[str], s
 
     excluded_dirs = _parse_csv_set(excluded_dirs_raw, prefix_dot=False)
     excluded_extensions = _parse_csv_set(excluded_extensions_raw, prefix_dot=True)
-    return int(max_file_size), excluded_dirs, excluded_extensions
+    excluded_files = _parse_csv_set(excluded_files_raw, prefix_dot=False)
+    return int(max_file_size), excluded_dirs, excluded_extensions, excluded_files
 
 
 def ingest_repository(
@@ -71,9 +75,12 @@ def ingest_repository(
         commit=commit,
     )
 
-    max_file_size, excluded_dirs, excluded_extensions = _read_scan_filters_from_settings(
-        settings
-    )
+    (
+        max_file_size,
+        excluded_dirs,
+        excluded_extensions,
+        excluded_files,
+    ) = _read_scan_filters_from_settings(settings)
 
     logger("Escaneando archivos...")
     scanned_files = scan_repository(
@@ -81,6 +88,7 @@ def ingest_repository(
         max_file_size=max_file_size,
         excluded_dirs=excluded_dirs,
         excluded_extensions=excluded_extensions,
+        excluded_files=excluded_files,
     )
 
     logger("Extrayendo símbolos...")

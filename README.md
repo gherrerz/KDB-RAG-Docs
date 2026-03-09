@@ -170,6 +170,7 @@ Variables relevantes en `.env`:
 - `SCAN_MAX_FILE_SIZE_BYTES` (obligatoria): tamaño máximo por archivo durante escaneo de ingesta.
 - `SCAN_EXCLUDED_DIRS` (obligatoria): carpetas excluidas de la ingesta (CSV).
 - `SCAN_EXCLUDED_EXTENSIONS` (obligatoria): extensiones excluidas de la ingesta (CSV).
+- `SCAN_EXCLUDED_FILES` (opcional): nombres o rutas relativas de archivos a excluir (CSV).
 
 ### Filtros de escaneo de ingesta (obligatorios)
 
@@ -180,6 +181,7 @@ Debes definir explícitamente estas variables en `.env`:
 SCAN_MAX_FILE_SIZE_BYTES=200000
 SCAN_EXCLUDED_DIRS=.git,node_modules,dist,build,venv,.venv,__pycache__,.idea,.vscode,target,out,bin,obj,.gradle,.m2,.pytest_cache,.mypy_cache
 SCAN_EXCLUDED_EXTENSIONS=.png,.jpg,.jpeg,.gif,.webp,.ico,.mp3,.mp4,.wav,.ogg,.pdf,.zip,.tar,.gz,.7z,.rar,.jar,.war,.ear,.class,.dll,.exe,.so,.dylib,.o,.a,.bin,.sqlite,.db
+SCAN_EXCLUDED_FILES=.gitignore,.env
 ```
 
 Si falta alguna, la ingesta falla al iniciar con error de configuración.

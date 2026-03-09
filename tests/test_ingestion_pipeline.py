@@ -33,6 +33,7 @@ def test_ingest_repository_continues_on_graph_failure(
         scan_max_file_size_bytes = 12345
         scan_excluded_dirs = ".git,node_modules"
         scan_excluded_extensions = ".png,.zip"
+        scan_excluded_files = ".gitignore,.env"
 
     received_scan_args: dict[str, object] = {}
 
@@ -41,11 +42,13 @@ def test_ingest_repository_continues_on_graph_failure(
         max_file_size: int = 200_000,
         excluded_dirs: set[str] | None = None,
         excluded_extensions: set[str] | None = None,
+        excluded_files: set[str] | None = None,
     ) -> list[ScannedFile]:
         received_scan_args["repo_path"] = repo_path
         received_scan_args["max_file_size"] = max_file_size
         received_scan_args["excluded_dirs"] = excluded_dirs or set()
         received_scan_args["excluded_extensions"] = excluded_extensions or set()
+        received_scan_args["excluded_files"] = excluded_files or set()
         return scanned
 
     monkeypatch.setattr(pipeline, "get_settings", lambda: _Settings())
@@ -91,5 +94,7 @@ def test_ingest_repository_continues_on_graph_failure(
     assert "node_modules" in received_scan_args["excluded_dirs"]
     assert ".png" in received_scan_args["excluded_extensions"]
     assert ".zip" in received_scan_args["excluded_extensions"]
+    assert ".gitignore" in received_scan_args["excluded_files"]
+    assert ".env" in received_scan_args["excluded_files"]
     assert any("Advertencia: grafo Neo4j no disponible" in item for item in logs)
     assert logs[-1] == "Ingesta finalizada"

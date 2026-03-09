@@ -27,6 +27,7 @@ def scan_repository(
     max_file_size: int,
     excluded_dirs: set[str] | None = None,
     excluded_extensions: set[str] | None = None,
+    excluded_files: set[str] | None = None,
 ) -> list[ScannedFile]:
     """Recopila archivos de código, configuración y documentación con filtros."""
     scanned: list[ScannedFile] = []
@@ -34,6 +35,7 @@ def scan_repository(
     excluded_file_extensions = {
         item.lower() for item in (excluded_extensions or set())
     }
+    excluded_file_entries = {item.lower() for item in (excluded_files or set())}
 
     for file_path in repo_path.rglob("*"):
         if not file_path.is_file():
@@ -45,6 +47,15 @@ def scan_repository(
         if file_path.suffix.lower() in excluded_file_extensions:
             continue
 
+        rel_path = str(file_path.relative_to(repo_path)).replace("\\", "/")
+        rel_path_normalized = rel_path.lower()
+
+        if file_path.name.lower() in excluded_file_entries:
+            continue
+
+        if rel_path_normalized in excluded_file_entries:
+            continue
+
         if file_path.stat().st_size > max_file_size:
             continue
 
@@ -53,7 +64,6 @@ def scan_repository(
         except UnicodeDecodeError:
             continue
 
-        rel_path = str(file_path.relative_to(repo_path)).replace("\\", "/")
         scanned.append(
             ScannedFile(
                 path=rel_path,

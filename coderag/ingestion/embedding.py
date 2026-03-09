@@ -1,10 +1,19 @@
 """Utilidades de generación de embeddings con OpenAI Responses."""
 
 import hashlib
+import logging
 
 from openai import OpenAI
 
 from coderag.core.settings import get_settings
+
+LOGGER = logging.getLogger(__name__)
+
+MODEL_DIMENSIONS: dict[str, int] = {
+    "text-embedding-3-small": 1536,
+    "text-embedding-3-large": 3072,
+    "text-embedding-ada-002": 1536,
+}
 
 
 def _fallback_embedding(text: str, dimension: int = 256) -> list[float]:
@@ -26,6 +35,20 @@ class EmbeddingClient:
         self.max_chars_per_text = 12000
         self.batch_size = 64
 
+    def _default_dimension(self) -> int:
+        """Devuelva una dimensión de respaldo estable para el modelo activo."""
+        return MODEL_DIMENSIONS.get(self.model, 1536)
+
+    @staticmethod
+    def _validate_dimensions(vectors: list[list[float]], dimension: int) -> None:
+        """Verifique que todos los vectores compartan la misma dimensión."""
+        for vector in vectors:
+            if len(vector) != dimension:
+                raise RuntimeError(
+                    "Se detectaron embeddings con dimensiones inconsistentes "
+                    f"(esperada={dimension}, recibida={len(vector)})."
+                )
+
     def _sanitize_text(self, text: str) -> str:
         """Recorta cadenas de entrada largas para mantener las solicitudes de embeddings dentro de los límites."""
         if len(text) <= self.max_chars_per_text:
@@ -38,9 +61,19 @@ class EmbeddingClient:
             return []
 
         normalized = [self._sanitize_text(text) for text in texts]
+        target_dimension: int | None = None
 
         if self.client is None:
-            return [_fallback_embedding(text) for text in normalized]
+            target_dimension = self._default_dimension()
+            LOGGER.warning(
+                "OpenAI no configurado; usando fallback determinista "
+                "para embeddings (dim=%s).",
+                target_dimension,
+            )
+            return [
+                _fallback_embedding(text, dimension=target_dimension)
+                for text in normalized
+            ]
 
         vectors: list[list[float]] = []
         for index in range(0, len(normalized), self.batch_size):
@@ -50,7 +83,28 @@ class EmbeddingClient:
                     model=self.model,
                     input=batch,
                 )
-                vectors.extend([item.embedding for item in response.data])
-            except Exception:
-                vectors.extend([_fallback_embedding(text) for text in batch])
+                batch_vectors = [item.embedding for item in response.data]
+                if not batch_vectors:
+                    continue
+
+                if target_dimension is None:
+                    target_dimension = len(batch_vectors[0])
+                self._validate_dimensions(batch_vectors, target_dimension)
+                vectors.extend(batch_vectors)
+            except Exception as exc:
+                if target_dimension is None:
+                    target_dimension = self._default_dimension()
+                LOGGER.warning(
+                    "Fallo al solicitar embeddings en OpenAI; se usa fallback "
+                    "determinista para el lote (dim=%s, model=%s, error=%s).",
+                    target_dimension,
+                    self.model,
+                    exc,
+                )
+                vectors.extend(
+                    [
+                        _fallback_embedding(text, dimension=target_dimension)
+                        for text in batch
+                    ]
+                )
         return vectors

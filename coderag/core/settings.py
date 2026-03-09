@@ -58,6 +58,10 @@ class Settings(BaseSettings):
         default="",
         alias="SCAN_EXCLUDED_EXTENSIONS",
     )
+    scan_excluded_files: str = Field(
+        default="",
+        alias="SCAN_EXCLUDED_FILES",
+    )
 
 
 @lru_cache(maxsize=1)

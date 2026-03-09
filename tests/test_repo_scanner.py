@@ -59,3 +59,27 @@ def test_scan_repository_allows_custom_exclusion_sets(tmp_path: Path) -> None:
     assert "src/ok.py" in scanned_paths
     assert "vendor/lib.ts" not in scanned_paths
     assert "src/notes.lock" not in scanned_paths
+
+
+def test_scan_repository_excludes_specific_files_list(tmp_path: Path) -> None:
+    """Excluye archivos por nombre y por ruta relativa según lista explícita."""
+    (tmp_path / "src").mkdir(parents=True)
+
+    (tmp_path / ".gitignore").write_text("*.pyc\n", encoding="utf-8")
+    (tmp_path / ".env").write_text("DEBUG=true\n", encoding="utf-8")
+    (tmp_path / "src" / "secret.txt").write_text("top-secret\n", encoding="utf-8")
+    (tmp_path / "src" / "ok.py").write_text("print('ok')\n", encoding="utf-8")
+
+    scanned = scan_repository(
+        tmp_path,
+        max_file_size=100_000,
+        excluded_dirs=set(),
+        excluded_extensions=set(),
+        excluded_files={".gitignore", ".env", "src/secret.txt"},
+    )
+    scanned_paths = {item.path for item in scanned}
+
+    assert ".gitignore" not in scanned_paths
+    assert ".env" not in scanned_paths
+    assert "src/secret.txt" not in scanned_paths
+    assert "src/ok.py" in scanned_paths

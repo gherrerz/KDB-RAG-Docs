@@ -11,10 +11,15 @@ from coderag.ingestion.index_chroma import ChromaIndex
 class _FakeCollection:
     """Colección Chroma falsa para pruebas unitarias de llamadas upsert."""
 
-    def __init__(self, fail_once: bool = False) -> None:
+    def __init__(
+        self,
+        fail_once: bool = False,
+        error_once: Exception | None = None,
+    ) -> None:
         """Inicialice el estado de colección falsa."""
         self.calls: list[int] = []
         self.fail_once = fail_once
+        self.error_once = error_once
 
     def upsert(
         self,
@@ -27,6 +32,10 @@ class _FakeCollection:
         if self.fail_once:
             self.fail_once = False
             raise InvalidDimensionException("dim")
+        if self.error_once is not None:
+            error = self.error_once
+            self.error_once = None
+            raise error
         self.calls.append(len(ids))
 
     def query(self, **kwargs: Any) -> dict[str, list[list[Any]]]:
@@ -80,3 +89,32 @@ def test_upsert_is_split_by_chroma_max_batch_size(monkeypatch: pytest.MonkeyPatc
 
     calls = fake_client.collections["code_symbols"].calls
     assert calls == [3, 3, 1]
+
+
+def test_upsert_recovers_from_dimension_message_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Recrea la colección cuando el error dimensional llega como RuntimeError."""
+    fake_client = _FakeClient()
+    fake_client.collections["code_symbols"] = _FakeCollection(
+        error_once=RuntimeError(
+            "Embedding dimension 256 does not match collection dimensionality 1536"
+        )
+    )
+
+    import coderag.ingestion.index_chroma as module
+
+    monkeypatch.setattr(
+        module.chromadb,
+        "PersistentClient",
+        lambda *args, **kwargs: fake_client,
+    )
+    index = ChromaIndex()
+
+    ids = ["id1", "id2"]
+    docs = ["x", "y"]
+    embeds = [[0.1, 0.2], [0.2, 0.1]]
+    metas = [{"i": 1}, {"i": 2}]
+    index.upsert("code_symbols", ids, docs, embeds, metas)
+
+    assert fake_client.collections["code_symbols"].calls == [2]

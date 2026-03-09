@@ -17,6 +17,14 @@ COLLECTIONS = [
 ]
 
 
+def _is_dimension_mismatch_error(exc: Exception) -> bool:
+    """Detecte errores de dimensión de embeddings aún sin clase específica."""
+    if isinstance(exc, InvalidDimensionException):
+        return True
+    message = str(exc).lower()
+    return "embedding dimension" in message and "collection" in message
+
+
 class ChromaIndex:
     """Abstracción sobre colecciones persistentes de Chroma."""
 
@@ -51,7 +59,9 @@ class ChromaIndex:
                 metadatas=metadatas,
                 batch_size=batch_size,
             )
-        except InvalidDimensionException:
+        except Exception as exc:
+            if not _is_dimension_mismatch_error(exc):
+                raise
             self.client.delete_collection(collection_name)
             recreated = self.client.get_or_create_collection(collection_name)
             self.collections[collection_name] = recreated
@@ -106,5 +116,7 @@ class ChromaIndex:
                 n_results=top_n,
                 where=where,
             )
-        except InvalidDimensionException:
+        except Exception as exc:
+            if not _is_dimension_mismatch_error(exc):
+                raise
             return {"ids": [[]], "documents": [[]], "metadatas": [[]], "distances": [[]]}
