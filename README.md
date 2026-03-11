@@ -12,6 +12,7 @@ verificable (archivos y líneas).
 - [Instalación](#instalación)
 - [Configuración](#configuración)
 - [Ejemplos de Uso](#ejemplos-de-uso)
+- [Referencia de Servicios API](#referencia-de-servicios-api)
 - [Estructura del Proyecto](#estructura-del-proyecto)
 - [Testing](#testing)
 - [QA Manual (UI)](#qa-manual-ui)
@@ -270,6 +271,429 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/admin/reset
 
 Este endpoint elimina índices vectoriales, BM25 en memoria, grafo Neo4j,
 metadata de jobs y carpetas de workspace para comenzar una ingesta desde cero.
+
+## Referencia de Servicios API
+
+### Base URL y OpenAPI
+
+- Base URL local por defecto: `http://127.0.0.1:8000`.
+- OpenAPI JSON: `GET /openapi.json`.
+- Swagger UI: `GET /docs`.
+- ReDoc: `GET /redoc`.
+
+### Resumen de endpoints
+
+| Método | Ruta | Propósito | Request | Response | Códigos comunes |
+|---|---|---|---|---|---|
+| POST | `/repos/ingest` | Crear trabajo de ingesta asíncrona | `RepoIngestRequest` | `JobInfo` | `200`, `422` |
+| GET | `/jobs/{job_id}` | Consultar estado de un trabajo | Path `job_id` | `JobInfo` | `200`, `404` |
+| POST | `/query` | Consulta híbrida general (vector + BM25 + grafo) | `QueryRequest` | `QueryResponse` | `200`, `422` |
+| POST | `/inventory/query` | Consulta de inventario paginada (graph-first) | `InventoryQueryRequest` | `InventoryQueryResponse` | `200`, `422` |
+| GET | `/repos` | Listar `repo_id` disponibles | N/A | `RepoCatalogResponse` | `200` |
+| POST | `/admin/reset` | Limpieza total de índices/metadata/workspace | N/A | `ResetResponse` | `200`, `409`, `500` |
+
+### Contratos de datos
+
+#### 1) `RepoIngestRequest`
+
+```json
+{
+   "provider": "github",
+   "repo_url": "https://github.com/owner/repo.git",
+   "token": "<opcional>",
+   "branch": "main",
+   "commit": "<opcional>"
+}
+```
+
+Campos:
+
+- `provider` (`str`, default `github`): proveedor Git.
+- `repo_url` (`str`, requerido): URL del repositorio.
+- `token` (`str | null`, opcional): token para repos privados.
+- `branch` (`str`, default `main`): rama objetivo.
+- `commit` (`str | null`, opcional): commit puntual.
+
+#### 2) `JobInfo`
+
+```json
+{
+   "id": "uuid",
+   "status": "queued",
+   "progress": 0.0,
+   "logs": [],
+   "repo_id": null,
+   "error": null,
+   "created_at": "2026-03-11T12:00:00.000000",
+   "updated_at": "2026-03-11T12:00:00.000000"
+}
+```
+
+`status` admite: `queued`, `running`, `completed`, `failed`.
+
+#### 3) `QueryRequest`
+
+```json
+{
+   "repo_id": "mall",
+   "query": "cuales son todos los controller del modulo mall-admin?",
+   "top_n": 80,
+   "top_k": 20
+}
+```
+
+Campos:
+
+- `repo_id` (`str`, requerido): identificador del repositorio indexado.
+- `query` (`str`, requerido): pregunta de negocio/técnica.
+- `top_n` (`int`, default `80`): candidatos recuperados.
+- `top_k` (`int`, default `20`): candidatos tras reranking.
+
+#### 4) `QueryResponse`
+
+```json
+{
+   "answer": "...",
+   "citations": [
+      {
+         "path": "mall-admin/src/main/java/.../AdminController.java",
+         "start_line": 42,
+         "end_line": 88,
+         "score": 0.91,
+         "reason": "hybrid_rag_match"
+      }
+   ],
+   "diagnostics": {
+      "retrieved": 80,
+      "reranked": 20,
+      "graph_nodes": 12,
+      "openai_enabled": true
+   }
+}
+```
+
+#### 5) `InventoryQueryRequest`
+
+```json
+{
+   "repo_id": "mall",
+   "query": "cuales son todos los modelos de mall-mbg",
+   "page": 1,
+   "page_size": 50
+}
+```
+
+Campos:
+
+- `repo_id` (`str`, requerido): identificador del repositorio indexado.
+- `query` (`str`, requerido): consulta de inventario (ej. "todos los X").
+- `page` (`int`, default `1`): página actual.
+- `page_size` (`int`, default `80`): tamaño de página.
+
+#### 6) `InventoryQueryResponse`
+
+```json
+{
+   "answer": "Se encontraron 120 elementos.",
+   "target": "model",
+   "module_name": "mall-mbg",
+   "total": 120,
+   "page": 1,
+   "page_size": 50,
+   "items": [
+      {
+         "label": "PmsBrand",
+         "path": "mall-mbg/src/main/java/.../PmsBrand.java",
+         "kind": "class",
+         "start_line": 1,
+         "end_line": 120
+      }
+   ],
+   "citations": [],
+   "diagnostics": {
+      "inventory_target": "model",
+      "inventory_count": 120
+   }
+}
+```
+
+#### 7) `RepoCatalogResponse` y `ResetResponse`
+
+`RepoCatalogResponse`:
+
+```json
+{
+   "repo_ids": ["mall", "otro-repo"]
+}
+```
+
+`ResetResponse`:
+
+```json
+{
+   "message": "Limpieza total completada",
+   "cleared": ["chroma", "bm25", "neo4j", "metadata", "workspace"],
+   "warnings": []
+}
+```
+
+### Referencia por endpoint
+
+#### `POST /repos/ingest`
+
+Uso: crear un job de ingesta en segundo plano.
+
+Notas operativas:
+
+- Devuelve `JobInfo` inmediatamente; la ingesta real corre en background.
+- Polling recomendado: consultar `GET /jobs/{job_id}` cada 2-5 segundos.
+
+Ejemplo cURL:
+
+```bash
+curl -X POST http://127.0.0.1:8000/repos/ingest \
+   -H "Content-Type: application/json" \
+   -d '{
+      "provider": "github",
+      "repo_url": "https://github.com/macrozheng/mall.git",
+      "branch": "main"
+   }'
+```
+
+Ejemplo Python:
+
+```python
+import requests
+
+response = requests.post(
+      "http://127.0.0.1:8000/repos/ingest",
+      json={
+            "provider": "github",
+            "repo_url": "https://github.com/macrozheng/mall.git",
+            "branch": "main",
+      },
+      timeout=30,
+)
+job = response.json()
+print(job["id"], job["status"])
+```
+
+#### `GET /jobs/{job_id}`
+
+Uso: consultar estado/progreso/logs de una ingesta.
+
+Notas operativas:
+
+- `404` si el `job_id` no existe.
+- Al finalizar correctamente, `repo_id` queda disponible para consultas.
+
+Ejemplo cURL:
+
+```bash
+curl http://127.0.0.1:8000/jobs/<job_id>
+```
+
+Ejemplo Python:
+
+```python
+import requests
+
+job_id = "<job_id>"
+response = requests.get(f"http://127.0.0.1:8000/jobs/{job_id}", timeout=15)
+print(response.status_code, response.json())
+```
+
+#### `POST /query`
+
+Uso: consulta híbrida general con evidencias.
+
+Notas operativas:
+
+- Si detecta intención de inventario amplia ("todos los X"), puede redirigir internamente a flujo de inventario estructurado.
+- Siempre devuelve `answer`, `citations` y `diagnostics`.
+- Puede devolver fallback extractivo cuando no hay LLM o falla verificación/generación.
+
+Ejemplo cURL:
+
+```bash
+curl -X POST http://127.0.0.1:8000/query \
+   -H "Content-Type: application/json" \
+   -d '{
+      "repo_id": "mall",
+      "query": "cuales son todos los controller del modulo mall-admin?",
+      "top_n": 80,
+      "top_k": 20
+   }'
+```
+
+Ejemplo Python:
+
+```python
+import requests
+
+response = requests.post(
+      "http://127.0.0.1:8000/query",
+      json={
+            "repo_id": "mall",
+            "query": "cuales son todos los controller del modulo mall-admin?",
+            "top_n": 80,
+            "top_k": 20,
+      },
+      timeout=120,
+)
+data = response.json()
+print(data["answer"])
+print(data["diagnostics"])
+```
+
+#### `POST /inventory/query`
+
+Uso: inventario paginado de entidades (graph-first).
+
+Notas operativas:
+
+- Recomendado para preguntas enumerativas grandes.
+- Respuesta estructurada con `total`, `page`, `page_size`, `items`.
+
+Ejemplo cURL:
+
+```bash
+curl -X POST http://127.0.0.1:8000/inventory/query \
+   -H "Content-Type: application/json" \
+   -d '{
+      "repo_id": "mall",
+      "query": "cuales son todos los modelos de mall-mbg",
+      "page": 1,
+      "page_size": 50
+   }'
+```
+
+Ejemplo Python:
+
+```python
+import requests
+
+response = requests.post(
+      "http://127.0.0.1:8000/inventory/query",
+      json={
+            "repo_id": "mall",
+            "query": "cuales son todos los modelos de mall-mbg",
+            "page": 1,
+            "page_size": 50,
+      },
+      timeout=60,
+)
+data = response.json()
+print(data["total"], data["page"], data["page_size"])
+print(data["items"][:3])
+```
+
+#### `GET /repos`
+
+Uso: obtener catálogo de repositorios disponibles para `repo_id`.
+
+Ejemplo cURL:
+
+```bash
+curl http://127.0.0.1:8000/repos
+```
+
+Ejemplo Python:
+
+```python
+import requests
+
+response = requests.get("http://127.0.0.1:8000/repos", timeout=15)
+print(response.json()["repo_ids"])
+```
+
+#### `POST /admin/reset`
+
+Uso: limpiar estado completo (índices + metadatos + workspace).
+
+Notas operativas:
+
+- Si hay jobs corriendo, responde `409`.
+- Usar cuando se requiera reinicio limpio de la plataforma.
+
+Ejemplo cURL:
+
+```bash
+curl -X POST http://127.0.0.1:8000/admin/reset
+```
+
+Ejemplo Python:
+
+```python
+import requests
+
+response = requests.post("http://127.0.0.1:8000/admin/reset", timeout=60)
+print(response.status_code, response.json())
+```
+
+### Errores y validación
+
+Errores más relevantes por contrato:
+
+| Código | Endpoint típico | Motivo |
+|---|---|---|
+| `404` | `GET /jobs/{job_id}` | `job_id` inexistente |
+| `409` | `POST /admin/reset` | hay jobs en ejecución |
+| `422` | endpoints con body | validación Pydantic (campo faltante/tipo inválido) |
+| `500` | `POST /admin/reset` | error inesperado en limpieza |
+
+Ejemplo de error `404`:
+
+```json
+{
+   "detail": "Job no encontrado"
+}
+```
+
+Ejemplo de error `422`:
+
+```json
+{
+   "detail": [
+      {
+         "loc": ["body", "repo_id"],
+         "msg": "Field required",
+         "type": "missing"
+      }
+   ]
+}
+```
+
+### Guía de `diagnostics`
+
+Campos frecuentes en respuestas de `POST /query`:
+
+- `retrieved`: total de candidatos recuperados.
+- `reranked`: total tras reranking.
+- `graph_nodes`: nodos añadidos por expansión de grafo.
+- `openai_enabled`: si LLM está disponible.
+- `fallback_reason`: razón de fallback (`not_configured`, `verification_failed`, `generation_error`, `time_budget_exhausted`).
+- `verify_valid`: resultado del verificador cuando aplica.
+- `verify_skipped`: indica si se omitió verificación por presupuesto.
+- `llm_error`: detalle de excepción LLM cuando existe.
+- `stage_timings_ms`: latencia por etapa.
+
+Campos frecuentes en `POST /inventory/query`:
+
+- `inventory_target`: entidad objetivo normalizada.
+- `inventory_terms`: términos/aliases usados para búsqueda.
+- `inventory_count`: total detectado previo a paginación.
+- `module_name_raw`: módulo recibido en lenguaje natural.
+- `module_name_resolved`: módulo resuelto para consulta.
+- `inventory_explain`: si se pidió explicación de propósito.
+- `inventory_purpose_count`: cantidad de descripciones generadas.
+- `fallback_reason`: razón de fallback estructurado.
+
+Interpretación recomendada:
+
+- Si `fallback_reason` existe, revisar primero `openai_enabled`, `verify_valid` y `llm_error`.
+- Si una respuesta enumerativa parece incompleta, validar `inventory_count`, `page` y `page_size`.
+- Para performance, inspeccionar `stage_timings_ms` y comparar etapas dominantes.
 
 ## Estructura del Proyecto
 
