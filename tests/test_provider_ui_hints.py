@@ -395,3 +395,72 @@ def test_ingestion_anthropic_embedding_does_not_show_remote_failure_hint(
     warning_text = view.embedding_warning.text().lower()
     assert "catalogo remoto" not in warning_text
     assert "fallback" in warning_text
+
+
+def test_query_anthropic_remote_catalog_replaces_stale_default(
+    monkeypatch: pytest.MonkeyPatch,
+    qapp: QApplication,
+) -> None:
+    """Con catálogo remoto/cache, QueryView no debe inyectar defaults legacy fuera de catálogo."""
+
+    class _Settings:
+        def embedding_provider_capabilities(
+            self,
+            provider: str,
+        ) -> dict[str, str | bool]:
+            return {
+                "provider": provider,
+                "supported": True,
+                "configured": True,
+                "reason": "ok",
+            }
+
+        def llm_provider_capabilities(self, provider: str) -> dict[str, str | bool]:
+            return {
+                "provider": provider,
+                "supported": True,
+                "configured": True,
+                "answer": True,
+                "verify": True,
+                "reason": "ok",
+            }
+
+    def _fake_fetch_models_for_provider(
+        provider: str,
+        kind: str,
+        *,
+        force_refresh: bool = False,
+    ) -> UIModelCatalogResult:
+        _ = force_refresh
+        if provider == "anthropic" and kind == "llm":
+            return UIModelCatalogResult(
+                models=["claude-sonnet-4-5", "claude-haiku-4-5"],
+                source="remote",
+            )
+        return UIModelCatalogResult(
+            models=["text-embedding-3-small"],
+            source="remote",
+        )
+
+    monkeypatch.setattr(query_view_module, "get_settings", lambda: _Settings())
+    monkeypatch.setattr(
+        query_view_module,
+        "fetch_models_for_provider",
+        _fake_fetch_models_for_provider,
+    )
+
+    view = QueryView()
+    view.llm_provider.setCurrentText("anthropic")
+
+    answer_models = [
+        view.answer_model.itemText(i) for i in range(view.answer_model.count())
+    ]
+    verifier_models = [
+        view.verifier_model.itemText(i) for i in range(view.verifier_model.count())
+    ]
+
+    assert view.answer_model.currentText() == "claude-sonnet-4-5"
+    assert view.verifier_model.currentText() == "claude-sonnet-4-5"
+    assert answer_models == ["claude-sonnet-4-5", "claude-haiku-4-5"]
+    assert verifier_models == ["claude-sonnet-4-5", "claude-haiku-4-5"]
+    assert "claude-3-5-sonnet-20241022" not in answer_models

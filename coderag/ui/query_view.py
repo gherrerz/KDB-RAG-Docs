@@ -495,6 +495,7 @@ class QueryView(QWidget):
             self.embedding_model,
             catalog.models,
             preferred_model,
+            allow_out_of_catalog=catalog.source == "fallback",
         )
 
         warning_parts: list[str] = []
@@ -537,8 +538,19 @@ class QueryView(QWidget):
         else:
             answer_preferred = current_answer_model or state.default_model
             verifier_preferred = current_verifier_model or state.default_model
-        self._set_model_options(self.answer_model, catalog.models, answer_preferred)
-        self._set_model_options(self.verifier_model, catalog.models, verifier_preferred)
+        allow_out_of_catalog = catalog.source == "fallback"
+        self._set_model_options(
+            self.answer_model,
+            catalog.models,
+            answer_preferred,
+            allow_out_of_catalog=allow_out_of_catalog,
+        )
+        self._set_model_options(
+            self.verifier_model,
+            catalog.models,
+            verifier_preferred,
+            allow_out_of_catalog=allow_out_of_catalog,
+        )
 
         warning_parts: list[str] = []
         if state.warning:
@@ -559,17 +571,25 @@ class QueryView(QWidget):
         self._refresh_llm_model_catalog(force_refresh=force_refresh)
 
     @staticmethod
-    def _set_model_options(combo: QComboBox, options: list[str], selected: str) -> None:
+    def _set_model_options(
+        combo: QComboBox,
+        options: list[str],
+        selected: str,
+        *,
+        allow_out_of_catalog: bool = True,
+    ) -> None:
         """Recarga las opciones del combo y deja seleccionado el modelo preferido."""
         chosen = selected.strip() if selected else ""
         values = [item.strip() for item in options if item.strip()]
-        if chosen and chosen not in values:
+        if chosen and chosen not in values and allow_out_of_catalog:
             values.append(chosen)
 
         combo.blockSignals(True)
         combo.clear()
         combo.addItems(values)
-        if chosen:
+        if chosen and chosen in values:
+            combo.setCurrentText(chosen)
+        elif chosen and allow_out_of_catalog and chosen not in values:
             combo.setCurrentText(chosen)
         elif values:
             combo.setCurrentIndex(0)
