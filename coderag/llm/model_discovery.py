@@ -123,7 +123,7 @@ def _discover_openai(kind: ModelKind) -> ModelDiscoveryResult:
 
 
 def _discover_vertex(kind: ModelKind) -> ModelDiscoveryResult:
-    """Lista modelos de Vertex AI via endpoint de publisher models."""
+    """Lista modelos Vertex con estrategias remotas y fallback resiliente."""
     settings = get_settings()
     token = settings.vertex_ai_api_key.strip()
     project_id = settings.vertex_ai_project_id.strip()
@@ -133,38 +133,138 @@ def _discover_vertex(kind: ModelKind) -> ModelDiscoveryResult:
         return _fallback("vertex_ai", kind, warning="missing_vertex_ai_api_key_or_project")
 
     timeout = max(1.0, float(settings.discovery_timeout_seconds))
+    publisher_warning: str | None = None
+
+    try:
+        names = _discover_vertex_publisher_names(
+            project_id=project_id,
+            location=location,
+            timeout=timeout,
+            bearer_token=token,
+            api_key=None,
+        )
+        models = _filter_models(names, kind, provider="vertex_ai")
+        if models:
+            return ModelDiscoveryResult(
+                provider="vertex_ai",
+                kind=kind,
+                models=models,
+                source="remote",
+            )
+        publisher_warning = "vertex_remote_catalog_empty"
+    except Exception:
+        publisher_warning = "vertex_remote_catalog_failed"
+
+    # Algunos despliegues guardan API key en lugar de bearer token OAuth.
+    try:
+        names = _discover_vertex_publisher_names(
+            project_id=project_id,
+            location=location,
+            timeout=timeout,
+            bearer_token=None,
+            api_key=token,
+        )
+        models = _filter_models(names, kind, provider="vertex_ai")
+        if models:
+            return ModelDiscoveryResult(
+                provider="vertex_ai",
+                kind=kind,
+                models=models,
+                source="remote",
+            )
+    except Exception:
+        pass
+
+    # Fallback remoto compatible: usa catálogo Gemini REST (preferentemente GEMINI_API_KEY).
+    for compatible_key in (settings.gemini_api_key.strip(), token):
+        if not compatible_key:
+            continue
+        try:
+            names = _discover_gemini_rest_names(
+                kind=kind,
+                api_key=compatible_key,
+                timeout=timeout,
+            )
+            models = _filter_models(names, kind, provider="vertex_ai")
+            if models:
+                return ModelDiscoveryResult(
+                    provider="vertex_ai",
+                    kind=kind,
+                    models=models,
+                    source="remote",
+                    warning="vertex_catalog_via_gemini_rest",
+                )
+        except Exception:
+            continue
+
+    return _fallback("vertex_ai", kind, warning=publisher_warning or "vertex_remote_catalog_failed")
+
+
+def _discover_vertex_publisher_names(
+    *,
+    project_id: str,
+    location: str,
+    timeout: float,
+    bearer_token: str | None,
+    api_key: str | None,
+) -> list[str]:
+    """Descubre nombres de modelos en Vertex publisher endpoint con paginación."""
+    next_page_token: str | None = None
+    entries: list[str] = []
+
+    for _ in range(12):
+        payload = _vertex_models_page(
+            project_id=project_id,
+            location=location,
+            timeout=timeout,
+            page_token=next_page_token,
+            bearer_token=bearer_token,
+            api_key=api_key,
+        )
+        raw_models = payload.get("models") or []
+        for item in raw_models:
+            if not isinstance(item, dict):
+                continue
+            full_name = str(item.get("name") or "").strip()
+            model_name = full_name.split("/")[-1].strip()
+            if model_name:
+                entries.append(model_name)
+        raw_token = str(payload.get("nextPageToken") or "").strip()
+        if not raw_token:
+            break
+        next_page_token = raw_token
+
+    return entries
+
+
+def _vertex_models_page(
+    *,
+    project_id: str,
+    location: str,
+    timeout: float,
+    page_token: str | None,
+    bearer_token: str | None,
+    api_key: str | None,
+) -> dict:
+    """Obtiene una página del catálogo de publisher models en Vertex."""
     url = (
         f"https://{location}-aiplatform.googleapis.com/v1/projects/{project_id}/"
         f"locations/{location}/publishers/google/models"
     )
-    try:
-        response = requests.get(
-            url,
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=timeout,
-        )
-        response.raise_for_status()
-        payload = response.json()
-        raw_models = payload.get("models") or []
-        names: list[str] = []
-        for item in raw_models:
-            if not isinstance(item, dict):
-                continue
-            full_name = str(item.get("name") or "")
-            model_name = full_name.split("/")[-1]
-            if model_name:
-                names.append(model_name)
-        models = _filter_models(names, kind, provider="vertex_ai")
-        if not models:
-            return _fallback("vertex_ai", kind, warning="vertex_remote_catalog_empty")
-        return ModelDiscoveryResult(
-            provider="vertex_ai",
-            kind=kind,
-            models=models,
-            source="remote",
-        )
-    except Exception:
-        return _fallback("vertex_ai", kind, warning="vertex_remote_catalog_failed")
+    params: dict[str, str | int] = {"pageSize": 100}
+    if page_token:
+        params["pageToken"] = page_token
+    if api_key:
+        params["key"] = api_key
+
+    headers: dict[str, str] = {}
+    if bearer_token:
+        headers["Authorization"] = f"Bearer {bearer_token}"
+
+    response = requests.get(url, headers=headers or None, params=params, timeout=timeout)
+    response.raise_for_status()
+    data = response.json()
+    return data if isinstance(data, dict) else {}
 
 
 def _discover_gemini(kind: ModelKind) -> ModelDiscoveryResult:

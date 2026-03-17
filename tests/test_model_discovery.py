@@ -25,6 +25,15 @@ class _GeminiSettings(_Settings):
     gemini_api_key = "test-gemini-key"
 
 
+class _VertexSettings(_Settings):
+    """Configuración de pruebas para escenarios Vertex AI."""
+
+    vertex_ai_api_key = "vertex-token"
+    gemini_api_key = "gemini-key"
+    vertex_ai_project_id = "test-project"
+    vertex_ai_location = "us-central1"
+
+
 def test_openai_missing_key_uses_fallback(monkeypatch) -> None:
     """Sin API key OpenAI, discovery cae a catálogo local."""
     monkeypatch.setattr(model_discovery, "get_settings", lambda: _Settings())
@@ -203,3 +212,77 @@ def test_gemini_rest_page_parser_handles_pagination(monkeypatch) -> None:
 
     assert "gemini-2.0-flash" in llm_names
     assert "text-embedding-004" in embedding_names
+
+
+def test_vertex_publisher_parser_handles_pagination(monkeypatch) -> None:
+    """Vertex publisher parser debe recorrer páginas y consolidar modelos."""
+
+    class _FakeResponse:
+        """Respuesta HTTP simulada para requests.get."""
+
+        def __init__(self, payload: dict) -> None:
+            self._payload = payload
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return self._payload
+
+    pages = {
+        "": {
+            "models": [{"name": "publishers/google/models/gemini-2.5-pro"}],
+            "nextPageToken": "n1",
+        },
+        "n1": {
+            "models": [{"name": "publishers/google/models/gemini-2.5-flash"}],
+            "nextPageToken": "",
+        },
+    }
+
+    def _fake_get(_url, *, headers, params, timeout):
+        assert timeout == 2.0
+        assert headers == {"Authorization": "Bearer token-1"}
+        token = str(params.get("pageToken") or "")
+        return _FakeResponse(pages[token])
+
+    monkeypatch.setattr(model_discovery.requests, "get", _fake_get)
+
+    names = model_discovery._discover_vertex_publisher_names(
+        project_id="p1",
+        location="us-central1",
+        timeout=2.0,
+        bearer_token="token-1",
+        api_key=None,
+    )
+
+    assert names == ["gemini-2.5-pro", "gemini-2.5-flash"]
+
+
+def test_vertex_falls_back_to_gemini_rest_when_publisher_fails(monkeypatch) -> None:
+    """Si publisher falla, Vertex debe intentar catálogo Gemini REST compatible."""
+    settings = _VertexSettings()
+    monkeypatch.setattr(model_discovery, "get_settings", lambda: settings)
+
+    def _raise_publisher(**_kwargs):
+        raise RuntimeError("publisher unavailable")
+
+    monkeypatch.setattr(
+        model_discovery,
+        "_discover_vertex_publisher_names",
+        _raise_publisher,
+    )
+    calls: list[str] = []
+
+    def _fake_gemini(**kwargs):
+        calls.append(kwargs.get("api_key", ""))
+        return ["gemini-2.5-pro", "gemini-2.0-flash"]
+
+    monkeypatch.setattr(model_discovery, "_discover_gemini_rest_names", _fake_gemini)
+
+    result = model_discovery.discover_models("vertex_ai", "llm", force_refresh=True)
+
+    assert result.source == "remote"
+    assert result.warning == "vertex_catalog_via_gemini_rest"
+    assert "gemini-2.5-pro" in result.models
+    assert calls[0] == "gemini-key"
