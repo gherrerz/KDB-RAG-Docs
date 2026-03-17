@@ -23,6 +23,22 @@ def test_build_query_answer_text_with_fallback_reason() -> None:
     assert "respuesta" in result
     assert "diagnóstico" in result
     assert "verification_failed" in result
+    assert "verificación de respuesta fallida" in result
+
+
+def test_build_query_answer_text_with_generation_error_and_credit_hint() -> None:
+    """Muestra causa legible cuando generation_error viene por saldo insuficiente."""
+    result = build_query_answer_text(
+        "respuesta fallback",
+        {
+            "fallback_reason": "generation_error",
+            "llm_error": "Anthropic API error 400: Your credit balance is too low to access the Anthropic API.",
+        },
+    )
+
+    assert "generation_error" in result
+    assert "error al generar con el modelo" in result
+    assert "sin créditos suficientes" in result
 
 
 def test_build_repo_not_ready_message_without_warnings() -> None:
