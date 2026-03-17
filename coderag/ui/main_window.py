@@ -2,6 +2,7 @@
 
 import sys
 from typing import Any
+from urllib.parse import quote_plus
 
 import requests
 from PySide6.QtWidgets import QApplication, QMainWindow, QTabWidget, QVBoxLayout, QWidget
@@ -453,8 +454,13 @@ class MainWindow(QMainWindow):
             return
 
         try:
+            status_url = self._repo_status_url(
+                repo_id=repo_id,
+                requested_embedding_provider=self.query_view.get_embedding_provider(),
+                requested_embedding_model=self.query_view.get_embedding_model() or None,
+            )
             status_response = requests.get(
-                f"{API_BASE}/repos/{repo_id}/status",
+                status_url,
                 timeout=UI_REQUEST_TIMEOUT_SECONDS,
             )
             status_response.raise_for_status()
@@ -554,7 +560,7 @@ class MainWindow(QMainWindow):
                 detail = "Error HTTP en consulta (reintento rapido)."
                 try:
                     error_data = response.json()
-                    detail = str(error_data.get("detail") or detail)
+                    detail = self._format_query_http_detail(error_data.get("detail"))
                 except Exception:
                     pass
                 self.query_view.set_status("error", "Error")
@@ -576,7 +582,7 @@ class MainWindow(QMainWindow):
             detail = "Error HTTP en consulta."
             try:
                 error_data = response.json()
-                detail = str(error_data.get("detail") or detail)
+                detail = self._format_query_http_detail(error_data.get("detail"))
             except Exception:
                 pass
             self.query_view.set_status("error", "Error")
@@ -621,6 +627,22 @@ class MainWindow(QMainWindow):
         self.query_view.set_status("error", "Error")
         self.query_view.append_assistant_message(message, error=True)
 
+    @staticmethod
+    def _format_query_http_detail(detail_payload: object) -> str:
+        """Normaliza payload de error HTTP para mensajes de consulta legibles en UI."""
+        if isinstance(detail_payload, dict):
+            code = str(detail_payload.get("code") or "").strip().lower()
+            if code in {"repo_not_ready", "embedding_incompatible"}:
+                repo_status = detail_payload.get("repo_status")
+                if isinstance(repo_status, dict):
+                    warnings = repo_status.get("warnings") or []
+                    if isinstance(warnings, list):
+                        return build_repo_not_ready_message(warnings)
+            message = detail_payload.get("message")
+            if isinstance(message, str) and message.strip():
+                return message.strip()
+        return str(detail_payload or "Error HTTP en consulta.")
+
     def _on_query_repo_changed(self, repo_id: str) -> None:
         """Limpie la conversación y evidencias cuando cambia el repositorio activo."""
         selected_repo = repo_id.strip()
@@ -633,6 +655,64 @@ class MainWindow(QMainWindow):
         self.query_view.clear_question()
         self.query_view.set_status("idle", "Lista")
         self.evidence_view.set_citations([])
+        self._sync_query_embedding_with_repo_runtime(selected_repo)
+
+    @staticmethod
+    def _repo_status_url(
+        *,
+        repo_id: str,
+        requested_embedding_provider: str | None = None,
+        requested_embedding_model: str | None = None,
+    ) -> str:
+        """Construye endpoint de estado por repo con hints opcionales de embeddings."""
+        base = f"{API_BASE}/repos/{repo_id}/status"
+        params: list[str] = []
+        if requested_embedding_provider:
+            params.append(
+                "requested_embedding_provider="
+                f"{quote_plus(requested_embedding_provider)}"
+            )
+        if requested_embedding_model:
+            params.append(
+                "requested_embedding_model="
+                f"{quote_plus(requested_embedding_model)}"
+            )
+        if not params:
+            return base
+        return f"{base}?{'&'.join(params)}"
+
+    def _sync_query_embedding_with_repo_runtime(self, repo_id: str) -> None:
+        """Sincroniza provider/model de consulta con la última ingesta conocida del repo."""
+        if not repo_id:
+            return
+        try:
+            status_response = requests.get(
+                self._repo_status_url(repo_id=repo_id),
+                timeout=UI_REQUEST_TIMEOUT_SECONDS,
+            )
+            status_response.raise_for_status()
+            payload = status_response.json()
+        except Exception as exc:
+            self.ingestion_view.append_log(
+                "No se pudo sincronizar embedding de consulta con runtime "
+                f"del repo: {exc}"
+            )
+            return
+
+        runtime_provider = str(payload.get("last_embedding_provider") or "").strip()
+        runtime_model = str(payload.get("last_embedding_model") or "").strip()
+        if runtime_provider:
+            self.query_view.embedding_provider.setCurrentText(runtime_provider)
+
+        if runtime_model:
+            combo = self.query_view.embedding_model
+            combo.blockSignals(True)
+            if combo.findText(runtime_model) < 0:
+                combo.addItem(runtime_model)
+            combo.setCurrentText(runtime_model)
+            combo.blockSignals(False)
+
+        self._update_query_action_state()
 
     def _refresh_repo_ids(
         self,

@@ -90,6 +90,17 @@ MODULE_NAME_STOPWORDS = {
     "project",
 }
 
+DEPENDENCY_INVENTORY_TERMS = {
+    "dependency",
+    "dependencies",
+    "dependencia",
+    "dependencias",
+    "requirement",
+    "requirements",
+    "requisito",
+    "requisitos",
+}
+
 INVENTORY_TARGET_STOPWORDS = {
     "todo",
     "todos",
@@ -279,13 +290,10 @@ def _discover_repo_modules(repo_id: str) -> list[str]:
 
 
 def _is_inventory_query(query: str) -> bool:
-    """Devuelve si la consulta solicita una lista exhaustiva de entidades."""
+    """Devuelve si la consulta pide inventario de forma explícita."""
     normalized = query.lower()
-    has_all_word = any(
-        token in normalized
-        for token in ["todos", "todas", "all", "lista", "listar", "cuales son"]
-    )
-    return has_all_word
+    inventory_tokens = ("inventario", "inventory")
+    return any(token in normalized for token in inventory_tokens)
 
 
 def _extract_module_name(query: str) -> str | None:
@@ -550,6 +558,16 @@ def _first_sentence(text: str) -> str:
 def _purpose_from_filename(file_path: Path) -> str | None:
     """Inferir sugerencias de propósito a partir de la raíz del nombre de archivo utilizando heurísticas ligeras."""
     stem = file_path.stem.lower()
+    filename = file_path.name.lower()
+
+    if filename == "requirements.txt":
+        return "Declara dependencias Python del proyecto para instalación y despliegue."
+    if filename in {"pyproject.toml", "poetry.lock"}:
+        return "Define metadata del proyecto y dependencias Python gestionadas por herramientas modernas."
+    if filename in {"package.json", "package-lock.json", "yarn.lock", "pnpm-lock.yaml"}:
+        return "Declara dependencias JavaScript/TypeScript y scripts de construcción del proyecto."
+    if filename in {"pom.xml", "build.gradle", "build.gradle.kts", "gradle.properties"}:
+        return "Configura dependencias y build del ecosistema JVM para el proyecto."
 
     if any(token in stem for token in ("settings", "config", "configuration")):
         return "Centraliza configuración y parámetros del módulo."
@@ -720,6 +738,7 @@ def _describe_inventory_components(
     citations: list[Citation],
     pipeline_started_at: float,
     budget_seconds: float,
+    query: str | None = None,
 ) -> list[tuple[str, str]]:
     """Cree sugerencias de propósito por componente a partir de archivos fuente locales dentro del presupuesto."""
     descriptions: list[tuple[str, str]] = []
@@ -739,6 +758,25 @@ def _describe_inventory_components(
             continue
         seen_names.add(component_name)
         descriptions.append((component_name, purpose))
+
+    if not descriptions:
+        return descriptions
+
+    if not query:
+        return descriptions
+
+    normalized_query = _normalize_inventory_token(query)
+    query_tokens = set(re.findall(r"[a-z0-9]+", normalized_query))
+    if not query_tokens:
+        return descriptions
+
+    def _score(item: tuple[str, str]) -> tuple[int, int, str]:
+        name, purpose = item
+        haystack = _normalize_inventory_token(f"{name} {purpose}")
+        overlap = sum(1 for token in query_tokens if token in haystack)
+        return (overlap, len(purpose), name.lower())
+
+    return sorted(descriptions, key=_score, reverse=True)
     return descriptions
 
 
@@ -960,7 +998,7 @@ def run_inventory_query(
     stage_timings: dict[str, float] = {}
 
     parse_started_at = monotonic()
-    inventory_target = _extract_inventory_target(query) if _is_inventory_query(query) else None
+    inventory_target = _extract_inventory_target(query)
     explain_inventory = _is_inventory_explain_query(query)
     module_name_raw = _extract_module_name(query)
     module_name = _resolve_module_scope(repo_id=repo_id, module_name=module_name_raw)
@@ -988,6 +1026,9 @@ def run_inventory_query(
             citations=[],
             diagnostics=diagnostics,
         )
+
+    inventory_target_normalized = _normalize_inventory_token(inventory_target)
+    auto_context_for_inventory = inventory_target_normalized in DEPENDENCY_INVENTORY_TERMS
 
     fallback_reason: str | None = None
     discovered_inventory: list[dict] = []
@@ -1030,12 +1071,13 @@ def run_inventory_query(
 
     purpose_started_at = monotonic()
     component_purposes: list[tuple[str, str]] = []
-    if explain_inventory and citations:
+    if (explain_inventory or auto_context_for_inventory) and citations:
         component_purposes = _describe_inventory_components(
             repo_id=repo_id,
             citations=citations,
             pipeline_started_at=pipeline_started_at,
             budget_seconds=budget_seconds,
+            query=query,
         )
     stage_timings["component_purpose_ms"] = _elapsed_milliseconds(purpose_started_at)
 

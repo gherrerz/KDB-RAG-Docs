@@ -37,7 +37,7 @@ def _build_window(monkeypatch: pytest.MonkeyPatch) -> MainWindow:
     def _fake_get(url: str, timeout: int):  # noqa: ARG001
         if url.endswith("/repos"):
             return _FakeResponse({"repo_ids": ["repo-a"]})
-        if url.endswith("/repos/repo-a/status"):
+        if "/repos/repo-a/status" in url:
             return _FakeResponse({"query_ready": True, "warnings": []})
         return _FakeResponse({})
 
@@ -284,3 +284,43 @@ def test_query_profile_balanceado_retries_with_reduced_scope(
     assert second_payload["top_n"] == 40
     assert second_payload["top_k"] == 10
     assert "reintento automatico" in window.query_view.history_output.toPlainText().lower()
+
+
+def test_query_status_preflight_sends_selected_embedding_configuration(
+    monkeypatch: pytest.MonkeyPatch,
+    qapp: QApplication,
+) -> None:
+    """Incluye provider/model de embeddings seleccionados al validar status previo a query."""
+    captured_urls: list[str] = []
+
+    def _fake_get(url: str, timeout: int):  # noqa: ARG001
+        captured_urls.append(url)
+        if url.endswith("/repos"):
+            return _FakeResponse({"repo_ids": ["repo-a"]})
+        if "/repos/repo-a/status" in url:
+            return _FakeResponse({"query_ready": True, "warnings": []})
+        return _FakeResponse({})
+
+    import coderag.ui.main_window as module
+
+    monkeypatch.setattr(module.requests, "get", _fake_get)
+    window = MainWindow()
+
+    def _fake_post(*args, **kwargs):  # noqa: ANN002, ANN003
+        return _FakeResponse({"answer": "ok", "citations": [], "diagnostics": {}})
+
+    monkeypatch.setattr(module.requests, "post", _fake_post)
+
+    window.query_view.repo_id.setCurrentText("repo-a")
+    window.query_view.embedding_provider.setCurrentText("vertex_ai")
+    window.query_view.embedding_model.setCurrentText("text-embedding-005")
+    window.query_view.query_input.setText("hola")
+
+    window._on_query()
+
+    assert any(
+        "requested_embedding_provider=vertex_ai" in url
+        and "requested_embedding_model=text-embedding-005" in url
+        for url in captured_urls
+        if "/repos/repo-a/status" in url
+    )

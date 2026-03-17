@@ -148,3 +148,46 @@ def test_run_storage_preflight_uses_cache(monkeypatch) -> None:
     assert first["cached"] is False
     assert second["cached"] is True
     assert calls["count"] == 6
+
+
+def test_evaluate_embedding_compatibility_detects_dimension_mismatch() -> None:
+    """Marca incompatibilidad cuando consulta e ingesta usan dimensiones distintas."""
+    result = storage_health.evaluate_embedding_compatibility(
+        runtime_payload={
+            "last_embedding_provider": "openai",
+            "last_embedding_model": "text-embedding-3-small",
+        },
+        requested_embedding_provider="vertex_ai",
+        requested_embedding_model="text-embedding-005",
+    )
+
+    assert result["embedding_compatible"] is False
+    assert result["compatibility_reason"] == "embedding_dimension_mismatch"
+
+
+def test_get_repo_query_status_blocks_ready_on_embedding_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cuando hay mismatch dimensional, query_ready debe ser falso aun con Chroma/BM25 disponibles."""
+    monkeypatch.setattr(
+        storage_health,
+        "_count_chroma_documents_for_repo",
+        lambda **kwargs: 5,
+    )
+    monkeypatch.setattr(storage_health.GLOBAL_BM25, "ensure_repo_loaded", lambda repo_id: True)
+    monkeypatch.setattr(storage_health, "_check_repo_graph_available", lambda **kwargs: True)
+
+    status = storage_health.get_repo_query_status(
+        repo_id="repo-a",
+        listed_in_catalog=True,
+        runtime_payload={
+            "last_embedding_provider": "openai",
+            "last_embedding_model": "text-embedding-3-small",
+        },
+        requested_embedding_provider="vertex_ai",
+        requested_embedding_model="text-embedding-005",
+    )
+
+    assert status["embedding_compatible"] is False
+    assert status["compatibility_reason"] == "embedding_dimension_mismatch"
+    assert status["query_ready"] is False

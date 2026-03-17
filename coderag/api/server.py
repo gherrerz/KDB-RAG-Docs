@@ -191,10 +191,31 @@ def query_repo(request: QueryRequest) -> QueryResponse:
 
     listed_repo_ids = jobs.list_repo_ids()
     listed_in_catalog = request.repo_id in listed_repo_ids
+    runtime_payload = jobs.get_repo_runtime(request.repo_id)
     readiness = get_repo_query_status(
         repo_id=request.repo_id,
         listed_in_catalog=listed_in_catalog,
+        runtime_payload=runtime_payload,
+        requested_embedding_provider=request.embedding_provider,
+        requested_embedding_model=request.embedding_model,
     )
+    if runtime_payload:
+        readiness.update(runtime_payload)
+
+    if readiness.get("embedding_compatible") is False:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": (
+                    "El embedding seleccionado para consulta no es compatible "
+                    "con la última ingesta del repositorio. Reingesta con el "
+                    "mismo modelo/provider o limpia índices antes de consultar."
+                ),
+                "code": "embedding_incompatible",
+                "repo_status": readiness,
+            },
+        )
+
     if not readiness["query_ready"]:
         raise HTTPException(
             status_code=422,
@@ -311,14 +332,21 @@ def list_provider_models(
         "Chroma, carga BM25 y disponibilidad de grafo."
     ),
 )
-def repo_status(repo_id: str) -> RepoQueryStatusResponse:
+def repo_status(
+    repo_id: str,
+    requested_embedding_provider: str | None = None,
+    requested_embedding_model: str | None = None,
+) -> RepoQueryStatusResponse:
     """Devuelve estado de disponibilidad de consulta para un repositorio."""
     listed_repo_ids = jobs.list_repo_ids()
+    runtime_payload = jobs.get_repo_runtime(repo_id)
     status_payload = get_repo_query_status(
         repo_id=repo_id,
         listed_in_catalog=repo_id in listed_repo_ids,
+        runtime_payload=runtime_payload,
+        requested_embedding_provider=requested_embedding_provider,
+        requested_embedding_model=requested_embedding_model,
     )
-    runtime_payload = jobs.get_repo_runtime(repo_id)
     if runtime_payload:
         status_payload.update(runtime_payload)
     return RepoQueryStatusResponse(**status_payload)

@@ -37,7 +37,7 @@ def _build_window(monkeypatch: pytest.MonkeyPatch) -> MainWindow:
     def _fake_get(url: str, timeout: int):  # noqa: ARG001
         if url.endswith("/repos"):
             return _FakeResponse({"repo_ids": ["repo-a"]})
-        if url.endswith("/repos/repo-a/status"):
+        if "/repos/repo-a/status" in url:
             return _FakeResponse({"query_ready": True, "warnings": []})
         return _FakeResponse({})
 
@@ -90,3 +90,43 @@ def test_finalize_job_poll_clears_runtime_state(
 
     assert window._job_poll_enabled is False
     assert window._active_job_id is None
+
+
+def test_repo_switch_syncs_embedding_runtime_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+    qapp: QApplication,
+) -> None:
+    """Al cambiar repo, sincroniza provider/model de query con última ingesta conocida."""
+
+    def _fake_get(url: str, timeout: int):  # noqa: ARG001
+        if url.endswith("/repos"):
+            return _FakeResponse({"repo_ids": ["repo-a", "repo-b"]})
+        if "/repos/repo-a/status" in url:
+            return _FakeResponse(
+                {
+                    "query_ready": True,
+                    "warnings": [],
+                    "last_embedding_provider": "openai",
+                    "last_embedding_model": "text-embedding-3-small",
+                }
+            )
+        if "/repos/repo-b/status" in url:
+            return _FakeResponse(
+                {
+                    "query_ready": True,
+                    "warnings": [],
+                    "last_embedding_provider": "vertex_ai",
+                    "last_embedding_model": "text-embedding-005",
+                }
+            )
+        return _FakeResponse({})
+
+    import coderag.ui.main_window as module
+
+    monkeypatch.setattr(module.requests, "get", _fake_get)
+    window = MainWindow()
+
+    window.query_view.repo_id.setCurrentText("repo-b")
+
+    assert window.query_view.get_embedding_provider() == "vertex_ai"
+    assert window.query_view.get_embedding_model() == "text-embedding-005"

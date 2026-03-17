@@ -2,7 +2,7 @@
 
 from coderag.core.models import RetrievalChunk, ScannedFile
 from coderag.ingestion.chunker import extract_symbol_chunks
-from coderag.ingestion.index_bm25 import BM25Index
+from coderag.ingestion.index_bm25 import BM25Index, tokenize
 from coderag.retrieval.context_assembler import assemble_context
 
 
@@ -130,6 +130,37 @@ def test_bm25_persist_and_load_roundtrip(
     result = other.query(repo_id="r1", text="alpha", top_n=1)
     assert result
     assert result[0]["id"] == "a"
+
+
+def test_tokenize_splits_identifiers_and_normalizes_accents() -> None:
+    """Tokeniza camel/snake/kebab y normaliza acentos para matching estable."""
+    tokens = tokenize("DependencyManager parse_requirements archivo-dependencias")
+
+    assert "dependencymanager" in tokens
+    assert "dependency" in tokens
+    assert "manager" in tokens
+    assert "parse_requirements" in tokens
+    assert "parse" in tokens
+    assert "requirements" in tokens
+    assert "archivo-dependencias" in tokens
+    assert "dependencias" in tokens
+
+
+def test_bm25_query_expands_spanish_technical_terms() -> None:
+    """Consulta en español recupera documentos en inglés vía expansión ES/EN genérica."""
+    index = BM25Index()
+    index.build(
+        repo_id="r2",
+        docs=[
+            "Project dependencies are declared in requirements.txt",
+            "Authentication service handles login",
+        ],
+        metadatas=[{"id": "dep"}, {"id": "auth"}],
+    )
+
+    result = index.query(repo_id="r2", text="dependencias del proyecto", top_n=1)
+    assert result
+    assert result[0]["id"] == "dep"
 
 
 def test_assemble_context_applies_token_limit() -> None:

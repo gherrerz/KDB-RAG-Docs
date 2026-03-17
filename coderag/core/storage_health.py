@@ -13,6 +13,7 @@ from openai import OpenAI
 from redis import Redis
 
 from coderag.core.settings import get_settings
+from coderag.ingestion.embedding import MODEL_DIMENSIONS
 from coderag.ingestion.index_bm25 import GLOBAL_BM25
 from coderag.ingestion.index_chroma import ChromaIndex
 from coderag.storage.metadata_store import MetadataStore
@@ -30,6 +31,77 @@ class StoragePreflightError(RuntimeError):
 
 _CACHE: dict[tuple[str, str | None], dict[str, Any]] = {}
 QUERY_COLLECTIONS = ["code_symbols", "code_files", "code_modules"]
+
+
+def _resolve_embedding_request(
+    provider: str | None,
+    model: str | None,
+) -> tuple[str, str]:
+    """Resuelve provider/model efectivos de embeddings para una operación de query."""
+    settings = get_settings()
+    resolved_provider = settings.resolve_embedding_provider(provider)
+    resolved_model = settings.resolve_embedding_model(resolved_provider, model)
+    return resolved_provider, resolved_model
+
+
+def evaluate_embedding_compatibility(
+    *,
+    runtime_payload: dict[str, str | None] | None,
+    requested_embedding_provider: str | None,
+    requested_embedding_model: str | None,
+) -> dict[str, Any]:
+    """Evalúa compatibilidad entre embeddings de última ingesta y consulta actual."""
+    requested_provider, requested_model = _resolve_embedding_request(
+        requested_embedding_provider,
+        requested_embedding_model,
+    )
+
+    if not runtime_payload:
+        return {
+            "embedding_compatible": None,
+            "compatibility_reason": "repo_runtime_embedding_unknown",
+            "query_embedding_provider": requested_provider,
+            "query_embedding_model": requested_model,
+            "query_embedding_dimension": MODEL_DIMENSIONS.get(requested_model),
+            "last_embedding_dimension": None,
+        }
+
+    last_provider_raw = runtime_payload.get("last_embedding_provider")
+    last_model_raw = runtime_payload.get("last_embedding_model")
+    if not last_provider_raw or not last_model_raw:
+        return {
+            "embedding_compatible": None,
+            "compatibility_reason": "repo_runtime_embedding_unknown",
+            "query_embedding_provider": requested_provider,
+            "query_embedding_model": requested_model,
+            "query_embedding_dimension": MODEL_DIMENSIONS.get(requested_model),
+            "last_embedding_dimension": None,
+        }
+
+    settings = get_settings()
+    last_provider = settings.resolve_embedding_provider(last_provider_raw)
+    last_model = settings.resolve_embedding_model(last_provider, last_model_raw)
+    query_dimension = MODEL_DIMENSIONS.get(requested_model)
+    last_dimension = MODEL_DIMENSIONS.get(last_model)
+
+    compatibility_reason = "embedding_compatible"
+    embedding_compatible: bool | None = True
+
+    if query_dimension is None or last_dimension is None:
+        embedding_compatible = None
+        compatibility_reason = "embedding_dimension_unknown"
+    elif query_dimension != last_dimension:
+        embedding_compatible = False
+        compatibility_reason = "embedding_dimension_mismatch"
+
+    return {
+        "embedding_compatible": embedding_compatible,
+        "compatibility_reason": compatibility_reason,
+        "query_embedding_provider": requested_provider,
+        "query_embedding_model": requested_model,
+        "query_embedding_dimension": query_dimension,
+        "last_embedding_dimension": last_dimension,
+    }
 
 
 def _now_utc_iso() -> str:
@@ -406,6 +478,9 @@ def get_repo_query_status(
     *,
     repo_id: str,
     listed_in_catalog: bool,
+    runtime_payload: dict[str, str | None] | None = None,
+    requested_embedding_provider: str | None = None,
+    requested_embedding_model: str | None = None,
 ) -> dict[str, Any]:
     """Evalúa si un repositorio está listo para consultas RAG."""
     settings = get_settings()
@@ -437,8 +512,20 @@ def get_repo_query_status(
     except Exception as exc:  # pragma: no cover - depende de infraestructura
         warnings.append(f"Neo4j no disponible para validar repo '{repo_id}': {exc}")
 
+    embedding_compatibility = evaluate_embedding_compatibility(
+        runtime_payload=runtime_payload,
+        requested_embedding_provider=requested_embedding_provider,
+        requested_embedding_model=requested_embedding_model,
+    )
+    embedding_compatible = embedding_compatibility.get("embedding_compatible")
+    if embedding_compatible is False:
+        warnings.append(
+            "El modelo/provider de embeddings de consulta no es compatible con "
+            "la última ingesta del repositorio."
+        )
+
     chroma_has_docs = any((count or 0) > 0 for count in chroma_counts.values())
-    query_ready = bool(chroma_has_docs and bm25_loaded)
+    query_ready = bool(chroma_has_docs and bm25_loaded and embedding_compatible is not False)
     return {
         "repo_id": repo_id,
         "listed_in_catalog": listed_in_catalog,
@@ -446,6 +533,8 @@ def get_repo_query_status(
         "chroma_counts": chroma_counts,
         "bm25_loaded": bm25_loaded,
         "graph_available": graph_available,
+        "embedding_compatible": embedding_compatible,
+        "compatibility_reason": embedding_compatibility["compatibility_reason"],
         "warnings": warnings,
     }
 

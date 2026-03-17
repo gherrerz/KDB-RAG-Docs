@@ -131,9 +131,19 @@ def test_repo_status_endpoint_returns_structured_repo_readiness(monkeypatch) -> 
     def fake_list_repo_ids() -> list[str]:
         return ["mall"]
 
-    def fake_get_repo_query_status(*, repo_id: str, listed_in_catalog: bool) -> dict:
+    def fake_get_repo_query_status(
+        *,
+        repo_id: str,
+        listed_in_catalog: bool,
+        runtime_payload: dict | None = None,
+        requested_embedding_provider: str | None = None,
+        requested_embedding_model: str | None = None,
+    ) -> dict:
         assert repo_id == "mall"
         assert listed_in_catalog is True
+        assert runtime_payload is not None
+        assert requested_embedding_provider is None
+        assert requested_embedding_model is None
         return {
             "repo_id": "mall",
             "listed_in_catalog": True,
@@ -258,7 +268,17 @@ def test_query_endpoint_forwards_optional_provider_fields(monkeypatch) -> None:
     def fake_list_repo_ids() -> list[str]:
         return ["mall"]
 
-    def fake_get_repo_query_status(*, repo_id: str, listed_in_catalog: bool) -> dict:
+    def fake_get_repo_query_status(
+        *,
+        repo_id: str,
+        listed_in_catalog: bool,
+        runtime_payload: dict | None = None,
+        requested_embedding_provider: str | None = None,
+        requested_embedding_model: str | None = None,
+    ) -> dict:
+        assert runtime_payload is None
+        assert requested_embedding_provider == "gemini"
+        assert requested_embedding_model == "text-embedding-004"
         return {
             "repo_id": repo_id,
             "listed_in_catalog": listed_in_catalog,
@@ -352,9 +372,19 @@ def test_query_endpoint_returns_422_when_repo_is_not_ready(monkeypatch) -> None:
     def fake_list_repo_ids() -> list[str]:
         return ["mall"]
 
-    def fake_get_repo_query_status(*, repo_id: str, listed_in_catalog: bool) -> dict:
+    def fake_get_repo_query_status(
+        *,
+        repo_id: str,
+        listed_in_catalog: bool,
+        runtime_payload: dict | None = None,
+        requested_embedding_provider: str | None = None,
+        requested_embedding_model: str | None = None,
+    ) -> dict:
         assert repo_id == "mall"
         assert listed_in_catalog is True
+        assert runtime_payload is None
+        assert requested_embedding_provider is None
+        assert requested_embedding_model is None
         return {
             "repo_id": "mall",
             "listed_in_catalog": True,
@@ -386,6 +416,73 @@ def test_query_endpoint_returns_422_when_repo_is_not_ready(monkeypatch) -> None:
     payload = response.json()
     assert payload["detail"]["code"] == "repo_not_ready"
     assert payload["detail"]["repo_status"]["query_ready"] is False
+
+
+def test_query_endpoint_returns_422_when_embedding_is_incompatible(monkeypatch) -> None:
+    """Devuelve error explícito cuando embedding de consulta no es compatible con la ingesta."""
+
+    def fake_list_repo_ids() -> list[str]:
+        return ["mall"]
+
+    def fake_get_repo_runtime(repo_id: str) -> dict[str, str]:
+        assert repo_id == "mall"
+        return {
+            "last_embedding_provider": "openai",
+            "last_embedding_model": "text-embedding-3-small",
+        }
+
+    def fake_get_repo_query_status(
+        *,
+        repo_id: str,
+        listed_in_catalog: bool,
+        runtime_payload: dict | None = None,
+        requested_embedding_provider: str | None = None,
+        requested_embedding_model: str | None = None,
+    ) -> dict:
+        assert repo_id == "mall"
+        assert listed_in_catalog is True
+        assert runtime_payload is not None
+        assert requested_embedding_provider == "vertex_ai"
+        assert requested_embedding_model == "text-embedding-005"
+        return {
+            "repo_id": "mall",
+            "listed_in_catalog": True,
+            "query_ready": False,
+            "chroma_counts": {
+                "code_symbols": 10,
+                "code_files": 10,
+                "code_modules": 4,
+            },
+            "bm25_loaded": True,
+            "graph_available": True,
+            "embedding_compatible": False,
+            "compatibility_reason": "embedding_dimension_mismatch",
+            "warnings": [
+                "El modelo/provider de embeddings de consulta no es compatible con la última ingesta del repositorio."
+            ],
+        }
+
+    monkeypatch.setattr(server.jobs, "list_repo_ids", fake_list_repo_ids)
+    monkeypatch.setattr(server.jobs, "get_repo_runtime", fake_get_repo_runtime)
+    monkeypatch.setattr(server, "get_repo_query_status", fake_get_repo_query_status)
+
+    client = TestClient(app)
+    response = client.post(
+        "/query",
+        json={
+            "repo_id": "mall",
+            "query": "cuales son las dependencias del proyecto",
+            "top_n": 5,
+            "top_k": 3,
+            "embedding_provider": "vertex_ai",
+            "embedding_model": "text-embedding-005",
+        },
+    )
+
+    assert response.status_code == 422
+    payload = response.json()
+    assert payload["detail"]["code"] == "embedding_incompatible"
+    assert payload["detail"]["repo_status"]["embedding_compatible"] is False
 
 
 @pytest.mark.parametrize(

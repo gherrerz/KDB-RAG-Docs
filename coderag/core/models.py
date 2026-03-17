@@ -234,6 +234,17 @@ class RepoQueryStatusResponse(BaseModel):
             "Modelo de embedding usado en la última ingesta conocida del repo."
         ),
     )
+    embedding_compatible: bool | None = Field(
+        default=None,
+        description=(
+            "Compatibilidad entre embedding de consulta y embedding de la "
+            "última ingesta (None cuando no se puede evaluar)."
+        ),
+    )
+    compatibility_reason: str | None = Field(
+        default=None,
+        description="Código breve que explica el resultado de compatibilidad.",
+    )
     warnings: list[str] = Field(default_factory=list, description="Advertencias de readiness no bloqueantes.")
 
 

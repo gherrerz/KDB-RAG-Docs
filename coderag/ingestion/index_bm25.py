@@ -2,15 +2,107 @@
 
 import json
 from pathlib import Path
+import re
+import unicodedata
 
 from rank_bm25 import BM25Okapi
 
 from coderag.core.settings import get_settings
 
 
+TOKEN_PATTERN = re.compile(r"[A-Za-z0-9_.\-/]+")
+CAMEL_BOUNDARY_PATTERN = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+
+QUERY_SYNONYMS: dict[str, tuple[str, ...]] = {
+    "dependencia": ("dependencias", "dependency", "dependencies", "deps", "requirement", "requirements"),
+    "dependencias": ("dependencia", "dependency", "dependencies", "deps", "requirement", "requirements"),
+    "dependency": ("dependencies", "dependencia", "dependencias", "deps", "requirement", "requirements"),
+    "dependencies": ("dependency", "dependencia", "dependencias", "deps", "requirement", "requirements"),
+    "requirement": ("requirements", "dependency", "dependencies", "dependencia", "dependencias"),
+    "requirements": ("requirement", "dependency", "dependencies", "dependencia", "dependencias"),
+    "libreria": ("librerias", "library", "libraries", "package", "packages"),
+    "librerias": ("libreria", "library", "libraries", "package", "packages"),
+    "library": ("libraries", "libreria", "librerias", "package", "packages"),
+    "libraries": ("library", "libreria", "librerias", "package", "packages"),
+    "paquete": ("paquetes", "package", "packages"),
+    "paquetes": ("paquete", "package", "packages"),
+    "package": ("packages", "paquete", "paquetes"),
+    "packages": ("package", "paquete", "paquetes"),
+}
+
+
+def _strip_accents(value: str) -> str:
+    """Elimina acentos para robustez multilingüe en matching léxico."""
+    normalized = unicodedata.normalize("NFD", value)
+    return "".join(char for char in normalized if unicodedata.category(char) != "Mn")
+
+
+def _normalize_token(token: str) -> str:
+    """Normaliza token para indexado/consulta BM25."""
+    return _strip_accents(token.strip().lower())
+
+
+def _split_identifier_tokens(token: str) -> list[str]:
+    """Descompone identificadores (camelCase, snake_case, kebab-case, rutas)."""
+    normalized = CAMEL_BOUNDARY_PATTERN.sub(" ", token)
+    pieces = re.split(r"[^A-Za-z0-9]+", normalized)
+    return [piece for piece in pieces if piece]
+
+
+def _singular_variants(token: str) -> set[str]:
+    """Genera variantes singulares/plurales simples para mejorar recall léxico."""
+    variants: set[str] = set()
+    if len(token) <= 2:
+        return variants
+
+    if token.endswith("ies") and len(token) > 4:
+        variants.add(f"{token[:-3]}y")
+    if token.endswith("es") and len(token) > 3:
+        variants.add(token[:-2])
+    if token.endswith("s") and len(token) > 3:
+        variants.add(token[:-1])
+    return {variant for variant in variants if variant and variant != token}
+
+
+def _expand_query_tokens(tokens: list[str]) -> list[str]:
+    """Expande tokens de consulta con variantes y sinónimos técnicos ES/EN."""
+    expanded: list[str] = []
+    seen: set[str] = set()
+
+    def _push(value: str) -> None:
+        normalized = _normalize_token(value)
+        if not normalized or normalized in seen:
+            return
+        seen.add(normalized)
+        expanded.append(normalized)
+
+    for token in tokens:
+        _push(token)
+        for variant in _singular_variants(token):
+            _push(variant)
+        for synonym in QUERY_SYNONYMS.get(token, ()):  # generic software terms
+            _push(synonym)
+
+    return expanded
+
+
 def tokenize(text: str) -> list[str]:
-    """Tokenice el texto con una simple normalización de espacios en blanco."""
-    return text.lower().replace("\n", " ").split()
+    """Tokeniza texto de forma robusta para búsquedas léxicas de código."""
+    tokens: list[str] = []
+    for match in TOKEN_PATTERN.findall(text):
+        raw = match.strip()
+        if not raw:
+            continue
+
+        whole = _normalize_token(raw)
+        if whole:
+            tokens.append(whole)
+
+        for part in _split_identifier_tokens(raw):
+            normalized_part = _normalize_token(part)
+            if normalized_part:
+                tokens.append(normalized_part)
+    return tokens
 
 
 class BM25Index:
@@ -81,7 +173,11 @@ class BM25Index:
             return []
 
         bm25, docs, metadatas = self._by_repo[repo_id]
-        scores = bm25.get_scores(tokenize(text))
+        base_tokens = tokenize(text)
+        query_tokens = _expand_query_tokens(base_tokens)
+        if not query_tokens:
+            query_tokens = base_tokens
+        scores = bm25.get_scores(query_tokens)
         pairs = list(enumerate(scores))
         pairs.sort(key=lambda item: item[1], reverse=True)
         result: list[dict] = []

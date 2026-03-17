@@ -40,11 +40,15 @@ def test_discover_repo_modules_reads_top_level_dirs(
 
 
 def test_is_inventory_query_detection() -> None:
-    """Detecta intenciones de inventario genéricas en consultas en lenguaje natural."""
+    """Solo detecta inventario cuando el usuario lo pide explícitamente."""
     assert query_service._is_inventory_query(
-        "cuales son todos los service del modulo api-service"
+        "dame el inventario de services del modulo api-service"
     )
-    assert query_service._is_inventory_query("list all controllers in module")
+    assert query_service._is_inventory_query("show inventory of controllers")
+    assert query_service._is_inventory_query(
+        "inventario: cuales son los service del modulo api-service"
+    )
+    assert not query_service._is_inventory_query("list all controllers in module")
     assert not query_service._is_inventory_query("que hace autenticacion")
 
 
@@ -454,7 +458,7 @@ def test_run_query_uses_inventory_short_circuit(
 
     result = query_service.run_query(
         repo_id="repo1",
-        query="cuales son todos los modelos de mall-mbg",
+        query="inventario: cuales son los modelos de mall-mbg",
         top_n=80,
         top_k=20,
     )
@@ -596,6 +600,44 @@ def test_run_inventory_query_includes_component_purposes_when_requested(
     assert "modelos de datos" in result.answer
     assert result.diagnostics["inventory_explain"] is True
     assert result.diagnostics["inventory_purpose_count"] == 2
+
+
+def test_run_inventory_query_auto_enriches_dependency_inventory_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """En consultas de dependencias, agrega contexto funcional sin requerir modo explain explícito."""
+
+    discovered = [
+        {
+            "label": "requirements.txt",
+            "path": "requirements.txt",
+            "kind": "file",
+            "start_line": 1,
+            "end_line": 20,
+        }
+    ]
+
+    monkeypatch.setattr(query_service, "_query_inventory_entities", lambda **_: discovered)
+    monkeypatch.setattr(
+        query_service,
+        "_describe_inventory_components",
+        lambda **_: [(
+            "requirements.txt",
+            "Declara dependencias Python del proyecto para instalación y despliegue.",
+        )],
+    )
+
+    result = query_service.run_inventory_query(
+        repo_id="repo1",
+        query="cuales son las dependencias del proyecto",
+        page=1,
+        page_size=20,
+    )
+
+    assert "Función probable de cada componente" in result.answer
+    assert "requirements.txt" in result.answer
+    assert result.diagnostics["inventory_explain"] is False
+    assert result.diagnostics["inventory_purpose_count"] == 1
 
 
 def test_run_query_retries_with_raw_citations_if_filtered_empty(
