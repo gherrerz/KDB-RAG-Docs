@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QPlainTextEdit,
     QPushButton,
+    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
@@ -103,6 +104,14 @@ class QueryView(QWidget):
         self.query_profile = QComboBox()
         self.query_profile.addItems(["rapido", "balanceado", "profundo"])
         self.query_profile.setCurrentText("balanceado")
+        self.top_n_input = QSpinBox()
+        self.top_n_input.setRange(1, 500)
+        self.top_n_input.setValue(80)
+        self.top_n_input.setToolTip("Cantidad de candidatos para retrieval hibrido.")
+        self.top_k_input = QSpinBox()
+        self.top_k_input.setRange(1, 100)
+        self.top_k_input.setValue(20)
+        self.top_k_input.setToolTip("Cantidad de fragmentos finales para reranking.")
         self.llm_warning = QLabel("")
         self.llm_warning.setObjectName("providerWarning")
         self.llm_warning.setWordWrap(True)
@@ -178,11 +187,15 @@ class QueryView(QWidget):
         repo_bar.addWidget(self.verifier_model, 3, 1)
         repo_bar.addWidget(QLabel("Perfil"), 3, 2)
         repo_bar.addWidget(self.query_profile, 3, 3)
-        repo_bar.addWidget(self.embedding_warning, 4, 0, 1, 4)
-        repo_bar.addWidget(self.llm_warning, 5, 0, 1, 4)
-        repo_bar.addWidget(self.embedding_status_chip, 6, 0, 1, 2)
-        repo_bar.addWidget(self.llm_status_chip, 6, 2, 1, 2)
-        repo_bar.addWidget(self.force_fallback, 7, 0, 1, 4)
+        repo_bar.addWidget(QLabel("Top-N"), 4, 0)
+        repo_bar.addWidget(self.top_n_input, 4, 1)
+        repo_bar.addWidget(QLabel("Top-K"), 4, 2)
+        repo_bar.addWidget(self.top_k_input, 4, 3)
+        repo_bar.addWidget(self.embedding_warning, 5, 0, 1, 4)
+        repo_bar.addWidget(self.llm_warning, 6, 0, 1, 4)
+        repo_bar.addWidget(self.embedding_status_chip, 7, 0, 1, 2)
+        repo_bar.addWidget(self.llm_status_chip, 7, 2, 1, 2)
+        repo_bar.addWidget(self.force_fallback, 8, 0, 1, 4)
         self.repo_card.setLayout(repo_bar)
 
         top_bar = QGridLayout()
@@ -256,6 +269,17 @@ class QueryView(QWidget):
             """
             + BASE_INPUT_STYLES
             + """
+            QSpinBox {
+                background-color: #0E1A2F;
+                color: #EAF1FF;
+                border: 1px solid #2A3A5A;
+                border-radius: 8px;
+                padding: 7px;
+            }
+            QSpinBox:focus {
+                border: 1px solid #5EA0FF;
+                background-color: #10213B;
+            }
             QPlainTextEdit {
                 background-color: #0E1A2F;
                 color: #EAF1FF;
@@ -351,6 +375,8 @@ class QueryView(QWidget):
         self.answer_model.setDisabled(running)
         self.verifier_model.setDisabled(running)
         self.query_profile.setDisabled(running)
+        self.top_n_input.setDisabled(running)
+        self.top_k_input.setDisabled(running)
         self.refresh_repo_ids_button.setDisabled(running)
         self.refresh_models_button.setDisabled(running)
         self.query_input.setDisabled(running)
@@ -419,6 +445,19 @@ class QueryView(QWidget):
     def get_query_profile(self) -> str:
         """Devuelve el perfil de consulta seleccionado por el usuario."""
         return self.query_profile.currentText().strip().lower()
+
+    def get_top_n(self) -> int:
+        """Devuelve el valor top-n actual elegido por el usuario."""
+        return int(self.top_n_input.value())
+
+    def get_top_k(self) -> int:
+        """Devuelve el valor top-k actual elegido por el usuario."""
+        return int(self.top_k_input.value())
+
+    def set_query_limits(self, *, top_n: int, top_k: int) -> None:
+        """Sincroniza top-n y top-k visibles en UI con un perfil o preset."""
+        self.top_n_input.setValue(int(top_n))
+        self.top_k_input.setValue(int(top_k))
 
     def clear_question(self) -> None:
         """Borre la entrada de la consulta después de un envío exitoso."""

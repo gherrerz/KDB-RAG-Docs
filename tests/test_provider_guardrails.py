@@ -220,6 +220,56 @@ def test_query_profile_profundo_uses_expanded_payload_and_timeout(
     assert float(captured["timeout"]) >= 120.0
 
 
+def test_query_profile_change_resets_top_n_top_k_inputs(
+    monkeypatch: pytest.MonkeyPatch,
+    qapp: QApplication,
+) -> None:
+    """Cambiar perfil restablece top-n/top-k a defaults del perfil seleccionado."""
+    window = _build_window(monkeypatch)
+
+    window.query_view.query_profile.setCurrentText("rapido")
+    assert window.query_view.get_top_n() == 40
+    assert window.query_view.get_top_k() == 10
+
+    window.query_view.set_query_limits(top_n=61, top_k=17)
+    assert window.query_view.get_top_n() == 61
+    assert window.query_view.get_top_k() == 17
+
+    window.query_view.query_profile.setCurrentText("profundo")
+    assert window.query_view.get_top_n() == 120
+    assert window.query_view.get_top_k() == 30
+
+
+def test_query_payload_uses_top_n_top_k_values_edited_in_ui(
+    monkeypatch: pytest.MonkeyPatch,
+    qapp: QApplication,
+) -> None:
+    """La consulta usa top-n/top-k editados en pantalla y no solo defaults."""
+    window = _build_window(monkeypatch)
+
+    captured: dict[str, object] = {"json": None}
+
+    def _fake_post(url: str, json: dict, timeout: float):  # noqa: ANN001
+        captured["json"] = json
+        return _FakeResponse({"answer": "ok", "citations": [], "diagnostics": {}})
+
+    import coderag.ui.main_window as module
+
+    monkeypatch.setattr(module.requests, "post", _fake_post)
+
+    window.query_view.repo_id.setCurrentText("repo-a")
+    window.query_view.query_input.setText("resumen")
+    window.query_view.query_profile.setCurrentText("balanceado")
+    window.query_view.set_query_limits(top_n=33, top_k=7)
+
+    window._on_query()
+
+    payload = captured["json"]
+    assert isinstance(payload, dict)
+    assert payload["top_n"] == 33
+    assert payload["top_k"] == 7
+
+
 def test_query_profile_rapido_timeout_retries_then_reports_error(
     monkeypatch: pytest.MonkeyPatch,
     qapp: QApplication,

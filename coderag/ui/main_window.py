@@ -101,6 +101,7 @@ class MainWindow(QMainWindow):
         self._refresh_repo_ids(log_on_error=False)
         self._selected_query_repo_id = self.query_view.get_repo_id_text()
         self.query_view.repo_id.currentTextChanged.connect(self._on_query_repo_changed)
+        self._sync_query_limits_from_profile()
         self._update_ingest_action_state()
         self._update_query_action_state()
 
@@ -113,6 +114,8 @@ class MainWindow(QMainWindow):
         self.query_view.answer_model.setDisabled(not enabled)
         self.query_view.verifier_model.setDisabled(not enabled)
         self.query_view.query_profile.setDisabled(not enabled)
+        self.query_view.top_n_input.setDisabled(not enabled)
+        self.query_view.top_k_input.setDisabled(not enabled)
         self.query_view.refresh_repo_ids_button.setDisabled(not enabled)
         self.query_view.refresh_models_button.setDisabled(not enabled)
         self.query_view.query_input.setDisabled(not enabled)
@@ -187,6 +190,19 @@ class MainWindow(QMainWindow):
         )
         self.query_view.query_input.textChanged.connect(
             lambda _: self._update_query_action_state()
+        )
+        self.query_view.query_profile.currentTextChanged.connect(
+            lambda _: self._sync_query_limits_from_profile()
+        )
+
+    def _sync_query_limits_from_profile(self) -> None:
+        """Restaura top-n/top-k por defecto cada vez que cambia el perfil."""
+        profile_settings = self._resolve_query_profile_settings(
+            self.query_view.get_query_profile()
+        )
+        self.query_view.set_query_limits(
+            top_n=int(profile_settings["top_n"]),
+            top_k=int(profile_settings["top_k"]),
         )
 
     def _apply_ingest_action_state(self, state: ActionState) -> None:
@@ -489,8 +505,8 @@ class MainWindow(QMainWindow):
         payload = {
             "repo_id": repo_id,
             "query": question,
-            "top_n": int(profile_settings["top_n"]),
-            "top_k": int(profile_settings["top_k"]),
+            "top_n": self.query_view.get_top_n(),
+            "top_k": self.query_view.get_top_k(),
             "embedding_provider": self.query_view.get_embedding_provider(),
             "embedding_model": self.query_view.get_embedding_model() or None,
             "llm_provider": self.query_view.get_llm_provider(),
