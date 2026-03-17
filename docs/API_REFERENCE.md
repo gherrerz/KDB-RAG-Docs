@@ -273,8 +273,8 @@ Campos frecuentes:
 - `llm_enabled`, `llm_provider`, `llm_answer_model`, `llm_verifier_model`, `llm_verify_enabled`.
 - `llm_capabilities`, `embedding_provider`, `embedding_model`, `embedding_capabilities`.
 - `discovered_modules`: modulos detectados por heuristica.
-- `inventory_intent`: si la consulta parecia de inventario.
-- `inventory_route`: `graph_first` o `fallback_to_general` segun routing.
+- `inventory_intent`: true solo cuando la consulta contiene `inventario` o `inventory`.
+- `inventory_route`: `graph_first` (cuando hay intent + target) o `fallback_to_general`.
 - `fallback_reason`: `not_configured`, `verification_failed`, `generation_error`, `time_budget_exhausted`, `insufficient_context`.
 - `verify_valid`, `verify_skipped`.
 - `query_budget_seconds`, `budget_exhausted`.
@@ -297,7 +297,7 @@ Campos frecuentes:
 
 ## Comportamientos importantes
 
-- `/query` puede redirigir internamente a inventario cuando detecta intencion tipo "todos los X".
+- `/query` solo redirige internamente a inventario cuando la consulta contiene `inventario` o `inventory`.
 - Si hay intencion de inventario pero no se detecta target, `/query` sigue por flujo general con `inventory_route = fallback_to_general`.
 - `/repos/{repo_id}/status` evalua readiness de query por repo sin ejecutar consulta.
 - `/health/storage` ejecuta preflight explicito y retorna estado detallado por componente.

@@ -135,14 +135,18 @@ flowchart TB
 ```mermaid
 %%{init: {'flowchart': {'htmlLabels': true, 'curve': 'linear', 'nodeSpacing': 35, 'rankSpacing': 50}}}%%
 flowchart TB
-   API["API /query<br/>y /inventory/query"] --> NORM["Normalización de consulta<br/>intención + target inventario"]
-   NORM --> HYB["Hybrid Search<br/>Vector + BM25"]
+   API["API /query<br/>y /inventory/query"] --> NORM["Normalización de consulta<br/>target + señales"]
+   NORM --> ROUTE{"Consulta contiene<br/>inventario/inventory?"}
+   ROUTE -->|Sí| INV["Graph-first inventory<br/>(/query -> run_inventory_query)"]
+   ROUTE -->|No| HYB["Hybrid Search<br/>Vector + BM25"]
+   INV --> RESP
    HYB --> RER["Reranker<br/>Top-K"]
    RER --> GEXP["Graph Expand<br/>vecindad de símbolos"]
    GEXP --> CTX["Context Assembler<br/>contexto acotado"]
 
    CH[(ChromaDB)] --> HYB
    BM[(BM25)] --> HYB
+   NEO[(Neo4j)] --> INV
    NEO[(Neo4j)] --> GEXP
 
    CTX --> LLM["Answer + Verify<br/>OpenAI"] --> RESP["Response con<br/>citas + diagnostics"]
@@ -153,6 +157,7 @@ flowchart TB
 
 - **UI (PySide6)** consume la **API (FastAPI)** para ingesta, polling de jobs y consultas.
 - **Ingesta** construye tres vistas complementarias del código: vectorial (**Chroma**), léxica (**BM25**) y relacional (**Neo4j**).
+- **Routing de /query** usa inventory graph-first solo cuando la consulta contiene `inventario`/`inventory`; en otro caso usa retrieval híbrido.
 - **Retrieval híbrido** combina esas fuentes, rerankea, expande grafo y arma contexto antes de responder.
 - **LLM** genera y verifica; si falla configuración/verificación/generación, entra **fallback extractivo** con citas y `diagnostics`.
 - **SQLite + workspace** guardan estado operativo (jobs, repos y clones locales).
