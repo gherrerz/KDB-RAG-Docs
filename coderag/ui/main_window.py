@@ -116,6 +116,10 @@ class MainWindow(QMainWindow):
         self.query_view.query_profile.setDisabled(not enabled)
         self.query_view.top_n_input.setDisabled(not enabled)
         self.query_view.top_k_input.setDisabled(not enabled)
+        self.query_view.retrieval_only_mode.setDisabled(not enabled)
+        self.query_view.include_context.setDisabled(
+            (not enabled) or (not self.query_view.is_retrieval_only_enabled())
+        )
         self.query_view.refresh_repo_ids_button.setDisabled(not enabled)
         self.query_view.refresh_models_button.setDisabled(not enabled)
         self.query_view.query_input.setDisabled(not enabled)
@@ -129,6 +133,7 @@ class MainWindow(QMainWindow):
                 llm_ready=True,
                 llm_reason="ok",
                 force_fallback=False,
+                retrieval_only_mode=False,
             )
             self._apply_query_action_state(state)
             return
@@ -165,6 +170,7 @@ class MainWindow(QMainWindow):
             llm_ready=llm_ready,
             llm_reason=llm_reason,
             force_fallback=self.query_view.is_force_fallback_enabled(),
+            retrieval_only_mode=self.query_view.is_retrieval_only_enabled(),
         )
         self._apply_query_action_state(state)
 
@@ -183,6 +189,12 @@ class MainWindow(QMainWindow):
             lambda _: self._update_query_action_state()
         )
         self.query_view.force_fallback.toggled.connect(
+            lambda _: self._update_query_action_state()
+        )
+        self.query_view.retrieval_only_mode.toggled.connect(
+            lambda _: self._update_query_action_state()
+        )
+        self.query_view.include_context.toggled.connect(
             lambda _: self._update_query_action_state()
         )
         self.query_view.repo_id.currentTextChanged.connect(
@@ -464,6 +476,7 @@ class MainWindow(QMainWindow):
             llm_ready=llm_ready,
             llm_reason=llm_reason,
             force_fallback=self.query_view.is_force_fallback_enabled(),
+            retrieval_only_mode=self.query_view.is_retrieval_only_enabled(),
         )
         if not local_check.allowed:
             self._show_query_error(local_check.message)
@@ -502,6 +515,7 @@ class MainWindow(QMainWindow):
         self.query_view.set_status("running", "Consultando")
         self.query_view.clear_question()
 
+        retrieval_only_mode = self.query_view.is_retrieval_only_enabled()
         payload = {
             "repo_id": repo_id,
             "query": question,
@@ -509,26 +523,36 @@ class MainWindow(QMainWindow):
             "top_k": self.query_view.get_top_k(),
             "embedding_provider": self.query_view.get_embedding_provider(),
             "embedding_model": self.query_view.get_embedding_model() or None,
-            "llm_provider": self.query_view.get_llm_provider(),
-            "answer_model": self.query_view.get_answer_model() or None,
-            "verifier_model": self.query_view.get_verifier_model() or None,
         }
+        if retrieval_only_mode:
+            payload["include_context"] = self.query_view.is_include_context_enabled()
+            query_endpoint = f"{API_BASE}/query/retrieval"
+        else:
+            payload.update(
+                {
+                    "llm_provider": self.query_view.get_llm_provider(),
+                    "answer_model": self.query_view.get_answer_model() or None,
+                    "verifier_model": self.query_view.get_verifier_model() or None,
+                }
+            )
+            query_endpoint = f"{API_BASE}/query"
+
         query_timeout = float(profile_settings["timeout_seconds"])
         query_timeout = self._adjust_timeout_for_model(
             query_timeout,
-            payload["answer_model"],
+            payload.get("answer_model"),
         )
         try:
             response = requests.post(
-                f"{API_BASE}/query",
+                query_endpoint,
                 json=payload,
                 timeout=query_timeout,
             )
             response.raise_for_status()
             data = response.json()
-            answer_text = build_query_answer_text(
-                str(data.get("answer") or "Sin respuesta."),
-                data.get("diagnostics") or {},
+            answer_text = self._format_query_success_text(
+                response_payload=data,
+                retrieval_only_mode=retrieval_only_mode,
             )
             self.query_view.append_assistant_message(answer_text)
             self.evidence_view.set_citations(data.get("citations") or [])
@@ -553,18 +577,18 @@ class MainWindow(QMainWindow):
                 retry_timeout = float(profile_settings["retry_timeout_seconds"])
                 retry_timeout = self._adjust_timeout_for_model(
                     retry_timeout,
-                    retry_payload["answer_model"],
+                    retry_payload.get("answer_model"),
                 )
                 response = requests.post(
-                    f"{API_BASE}/query",
+                    query_endpoint,
                     json=retry_payload,
                     timeout=retry_timeout,
                 )
                 response.raise_for_status()
                 data = response.json()
-                answer_text = build_query_answer_text(
-                    str(data.get("answer") or "Sin respuesta."),
-                    data.get("diagnostics") or {},
+                answer_text = self._format_query_success_text(
+                    response_payload=data,
+                    retrieval_only_mode=retrieval_only_mode,
                 )
                 self.query_view.append_assistant_message(
                     "Respuesta obtenida tras reintento automatico (modo rapido).\n\n"
@@ -581,7 +605,7 @@ class MainWindow(QMainWindow):
                     pass
                 self.query_view.set_status("error", "Error")
                 self.query_view.append_assistant_message(
-                    f"{detail}\n\nEndpoint: {API_BASE}/query",
+                    f"{detail}\n\nEndpoint: {query_endpoint}",
                     error=True,
                 )
             except Exception as exc:
@@ -603,7 +627,7 @@ class MainWindow(QMainWindow):
                 pass
             self.query_view.set_status("error", "Error")
             self.query_view.append_assistant_message(
-                f"{detail}\n\nEndpoint: {API_BASE}/query",
+                f"{detail}\n\nEndpoint: {query_endpoint}",
                 error=True,
             )
         except Exception as exc:
@@ -642,6 +666,51 @@ class MainWindow(QMainWindow):
         """Muestra error de consulta con formato consistente en la UI."""
         self.query_view.set_status("error", "Error")
         self.query_view.append_assistant_message(message, error=True)
+
+    @staticmethod
+    def _format_query_success_text(
+        *,
+        response_payload: dict[str, Any],
+        retrieval_only_mode: bool,
+    ) -> str:
+        """Construye salida visible diferenciada según modo de consulta ejecutado."""
+        base_answer = str(response_payload.get("answer") or "Sin respuesta.")
+        if not retrieval_only_mode:
+            return build_query_answer_text(
+                base_answer,
+                response_payload.get("diagnostics") or {},
+            )
+
+        diagnostics = response_payload.get("diagnostics") or {}
+        inventory_route = str(diagnostics.get("inventory_route") or "").strip()
+        if inventory_route:
+            inventory_target = str(diagnostics.get("inventory_target") or "").strip()
+            inventory_total = int(diagnostics.get("inventory_total") or 0)
+            inventory_page = int(diagnostics.get("inventory_page") or 1)
+            inventory_page_size = int(diagnostics.get("inventory_page_size") or 0)
+            header = "Modo: Retrieval-only inventario (sin LLM)"
+            summary_parts = [
+                f"Total: {inventory_total}",
+                f"Página: {inventory_page}",
+            ]
+            if inventory_page_size > 0:
+                summary_parts.append(f"Page size: {inventory_page_size}")
+            if inventory_target:
+                summary_parts.append(f"Objetivo: {inventory_target}")
+            summary = " | ".join(summary_parts)
+
+            context_block = str(response_payload.get("context") or "").strip()
+            if not context_block:
+                return f"{header}\n{summary}\n\n{base_answer}"
+            return (
+                f"{header}\n{summary}\n\n{base_answer}"
+                f"\n\nContexto ensamblado:\n{context_block}"
+            )
+
+        context_block = str(response_payload.get("context") or "").strip()
+        if not context_block:
+            return base_answer
+        return f"{base_answer}\n\nContexto ensamblado:\n{context_block}"
 
     @staticmethod
     def _format_query_http_detail(detail_payload: object) -> str:

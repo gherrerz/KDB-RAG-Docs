@@ -374,3 +374,145 @@ def test_query_status_preflight_sends_selected_embedding_configuration(
         for url in captured_urls
         if "/repos/repo-a/status" in url
     )
+
+
+def test_query_retrieval_mode_routes_to_retrieval_endpoint_with_context_flag(
+    monkeypatch: pytest.MonkeyPatch,
+    qapp: QApplication,
+) -> None:
+    """Cuando retrieval-only está activo, usa /query/retrieval e incluye include_context."""
+    window = _build_window(monkeypatch)
+
+    captured: dict[str, object] = {"url": "", "json": None}
+
+    def _fake_post(url: str, json: dict, timeout: float):  # noqa: ANN001
+        captured["url"] = url
+        captured["json"] = dict(json)
+        return _FakeResponse(
+            {
+                "mode": "retrieval_only",
+                "answer": "Modo retrieval-only (sin LLM)",
+                "chunks": [],
+                "citations": [],
+                "statistics": {
+                    "total_before_rerank": 0,
+                    "total_after_rerank": 0,
+                    "graph_nodes_count": 0,
+                },
+                "diagnostics": {},
+                "context": "PATH: src/a.py",
+            }
+        )
+
+    import coderag.ui.main_window as module
+
+    monkeypatch.setattr(module.requests, "post", _fake_post)
+
+    window.query_view.repo_id.setCurrentText("repo-a")
+    window.query_view.query_input.setText("resumen")
+    window.query_view.retrieval_only_mode.setChecked(True)
+    window.query_view.include_context.setChecked(True)
+
+    window._on_query()
+
+    assert str(captured["url"]).endswith("/query/retrieval")
+    payload = captured["json"]
+    assert isinstance(payload, dict)
+    assert payload["include_context"] is True
+    assert "llm_provider" not in payload
+    assert "answer_model" not in payload
+
+
+def test_query_retrieval_mode_allows_missing_llm_without_force_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+    qapp: QApplication,
+) -> None:
+    """En retrieval-only no bloquea consulta por llm no listo cuando embeddings sí están listos."""
+    window = _build_window(monkeypatch)
+
+    monkeypatch.setattr(
+        window.query_view,
+        "is_embedding_provider_ready",
+        lambda: (True, "ok"),
+    )
+    monkeypatch.setattr(
+        window.query_view,
+        "is_llm_provider_ready",
+        lambda: (False, "missing_anthropic_api_key"),
+    )
+
+    called = {"post": False, "url": ""}
+
+    def _fake_post(url: str, json: dict, timeout: float):  # noqa: ANN001
+        called["post"] = True
+        called["url"] = url
+        return _FakeResponse(
+            {
+                "mode": "retrieval_only",
+                "answer": "ok",
+                "chunks": [],
+                "citations": [],
+                "statistics": {
+                    "total_before_rerank": 0,
+                    "total_after_rerank": 0,
+                    "graph_nodes_count": 0,
+                },
+                "diagnostics": {},
+                "context": None,
+            }
+        )
+
+    import coderag.ui.main_window as module
+
+    monkeypatch.setattr(module.requests, "post", _fake_post)
+
+    window.query_view.repo_id.setCurrentText("repo-a")
+    window.query_view.query_input.setText("hola")
+    window.query_view.force_fallback.setChecked(False)
+    window.query_view.retrieval_only_mode.setChecked(True)
+
+    window._on_query()
+
+    assert called["post"] is True
+    assert str(called["url"]).endswith("/query/retrieval")
+
+
+def test_format_query_success_text_retrieval_inventory_summary() -> None:
+    """Muestra encabezado y resumen cuando retrieval-only retorna inventario."""
+    rendered = MainWindow._format_query_success_text(
+        response_payload={
+            "answer": "Inventario de modelos",
+            "diagnostics": {
+                "inventory_route": "graph_first_retrieval",
+                "inventory_target": "modelo",
+                "inventory_total": 12,
+                "inventory_page": 2,
+                "inventory_page_size": 5,
+            },
+            "context": None,
+        },
+        retrieval_only_mode=True,
+    )
+
+    assert "Modo: Retrieval-only inventario (sin LLM)" in rendered
+    assert "Total: 12" in rendered
+    assert "Página: 2" in rendered
+    assert "Page size: 5" in rendered
+    assert "Objetivo: modelo" in rendered
+    assert "Inventario de modelos" in rendered
+
+
+def test_format_query_success_text_retrieval_with_context_keeps_block() -> None:
+    """Con retrieval-only sin inventario mantiene bloque de contexto ensamblado."""
+    rendered = MainWindow._format_query_success_text(
+        response_payload={
+            "answer": "Modo retrieval-only",
+            "diagnostics": {},
+            "context": "PATH: src/a.py",
+        },
+        retrieval_only_mode=True,
+    )
+
+    assert "Modo retrieval-only" in rendered
+    assert "Contexto ensamblado:" in rendered
+    assert "PATH: src/a.py" in rendered

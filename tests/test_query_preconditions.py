@@ -92,3 +92,22 @@ def test_query_preconditions_allow_when_all_ready() -> None:
 
     assert result.allowed is True
     assert result.message == ""
+
+
+def test_query_preconditions_retrieval_only_allows_missing_llm() -> None:
+    """En modo retrieval-only no bloquea cuando llm no está listo."""
+    result = evaluate_local_query_preconditions(
+        repo_id="repo-a",
+        question="hola",
+        has_repo_in_catalog=True,
+        job_poll_enabled=False,
+        embedding_ready=True,
+        embedding_reason="ok",
+        llm_ready=False,
+        llm_reason="missing_anthropic_api_key",
+        force_fallback=False,
+        retrieval_only_mode=True,
+    )
+
+    assert result.allowed is True
+    assert result.message == ""

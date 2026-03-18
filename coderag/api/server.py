@@ -13,6 +13,8 @@ from coderag.core.models import (
     ProviderModelCatalogResponse,
     QueryRequest,
     QueryResponse,
+    RetrievalQueryRequest,
+    RetrievalQueryResponse,
     RepoCatalogResponse,
     RepoQueryStatusResponse,
     RepoIngestRequest,
@@ -277,6 +279,90 @@ def query_inventory(request: InventoryQueryRequest) -> InventoryQueryResponse:
         query=request.query,
         page=request.page,
         page_size=request.page_size,
+    )
+
+
+@app.post(
+    "/query/retrieval",
+    response_model=RetrievalQueryResponse,
+    tags=["Consulta"],
+    summary="Consulta retrieval-only sin LLM",
+    description=(
+        "Ejecuta retrieval híbrido y retorna evidencia estructurada sin síntesis "
+        "con LLM. Mantiene las validaciones de readiness del repositorio."
+    ),
+    responses={
+        422: {
+            "description": "Repositorio no listo o embedding incompatible para consulta.",
+        },
+        503: {
+            "description": "Preflight de storage falló antes de retrieval.",
+        },
+    },
+)
+def query_retrieval(request: RetrievalQueryRequest) -> RetrievalQueryResponse:
+    """Ejecuta consulta retrieval-only y devuelve evidencia sin sintetizar con LLM."""
+    from coderag.api.query_service import run_retrieval_query
+
+    try:
+        ensure_storage_ready(context="retrieval_query", repo_id=request.repo_id)
+    except StoragePreflightError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "message": "Preflight de storage falló antes de retrieval.",
+                "health": exc.report,
+            },
+        ) from exc
+
+    listed_repo_ids = jobs.list_repo_ids()
+    listed_in_catalog = request.repo_id in listed_repo_ids
+    runtime_payload = jobs.get_repo_runtime(request.repo_id)
+    readiness = get_repo_query_status(
+        repo_id=request.repo_id,
+        listed_in_catalog=listed_in_catalog,
+        runtime_payload=runtime_payload,
+        requested_embedding_provider=request.embedding_provider,
+        requested_embedding_model=request.embedding_model,
+    )
+    if runtime_payload:
+        readiness.update(runtime_payload)
+
+    if readiness.get("embedding_compatible") is False:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": (
+                    "El embedding seleccionado para consulta no es compatible "
+                    "con la última ingesta del repositorio. Reingesta con el "
+                    "mismo modelo/provider o limpia índices antes de consultar."
+                ),
+                "code": "embedding_incompatible",
+                "repo_status": readiness,
+            },
+        )
+
+    if not readiness["query_ready"]:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": (
+                    "El repositorio no está listo para consultas. "
+                    "Reingesta el repositorio o revisa el estado de índices."
+                ),
+                "code": "repo_not_ready",
+                "repo_status": readiness,
+            },
+        )
+
+    return run_retrieval_query(
+        repo_id=request.repo_id,
+        query=request.query,
+        top_n=request.top_n,
+        top_k=request.top_k,
+        embedding_provider=request.embedding_provider,
+        embedding_model=request.embedding_model,
+        include_context=request.include_context,
     )
 
 

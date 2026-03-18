@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 import coderag.api.query_service as query_service
-from coderag.core.models import Citation, RetrievalChunk
+from coderag.core.models import Citation, InventoryItem, InventoryQueryResponse, RetrievalChunk
 
 
 def test_is_module_query_detects_spanish_and_english_terms() -> None:
@@ -778,3 +778,240 @@ def test_run_inventory_query_missing_target_includes_total_timing(
     assert "parse_ms" in timings
     assert "total_ms" in timings
     assert timings["total_ms"] >= 0
+
+
+def test_run_retrieval_query_returns_chunks_and_citations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Retorna evidencia retrieval-only estructurada sin usar cliente LLM."""
+
+    class _Settings:
+        query_max_seconds = 30.0
+        max_context_tokens = 512
+        openai_embedding_model = "text-embedding-3-small"
+
+        @staticmethod
+        def resolve_embedding_provider(provider: str | None) -> str:
+            return provider or "openai"
+
+        @staticmethod
+        def resolve_embedding_model(provider: str, model: str | None) -> str:
+            _ = provider
+            return model or "text-embedding-3-small"
+
+    monkeypatch.setattr(query_service, "get_settings", lambda: _Settings())
+    monkeypatch.setattr(
+        query_service,
+        "hybrid_search",
+        lambda **kwargs: [
+            RetrievalChunk(
+                id="c1",
+                text="class AuthService {}",
+                score=0.92,
+                metadata={
+                    "path": "src/AuthService.java",
+                    "start_line": 10,
+                    "end_line": 20,
+                },
+            )
+        ],
+    )
+    monkeypatch.setattr(query_service, "rerank", lambda chunks, top_k: chunks)
+    monkeypatch.setattr(query_service, "expand_with_graph", lambda chunks: [])
+
+    result = query_service.run_retrieval_query(
+        repo_id="repo1",
+        query="auth service",
+        top_n=10,
+        top_k=5,
+    )
+
+    assert result.mode == "retrieval_only"
+    assert len(result.chunks) == 1
+    assert result.chunks[0].path == "src/AuthService.java"
+    assert len(result.citations) == 1
+    assert result.statistics.total_before_rerank == 1
+    assert result.statistics.total_after_rerank == 1
+    assert result.diagnostics["retrieved"] == 1
+    assert result.context is None
+
+
+def test_run_retrieval_query_includes_context_when_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Incluye contexto ensamblado únicamente cuando include_context=true."""
+
+    class _Settings:
+        query_max_seconds = 30.0
+        max_context_tokens = 256
+        openai_embedding_model = "text-embedding-3-small"
+
+        @staticmethod
+        def resolve_embedding_provider(provider: str | None) -> str:
+            return provider or "openai"
+
+        @staticmethod
+        def resolve_embedding_model(provider: str, model: str | None) -> str:
+            _ = provider
+            return model or "text-embedding-3-small"
+
+    monkeypatch.setattr(query_service, "get_settings", lambda: _Settings())
+    monkeypatch.setattr(
+        query_service,
+        "hybrid_search",
+        lambda **kwargs: [
+            RetrievalChunk(
+                id="c1",
+                text="x",
+                score=0.88,
+                metadata={"path": "src/a.py", "start_line": 1, "end_line": 2},
+            )
+        ],
+    )
+    monkeypatch.setattr(query_service, "rerank", lambda chunks, top_k: chunks)
+    monkeypatch.setattr(query_service, "expand_with_graph", lambda chunks: [{"n": 1}])
+    monkeypatch.setattr(
+        query_service,
+        "assemble_context",
+        lambda chunks, graph_records, max_tokens: "PATH: src/a.py\nLINES: 1-2",
+    )
+
+    result = query_service.run_retrieval_query(
+        repo_id="repo1",
+        query="a",
+        top_n=5,
+        top_k=3,
+        include_context=True,
+    )
+
+    assert result.context is not None
+    assert "PATH: src/a.py" in result.context
+    assert "context_assembly_ms" in result.diagnostics["stage_timings_ms"]
+
+
+def test_run_retrieval_query_routes_inventory_intent_without_llm(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reutiliza el flujo de inventario cuando la consulta retrieval-only tiene intención de inventario."""
+
+    class _Settings:
+        query_max_seconds = 30.0
+        max_context_tokens = 256
+        inventory_page_size = 80
+
+    monkeypatch.setattr(query_service, "get_settings", lambda: _Settings())
+    monkeypatch.setattr(query_service, "_is_inventory_query", lambda query: True)
+    monkeypatch.setattr(query_service, "_extract_inventory_target", lambda query: "modelo")
+
+    def fake_run_inventory_query(
+        repo_id: str,
+        query: str,
+        page: int,
+        page_size: int,
+    ) -> InventoryQueryResponse:
+        assert repo_id == "repo1"
+        assert "inventario" in query
+        assert page == 1
+        assert page_size == 80
+        return InventoryQueryResponse(
+            answer="Inventario de modelos",
+            target="modelo",
+            module_name="mall-mbg",
+            total=2,
+            page=1,
+            page_size=80,
+            items=[
+                InventoryItem(
+                    label="A.java",
+                    path="mall-mbg/src/main/java/com/macro/mall/model/A.java",
+                    kind="file",
+                    start_line=1,
+                    end_line=1,
+                ),
+                InventoryItem(
+                    label="B.java",
+                    path="mall-mbg/src/main/java/com/macro/mall/model/B.java",
+                    kind="file",
+                    start_line=1,
+                    end_line=1,
+                ),
+            ],
+            citations=[
+                Citation(
+                    path="mall-mbg/src/main/java/com/macro/mall/model/A.java",
+                    start_line=1,
+                    end_line=1,
+                    score=1.0,
+                    reason="inventory_graph_match",
+                )
+            ],
+            diagnostics={"inventory_count": 2},
+        )
+
+    monkeypatch.setattr(query_service, "run_inventory_query", fake_run_inventory_query)
+
+    result = query_service.run_retrieval_query(
+        repo_id="repo1",
+        query="inventario: cuales son los modelos de mall-mbg",
+        top_n=10,
+        top_k=5,
+    )
+
+    assert result.mode == "retrieval_only"
+    assert result.answer == "Inventario de modelos"
+    assert len(result.chunks) == 2
+    assert result.statistics.total_before_rerank == 2
+    assert result.statistics.total_after_rerank == 2
+    assert result.diagnostics["inventory_route"] == "graph_first_retrieval"
+    assert result.diagnostics["inventory_total"] == 2
+
+
+def test_run_retrieval_query_inventory_includes_context_when_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Incluye contexto textual en retrieval-only inventario cuando include_context=true."""
+
+    class _Settings:
+        query_max_seconds = 30.0
+        max_context_tokens = 256
+        inventory_page_size = 80
+
+    monkeypatch.setattr(query_service, "get_settings", lambda: _Settings())
+    monkeypatch.setattr(query_service, "_is_inventory_query", lambda query: True)
+    monkeypatch.setattr(query_service, "_extract_inventory_target", lambda query: "controller")
+    monkeypatch.setattr(
+        query_service,
+        "run_inventory_query",
+        lambda **kwargs: InventoryQueryResponse(
+            answer="Inventario de controllers",
+            target="controller",
+            module_name="mall-admin",
+            total=1,
+            page=1,
+            page_size=80,
+            items=[
+                InventoryItem(
+                    label="UserController.java",
+                    path="mall-admin/src/main/java/com/macro/mall/admin/controller/UserController.java",
+                    kind="file",
+                    start_line=1,
+                    end_line=1,
+                )
+            ],
+            citations=[],
+            diagnostics={"inventory_count": 1},
+        ),
+    )
+
+    result = query_service.run_retrieval_query(
+        repo_id="repo1",
+        query="inventario: controllers",
+        top_n=10,
+        top_k=5,
+        include_context=True,
+    )
+
+    assert result.context is not None
+    assert "INVENTORY_CONTEXT:" in result.context
+    assert "UserController.java" in result.context
+    assert result.diagnostics["context_chars"] > 0

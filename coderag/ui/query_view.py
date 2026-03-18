@@ -118,6 +118,11 @@ class QueryView(QWidget):
         self.llm_status_chip = QLabel("LLM: Listo")
         self.llm_status_chip.setObjectName("providerStatusChip")
         self.llm_status_chip.setProperty("state", "ready")
+        self.retrieval_only_mode = QCheckBox("Modo retrieval-only (sin LLM)")
+        self.retrieval_only_mode.setObjectName("retrievalOnlyModeCheck")
+        self.include_context = QCheckBox("Incluir contexto ensamblado")
+        self.include_context.setObjectName("includeContextCheck")
+        self.include_context.setEnabled(False)
         self.force_fallback = QCheckBox("Forzar fallback si provider no esta listo")
         self.force_fallback.setObjectName("forceFallbackCheck")
 
@@ -195,7 +200,9 @@ class QueryView(QWidget):
         repo_bar.addWidget(self.llm_warning, 6, 0, 1, 4)
         repo_bar.addWidget(self.embedding_status_chip, 7, 0, 1, 2)
         repo_bar.addWidget(self.llm_status_chip, 7, 2, 1, 2)
-        repo_bar.addWidget(self.force_fallback, 8, 0, 1, 4)
+        repo_bar.addWidget(self.retrieval_only_mode, 8, 0, 1, 4)
+        repo_bar.addWidget(self.include_context, 9, 0, 1, 4)
+        repo_bar.addWidget(self.force_fallback, 10, 0, 1, 4)
         self.repo_card.setLayout(repo_bar)
 
         top_bar = QGridLayout()
@@ -321,6 +328,7 @@ class QueryView(QWidget):
             self._on_embedding_provider_changed
         )
         self.llm_provider.currentTextChanged.connect(self._on_llm_provider_changed)
+        self.retrieval_only_mode.toggled.connect(self._on_retrieval_mode_changed)
         self.refresh_model_catalogs(force_refresh=False)
 
     def set_status(self, state: str, text: str) -> None:
@@ -377,6 +385,8 @@ class QueryView(QWidget):
         self.query_profile.setDisabled(running)
         self.top_n_input.setDisabled(running)
         self.top_k_input.setDisabled(running)
+        self.retrieval_only_mode.setDisabled(running)
+        self.include_context.setDisabled(running or not self.retrieval_only_mode.isChecked())
         self.refresh_repo_ids_button.setDisabled(running)
         self.refresh_models_button.setDisabled(running)
         self.query_input.setDisabled(running)
@@ -637,6 +647,20 @@ class QueryView(QWidget):
     def is_force_fallback_enabled(self) -> bool:
         """Indica si el usuario decidió forzar fallback para consultas."""
         return self.force_fallback.isChecked()
+
+    def is_retrieval_only_enabled(self) -> bool:
+        """Indica si el usuario seleccionó modo de consulta retrieval-only."""
+        return self.retrieval_only_mode.isChecked()
+
+    def is_include_context_enabled(self) -> bool:
+        """Indica si se debe solicitar contexto ensamblado en modo retrieval-only."""
+        return self.retrieval_only_mode.isChecked() and self.include_context.isChecked()
+
+    def _on_retrieval_mode_changed(self, enabled: bool) -> None:
+        """Sincroniza visibilidad funcional del flag include_context por modo."""
+        self.include_context.setEnabled(enabled)
+        if not enabled:
+            self.include_context.setChecked(False)
 
     def is_embedding_provider_ready(self) -> tuple[bool, str]:
         """Evalúa si el provider de embeddings está listo para query."""

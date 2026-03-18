@@ -329,6 +329,240 @@ def test_query_endpoint_forwards_optional_provider_fields(monkeypatch) -> None:
     assert captured["verifier_model"] == "claude-3-5-sonnet-20241022"
 
 
+def test_retrieval_query_endpoint_returns_structured_payload(monkeypatch) -> None:
+    """Expone respuesta retrieval-only estructurada y sin síntesis LLM."""
+    from coderag.api import query_service
+
+    def fake_list_repo_ids() -> list[str]:
+        return ["mall"]
+
+    def fake_get_repo_query_status(**kwargs) -> dict:  # noqa: ANN003
+        return {
+            "repo_id": "mall",
+            "listed_in_catalog": True,
+            "query_ready": True,
+            "chroma_counts": {
+                "code_symbols": 10,
+                "code_files": 5,
+                "code_modules": 2,
+            },
+            "bm25_loaded": True,
+            "graph_available": True,
+            "warnings": [],
+        }
+
+    def fake_run_retrieval_query(**kwargs):
+        assert kwargs["include_context"] is True
+        return {
+            "mode": "retrieval_only",
+            "answer": "Modo retrieval-only (sin LLM)",
+            "chunks": [
+                {
+                    "id": "a1",
+                    "text": "class AuthService {}",
+                    "score": 0.9,
+                    "path": "src/AuthService.java",
+                    "start_line": 10,
+                    "end_line": 20,
+                    "kind": "code_chunk",
+                    "metadata": {"path": "src/AuthService.java"},
+                }
+            ],
+            "citations": [
+                {
+                    "path": "src/AuthService.java",
+                    "start_line": 10,
+                    "end_line": 20,
+                    "score": 0.9,
+                    "reason": "hybrid_rag_match",
+                }
+            ],
+            "statistics": {
+                "total_before_rerank": 1,
+                "total_after_rerank": 1,
+                "graph_nodes_count": 0,
+            },
+            "diagnostics": {"retrieved": 1, "reranked": 1},
+            "context": "PATH: src/AuthService.java",
+        }
+
+    monkeypatch.setattr(server.jobs, "list_repo_ids", fake_list_repo_ids)
+    monkeypatch.setattr(server, "get_repo_query_status", fake_get_repo_query_status)
+    monkeypatch.setattr(query_service, "run_retrieval_query", fake_run_retrieval_query)
+
+    client = TestClient(app)
+    response = client.post(
+        "/query/retrieval",
+        json={
+            "repo_id": "mall",
+            "query": "auth service",
+            "top_n": 10,
+            "top_k": 5,
+            "embedding_provider": "openai",
+            "embedding_model": "text-embedding-3-small",
+            "include_context": True,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["mode"] == "retrieval_only"
+    assert len(payload["chunks"]) == 1
+    assert payload["statistics"]["total_after_rerank"] == 1
+
+
+def test_retrieval_query_endpoint_forwards_embedding_and_context_flags(monkeypatch) -> None:
+    """Propaga provider/model/include_context al servicio retrieval-only."""
+    from coderag.api import query_service
+
+    captured: dict[str, object] = {}
+
+    def fake_list_repo_ids() -> list[str]:
+        return ["mall"]
+
+    def fake_get_repo_query_status(
+        *,
+        repo_id: str,
+        listed_in_catalog: bool,
+        runtime_payload: dict | None = None,
+        requested_embedding_provider: str | None = None,
+        requested_embedding_model: str | None = None,
+    ) -> dict:
+        assert repo_id == "mall"
+        assert listed_in_catalog is True
+        assert runtime_payload is None
+        assert requested_embedding_provider == "gemini"
+        assert requested_embedding_model == "text-embedding-004"
+        return {
+            "repo_id": repo_id,
+            "listed_in_catalog": listed_in_catalog,
+            "query_ready": True,
+            "chroma_counts": {
+                "code_symbols": 10,
+                "code_files": 3,
+                "code_modules": 2,
+            },
+            "bm25_loaded": True,
+            "graph_available": True,
+            "warnings": [],
+        }
+
+    def fake_run_retrieval_query(**kwargs):
+        captured.update(kwargs)
+        return {
+            "mode": "retrieval_only",
+            "answer": "ok",
+            "chunks": [],
+            "citations": [],
+            "statistics": {
+                "total_before_rerank": 0,
+                "total_after_rerank": 0,
+                "graph_nodes_count": 0,
+            },
+            "diagnostics": {},
+            "context": None,
+        }
+
+    monkeypatch.setattr(server.jobs, "list_repo_ids", fake_list_repo_ids)
+    monkeypatch.setattr(server, "get_repo_query_status", fake_get_repo_query_status)
+    monkeypatch.setattr(query_service, "run_retrieval_query", fake_run_retrieval_query)
+
+    client = TestClient(app)
+    response = client.post(
+        "/query/retrieval",
+        json={
+            "repo_id": "mall",
+            "query": "hola",
+            "top_n": 5,
+            "top_k": 3,
+            "embedding_provider": "gemini",
+            "embedding_model": "text-embedding-004",
+            "include_context": True,
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured["embedding_provider"] == "gemini"
+    assert captured["embedding_model"] == "text-embedding-004"
+    assert captured["include_context"] is True
+
+
+def test_retrieval_query_endpoint_returns_422_when_repo_not_ready(monkeypatch) -> None:
+    """Responde 422 cuando el repo no está listo para retrieval-only."""
+
+    def fake_list_repo_ids() -> list[str]:
+        return ["mall"]
+
+    def fake_get_repo_query_status(**kwargs) -> dict:  # noqa: ANN003
+        return {
+            "repo_id": "mall",
+            "listed_in_catalog": True,
+            "query_ready": False,
+            "chroma_counts": {
+                "code_symbols": 0,
+                "code_files": 0,
+                "code_modules": 0,
+            },
+            "bm25_loaded": False,
+            "graph_available": None,
+            "warnings": ["No hay indice BM25 en memoria para repo 'mall'."],
+        }
+
+    monkeypatch.setattr(server.jobs, "list_repo_ids", fake_list_repo_ids)
+    monkeypatch.setattr(server, "get_repo_query_status", fake_get_repo_query_status)
+
+    client = TestClient(app)
+    response = client.post(
+        "/query/retrieval",
+        json={
+            "repo_id": "mall",
+            "query": "hola",
+            "top_n": 5,
+            "top_k": 3,
+        },
+    )
+    assert response.status_code == 422
+    payload = response.json()
+    assert payload["detail"]["code"] == "repo_not_ready"
+
+
+def test_retrieval_query_endpoint_blocks_when_storage_preflight_fails(monkeypatch) -> None:
+    """Bloquea retrieval-only con 503 cuando preflight estricto falla."""
+
+    def fail_preflight(
+        *,
+        context: str,
+        repo_id: str | None = None,
+        force: bool = False,
+    ) -> dict:
+        report = {
+            "ok": False,
+            "strict": True,
+            "checked_at": "2026-01-01T00:00:00+00:00",
+            "context": context,
+            "repo_id": repo_id,
+            "failed_components": ["neo4j"],
+            "items": [],
+            "cached": False,
+        }
+        raise StoragePreflightError(report)
+
+    monkeypatch.setattr(server, "ensure_storage_ready", fail_preflight)
+    client = TestClient(app)
+    response = client.post(
+        "/query/retrieval",
+        json={
+            "repo_id": "mall",
+            "query": "hola",
+            "top_n": 5,
+            "top_k": 3,
+        },
+    )
+    assert response.status_code == 503
+    payload = response.json()
+    assert payload["detail"]["health"]["failed_components"] == ["neo4j"]
+
+
 def test_query_endpoint_blocks_when_storage_preflight_fails(monkeypatch) -> None:
     """Bloquea consulta con 503 cuando preflight estricto falla."""
 

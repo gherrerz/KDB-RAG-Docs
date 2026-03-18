@@ -21,6 +21,7 @@ Este documento es la fuente de verdad de la API HTTP de Coderag.
 | POST | `/repos/ingest` | `JobManager.create_ingest_job` | `RepoIngestRequest` | `JobInfo` |
 | GET | `/jobs/{job_id}` | `JobManager.get_job` | Path `job_id` | `JobInfo` |
 | POST | `/query` | `run_query` | `QueryRequest` | `QueryResponse` |
+| POST | `/query/retrieval` | `run_retrieval_query` | `RetrievalQueryRequest` | `RetrievalQueryResponse` |
 | POST | `/inventory/query` | `run_inventory_query` | `InventoryQueryRequest` | `InventoryQueryResponse` |
 | GET | `/repos` | `JobManager.list_repo_ids` | N/A | `RepoCatalogResponse` |
 | GET | `/providers/models` | `discover_models` | Query params (`provider`, `kind`, `force_refresh`) | `ProviderModelCatalogResponse` |
@@ -69,6 +70,18 @@ Este documento es la fuente de verdad de la API HTTP de Coderag.
 | answer_model | str \| null | no | `null` | Modelo answer por operación. |
 | verifier_model | str \| null | no | `null` | Modelo verifier por operación. |
 
+## RetrievalQueryRequest
+
+| Campo | Tipo | Requerido | Default | Descripcion |
+|---|---|---|---|---|
+| repo_id | str | si | N/A | Repositorio indexado a consultar. |
+| query | str | si | N/A | Pregunta para recuperar evidencia sin síntesis LLM. |
+| top_n | int | no | `60` | Candidatos de retrieval inicial. |
+| top_k | int | no | `15` | Resultados tras reranking. |
+| embedding_provider | str \| null | no | `null` | Provider para embedding de la query. |
+| embedding_model | str \| null | no | `null` | Modelo para embedding de la query. |
+| include_context | bool | no | `false` | Incluye contexto ensamblado completo en el response. |
+
 ## Citation
 
 | Campo | Tipo | Requerido | Default | Descripcion |
@@ -86,6 +99,39 @@ Este documento es la fuente de verdad de la API HTTP de Coderag.
 | answer | str | si | N/A | Respuesta final (LLM o fallback extractivo). |
 | citations | list[Citation] | si | N/A | Evidencia ordenada por prioridad. |
 | diagnostics | dict[str, Any] | no | `{}` | Metricas y flags del pipeline. |
+
+## RetrievedChunk
+
+| Campo | Tipo | Requerido | Default | Descripcion |
+|---|---|---|---|---|
+| id | str | si | N/A | Identificador del chunk recuperado. |
+| text | str | si | N/A | Texto del fragmento recuperado. |
+| score | float | si | N/A | Score del fragmento. |
+| path | str | si | N/A | Ruta del archivo fuente. |
+| start_line | int | si | N/A | Linea inicial del fragmento. |
+| end_line | int | si | N/A | Linea final del fragmento. |
+| kind | str | no | `code_chunk` | Tipo de evidencia. |
+| metadata | dict[str, Any] | no | `{}` | Metadata original del chunk. |
+
+## RetrievalStatistics
+
+| Campo | Tipo | Requerido | Default | Descripcion |
+|---|---|---|---|---|
+| total_before_rerank | int | no | `0` | Total recuperado antes de reranking. |
+| total_after_rerank | int | no | `0` | Total tras reranking. |
+| graph_nodes_count | int | no | `0` | Nodos añadidos por expansión de grafo. |
+
+## RetrievalQueryResponse
+
+| Campo | Tipo | Requerido | Default | Descripcion |
+|---|---|---|---|---|
+| mode | str | no | `retrieval_only` | Modo de consulta ejecutado. |
+| answer | str | si | N/A | Resumen textual de evidencia retrieval-only. |
+| chunks | list[RetrievedChunk] | no | `[]` | Fragmentos ranqueados sin síntesis LLM. |
+| citations | list[Citation] | no | `[]` | Evidencia ordenada por prioridad. |
+| statistics | RetrievalStatistics | no | `{...}` | Conteos agregados de retrieval. |
+| diagnostics | dict[str, Any] | no | `{}` | Metricas y flags del pipeline retrieval-only. |
+| context | str \| null | no | `null` | Contexto ensamblado cuando `include_context=true`. |
 
 ## InventoryQueryRequest
 

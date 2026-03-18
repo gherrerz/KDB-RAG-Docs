@@ -96,3 +96,21 @@ def test_evaluate_query_action_blocked_by_ingestion() -> None:
 
     assert state.enabled is False
     assert "ingesta" in state.message.lower()
+
+
+def test_evaluate_query_action_retrieval_only_skips_llm_readiness() -> None:
+    """En modo retrieval-only solo exige embeddings y permite llm no listo."""
+    state = evaluate_query_action(
+        controls_enabled=True,
+        has_repo=True,
+        has_question=True,
+        embedding_ready=True,
+        embedding_reason="ok",
+        llm_ready=False,
+        llm_reason="missing_anthropic_api_key",
+        force_fallback=False,
+        retrieval_only_mode=True,
+    )
+
+    assert state.enabled is True
+    assert "listo para consultar" in state.message.lower()

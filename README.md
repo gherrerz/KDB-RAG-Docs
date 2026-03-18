@@ -53,7 +53,7 @@ Se incluye API (FastAPI), UI de escritorio (PySide6), almacenamiento vectorial
 ### Componentes
 
 - UI: PySide6 (`ingesta`, `consulta`, `evidencias`).
-- API: FastAPI (`/repos/ingest`, `/jobs/{id}`, `/query`, `/inventory/query`, `/repos`, `/providers/models`, `/repos/{repo_id}/status`, `/health/storage`, `/admin/reset`).
+- API: FastAPI (`/repos/ingest`, `/jobs/{id}`, `/query`, `/query/retrieval`, `/inventory/query`, `/repos`, `/providers/models`, `/repos/{repo_id}/status`, `/health/storage`, `/admin/reset`).
 - Ingesta: clonación, escaneo, chunking, embeddings, BM25, grafo.
 - Retrieval: fusión vectorial + BM25 + expansión de grafo + ensamblado de
    contexto.
@@ -135,7 +135,7 @@ flowchart TB
 ```mermaid
 %%{init: {'flowchart': {'htmlLabels': true, 'curve': 'linear', 'nodeSpacing': 35, 'rankSpacing': 50}}}%%
 flowchart TB
-   API["API /query<br/>y /inventory/query"] --> NORM["Normalización de consulta<br/>target + señales"]
+   API["API /query<br/>/query/retrieval<br/>y /inventory/query"] --> NORM["Normalización de consulta<br/>target + señales"]
    NORM --> ROUTE{"Consulta contiene<br/>inventario/inventory?"}
    ROUTE -->|Sí| INV["Graph-first inventory<br/>(/query -> run_inventory_query)"]
    ROUTE -->|No| HYB["Hybrid Search<br/>Vector + BM25"]
@@ -157,7 +157,8 @@ flowchart TB
 
 - **UI (PySide6)** consume la **API (FastAPI)** para ingesta, polling de jobs y consultas.
 - **Ingesta** construye tres vistas complementarias del código: vectorial (**Chroma**), léxica (**BM25**) y relacional (**Neo4j**).
-- **Routing de /query** usa inventory graph-first solo cuando la consulta contiene `inventario`/`inventory`; en otro caso usa retrieval híbrido.
+- **Routing de /query** usa inventory graph-first solo cuando la consulta contiene `inventario`/`inventory`; en otro caso usa retrieval híbrido + síntesis LLM.
+- **`/query/retrieval`** ejecuta retrieval híbrido sin síntesis LLM y también reutiliza inventory graph-first cuando detecta intención de inventario.
 - **Retrieval híbrido** combina esas fuentes, rerankea, expande grafo y arma contexto antes de responder.
 - **LLM** genera y verifica; si falla configuración/verificación/generación, entra **fallback extractivo** con citas y `diagnostics`.
 - **SQLite + workspace** guardan estado operativo (jobs, repos y clones locales).
@@ -240,7 +241,7 @@ Si falta alguna, la ingesta falla al iniciar con error de configuración.
 
 - La UI permite elegir provider/modelo por operación para ingesta y consulta.
 - La API mantiene los endpoints de operación (`/repos/ingest`, `/query`,
-   `/inventory/query`) y agrega catálogo de modelos por provider en
+   `/query/retrieval`, `/inventory/query`) y agrega catálogo de modelos por provider en
    `/providers/models`.
 - Si no se envían campos nuevos, el comportamiento permanece igual (OpenAI + variables `OPENAI_*`).
 - Para `vertex_ai`, `VERTEX_AI_API_KEY` debe contener un token OAuth Bearer válido y
@@ -378,7 +379,27 @@ Invoke-RestMethod -Method Get -Uri http://127.0.0.1:8000/repos
 
 Usa este endpoint para poblar/validar el selector de `repo_id` en la UI.
 
-### 6) Consulta de inventario paginada (graph-first)
+### 6) Consulta retrieval-only (sin LLM)
+
+Para recuperar evidencia estructurada sin síntesis LLM:
+
+```powershell
+$r = @{
+   repo_id = 'mall'
+   query = 'donde esta la configuracion de neo4j'
+   top_n = 60
+   top_k = 15
+   include_context = $true
+
+} | ConvertTo-Json
+
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/query/retrieval -ContentType 'application/json' -Body $r
+```
+
+La respuesta incluye `chunks`, `citations`, `statistics`, `diagnostics` y,
+opcionalmente, `context` cuando `include_context=true`.
+
+### 7) Consulta de inventario paginada (graph-first)
 
 Para consultas amplias tipo “todos los X”, usa la ruta estructural dedicada:
 
@@ -396,7 +417,7 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/inventory/query -Conte
 Esta ruta evita la carga completa del pipeline híbrido y devuelve resultados paginados
 con `total`, `page`, `page_size`, `items`, `citations` y `diagnostics`.
 
-### 7) Limpieza total (reset)
+### 8) Limpieza total (reset)
 
 ```powershell
 Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/admin/reset
@@ -413,16 +434,17 @@ La referencia tecnica completa de la API fue movida a un documento dedicado:
 
 Incluye:
 
-- Los 8 endpoints implementados y su servicio interno.
+- Los 9 endpoints implementados y su servicio interno.
 - Contratos request/response con campos, tipos y defaults reales.
 - Errores por endpoint (404, 409, 422, 500, 503) con shape de payload.
-- Guia completa de `diagnostics` para `/query` e `/inventory/query`.
+- Guia completa de `diagnostics` para `/query`, `/query/retrieval` e `/inventory/query`.
 
 Resumen rapido de rutas:
 
 - `POST /repos/ingest`
 - `GET /jobs/{job_id}`
 - `POST /query`
+- `POST /query/retrieval`
 - `POST /inventory/query`
 - `GET /repos`
 - `GET /repos/{repo_id}/status`

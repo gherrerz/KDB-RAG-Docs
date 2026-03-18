@@ -149,3 +149,45 @@ def build_inventory_diagnostics(
         "stage_timings_ms": stage_timings,
         "fallback_reason": fallback_reason,
     }
+
+
+def build_retrieval_diagnostics(
+    *,
+    settings: Any,
+    retrieved_count: int,
+    reranked_count: int,
+    graph_nodes_count: int,
+    context_chars: int,
+    raw_citations_count: int,
+    filtered_citations_count: int,
+    returned_citations_count: int,
+    embedding_provider: str,
+    embedding_model: str,
+    budget_seconds: float,
+    budget_exhausted: bool,
+    stage_timings: dict[str, float],
+    fallback_reason: str | None,
+) -> dict[str, Any]:
+    """Build diagnostics payload for retrieval-only query execution."""
+    return {
+        "retrieved": retrieved_count,
+        "reranked": reranked_count,
+        "graph_nodes": graph_nodes_count,
+        "context_chars": context_chars,
+        "raw_citations": raw_citations_count,
+        "filtered_citations": filtered_citations_count,
+        "returned_citations": returned_citations_count,
+        "low_signal_retrieval": retrieved_count < 3,
+        "embedding_provider": embedding_provider,
+        "embedding_model": embedding_model,
+        "embedding_capabilities": _provider_capabilities(
+            settings=settings,
+            attr_name="embedding_provider_capabilities",
+            provider=embedding_provider,
+        ),
+        "query_budget_seconds": budget_seconds,
+        "budget_exhausted": budget_exhausted,
+        "stage_timings_ms": stage_timings,
+        "fallback_reason": fallback_reason,
+        "mode": "retrieval_only",
+    }

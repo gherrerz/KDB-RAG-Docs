@@ -128,6 +128,41 @@ class QueryRequest(BaseModel):
     )
 
 
+class RetrievalQueryRequest(BaseModel):
+    """Modelo de entrada para consultas retrieval-only sin síntesis LLM."""
+
+    repo_id: str = Field(description="Repositorio indexado objetivo.", examples=["mall"])
+    query: str = Field(
+        description="Pregunta en lenguaje natural para retrieval de evidencia.",
+        examples=["donde esta la configuracion de neo4j"],
+    )
+    top_n: int = Field(
+        default=60,
+        ge=1,
+        description="Cantidad de candidatos recuperados antes del reranking.",
+    )
+    top_k: int = Field(
+        default=15,
+        ge=1,
+        description="Cantidad final tras reranking retornada como evidencia.",
+    )
+    embedding_provider: str | None = Field(
+        default=None,
+        description="Proveedor de embeddings opcional para vectorizar query.",
+        examples=["openai", "anthropic", "gemini", "vertex_ai"],
+    )
+    embedding_model: str | None = Field(
+        default=None,
+        description="Modelo de embeddings opcional para vectorizar query.",
+    )
+    include_context: bool = Field(
+        default=False,
+        description=(
+            "Incluye el contexto ensamblado completo del pipeline en la respuesta."
+        ),
+    )
+
+
 class InventoryQueryRequest(BaseModel):
     """Modelo de entrada para consultas de inventario basadas en gráficos."""
 
@@ -162,6 +197,51 @@ class QueryResponse(BaseModel):
     diagnostics: dict[str, Any] = Field(
         default_factory=dict,
         description="Diagnóstico técnico de pipeline (timings, fallback, conteos).",
+    )
+
+
+class RetrievedChunk(BaseModel):
+    """Fragmento recuperado y ranqueado sin síntesis de LLM."""
+
+    id: str = Field(description="Identificador del chunk recuperado.")
+    text: str = Field(description="Texto del fragmento recuperado.")
+    score: float = Field(description="Score de relevancia del fragmento.")
+    path: str = Field(description="Ruta del archivo fuente del fragmento.")
+    start_line: int = Field(description="Línea inicial del fragmento fuente.")
+    end_line: int = Field(description="Línea final del fragmento fuente.")
+    kind: str = Field(default="code_chunk", description="Tipo de evidencia recuperada.")
+    metadata: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Metadata adicional original del chunk recuperado.",
+    )
+
+
+class RetrievalStatistics(BaseModel):
+    """Métricas agregadas de conteo para consultas retrieval-only."""
+
+    total_before_rerank: int = Field(default=0, ge=0, description="Total recuperado antes de reranking.")
+    total_after_rerank: int = Field(default=0, ge=0, description="Total retornado tras reranking.")
+    graph_nodes_count: int = Field(default=0, ge=0, description="Nodos agregados por expansión de grafo.")
+
+
+class RetrievalQueryResponse(BaseModel):
+    """Modelo de salida para endpoint retrieval-only sin síntesis LLM."""
+
+    mode: str = Field(default="retrieval_only", description="Modo de consulta ejecutado.")
+    answer: str = Field(description="Resumen textual extractivo basado en evidencia recuperada.")
+    chunks: list[RetrievedChunk] = Field(default_factory=list, description="Evidencia ranqueada recuperada.")
+    citations: list[Citation] = Field(default_factory=list, description="Citas trazables asociadas a la evidencia.")
+    statistics: RetrievalStatistics = Field(
+        default_factory=RetrievalStatistics,
+        description="Conteos agregados del pipeline retrieval-only.",
+    )
+    diagnostics: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Diagnóstico técnico de pipeline retrieval-only.",
+    )
+    context: str | None = Field(
+        default=None,
+        description="Contexto ensamblado completo cuando include_context=true.",
     )
 
 

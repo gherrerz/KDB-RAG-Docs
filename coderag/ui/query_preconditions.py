@@ -22,13 +22,16 @@ def evaluate_local_query_preconditions(
     llm_ready: bool,
     llm_reason: str,
     force_fallback: bool,
+    retrieval_only_mode: bool = False,
 ) -> QueryPreconditionResult:
     """Valida precondiciones locales para consulta antes de llamar a la API."""
-    if (not embedding_ready or not llm_ready) and not force_fallback:
+    llm_required = not retrieval_only_mode
+    providers_ready = embedding_ready and (llm_ready or not llm_required)
+    if not providers_ready and not force_fallback:
         details: list[str] = []
         if not embedding_ready:
             details.append(f"embeddings={embedding_reason}")
-        if not llm_ready:
+        if llm_required and not llm_ready:
             details.append(f"llm={llm_reason}")
         return QueryPreconditionResult(
             allowed=False,

@@ -14,6 +14,9 @@ from coderag.core.models import (
     InventoryItem,
     InventoryQueryResponse,
     QueryResponse,
+    RetrievedChunk,
+    RetrievalQueryResponse,
+    RetrievalStatistics,
     RetrievalChunk,
 )
 from coderag.core.settings import get_settings
@@ -22,6 +25,7 @@ from coderag.api.query_diagnostics import (
     build_inventory_diagnostics,
     build_inventory_missing_target_diagnostics,
     build_query_diagnostics,
+    build_retrieval_diagnostics,
 )
 from coderag.ingestion.graph_builder import GraphBuilder
 from coderag.llm.openai_client import AnswerClient
@@ -985,6 +989,104 @@ def _is_context_sufficient(context: str, reranked_count: int) -> bool:
     return len(context.strip()) >= 80
 
 
+def _build_retrieval_answer(chunks: list[RetrievedChunk], query: str) -> str:
+    """Construye salida textual diferenciada para modo retrieval-only."""
+    if not chunks:
+        return "Modo retrieval-only (sin LLM): no se encontró evidencia relevante."
+
+    lines = [
+        "Modo retrieval-only (sin LLM):",
+        f"Se recuperaron {len(chunks)} fragmentos relevantes para: {query.strip()}",
+        "",
+        "Evidencia principal:",
+    ]
+    for index, chunk in enumerate(chunks[:5], start=1):
+        lines.append(
+            (
+                f"{index}. {chunk.path} "
+                f"(líneas {chunk.start_line}-{chunk.end_line}, score {chunk.score:.4f})"
+            )
+        )
+    return "\n".join(lines)
+
+
+def _build_retrieval_inventory_response(
+    *,
+    inventory_response: InventoryQueryResponse,
+    include_context: bool,
+) -> RetrievalQueryResponse:
+    """Adapta una respuesta de inventario al contrato retrieval-only."""
+    chunks: list[RetrievedChunk] = []
+    for item in inventory_response.items:
+        chunk_id = f"inventory:{item.path}:{item.start_line}:{item.end_line}"
+        chunks.append(
+            RetrievedChunk(
+                id=chunk_id,
+                text=item.label,
+                score=1.0,
+                path=item.path,
+                start_line=item.start_line,
+                end_line=item.end_line,
+                kind=item.kind,
+                metadata={
+                    "path": item.path,
+                    "start_line": item.start_line,
+                    "end_line": item.end_line,
+                    "kind": item.kind,
+                    "inventory_label": item.label,
+                },
+            )
+        )
+
+    diagnostics = dict(inventory_response.diagnostics)
+    diagnostics.update(
+        {
+            "mode": "retrieval_only",
+            "inventory_route": "graph_first_retrieval",
+            "inventory_page": inventory_response.page,
+            "inventory_page_size": inventory_response.page_size,
+            "inventory_total": inventory_response.total,
+            "retrieved": inventory_response.total,
+            "reranked": len(chunks),
+            "graph_nodes": 0,
+            "context_chars": 0,
+            "raw_citations": len(inventory_response.citations),
+            "filtered_citations": len(inventory_response.citations),
+            "returned_citations": len(inventory_response.citations),
+        }
+    )
+
+    context: str | None = None
+    if include_context and chunks:
+        context_lines = [
+            "INVENTORY_CONTEXT:",
+            *[
+                (
+                    f"- {chunk.path} "
+                    f"(líneas {chunk.start_line}-{chunk.end_line}) "
+                    f"=> {chunk.text}"
+                )
+                for chunk in chunks
+            ],
+        ]
+        context = "\n".join(context_lines)
+        diagnostics["context_chars"] = len(context)
+
+    return RetrievalQueryResponse(
+        mode="retrieval_only",
+        answer=inventory_response.answer,
+        chunks=chunks,
+        citations=inventory_response.citations,
+        statistics=RetrievalStatistics(
+            total_before_rerank=inventory_response.total,
+            total_after_rerank=len(chunks),
+            graph_nodes_count=0,
+        ),
+        diagnostics=diagnostics,
+        context=context,
+    )
+
+
 def run_inventory_query(
     repo_id: str,
     query: str,
@@ -1117,6 +1219,150 @@ def run_inventory_query(
         items=items,
         citations=citations,
         diagnostics=diagnostics,
+    )
+
+
+def run_retrieval_query(
+    repo_id: str,
+    query: str,
+    top_n: int,
+    top_k: int,
+    embedding_provider: str | None = None,
+    embedding_model: str | None = None,
+    include_context: bool = False,
+) -> RetrievalQueryResponse:
+    """Ejecuta retrieval híbrido sin síntesis LLM y retorna evidencia estructurada."""
+    settings = get_settings()
+    inventory_intent = _is_inventory_query(query)
+    inventory_target = _extract_inventory_target(query) if inventory_intent else None
+    if inventory_intent and inventory_target:
+        inventory_response = run_inventory_query(
+            repo_id=repo_id,
+            query=query,
+            page=1,
+            page_size=settings.inventory_page_size,
+        )
+        return _build_retrieval_inventory_response(
+            inventory_response=inventory_response,
+            include_context=include_context,
+        )
+
+    budget_seconds = max(1.0, float(settings.query_max_seconds))
+    resolved_embedding_provider = (
+        settings.resolve_embedding_provider(embedding_provider)
+        if hasattr(settings, "resolve_embedding_provider")
+        else (embedding_provider or "openai")
+    )
+    resolved_embedding_model = (
+        settings.resolve_embedding_model(
+            resolved_embedding_provider,
+            embedding_model,
+        )
+        if hasattr(settings, "resolve_embedding_model")
+        else (
+            embedding_model
+            or getattr(settings, "openai_embedding_model", "text-embedding-3-small")
+        )
+    )
+
+    pipeline_started_at = monotonic()
+    stage_timings: dict[str, float] = {}
+
+    retrieval_started_at = monotonic()
+    initial = hybrid_search(
+        repo_id=repo_id,
+        query=query,
+        top_n=top_n,
+        embedding_provider=embedding_provider,
+        embedding_model=embedding_model,
+    )
+    stage_timings["hybrid_search_ms"] = _elapsed_milliseconds(retrieval_started_at)
+
+    rerank_started_at = monotonic()
+    reranked = rerank(chunks=initial, top_k=top_k)
+    stage_timings["rerank_ms"] = _elapsed_milliseconds(rerank_started_at)
+
+    graph_started_at = monotonic()
+    graph_context = expand_with_graph(chunks=reranked)
+    stage_timings["graph_expand_ms"] = _elapsed_milliseconds(graph_started_at)
+
+    context: str | None = None
+    context_chars = 0
+    if include_context:
+        context_started_at = monotonic()
+        context = assemble_context(
+            chunks=reranked,
+            graph_records=graph_context,
+            max_tokens=settings.max_context_tokens,
+        )
+        stage_timings["context_assembly_ms"] = _elapsed_milliseconds(context_started_at)
+        context_chars = len(context)
+
+    raw_citations = [
+        Citation(
+            path=item.metadata.get("path", "unknown"),
+            start_line=int(item.metadata.get("start_line", 0)),
+            end_line=int(item.metadata.get("end_line", 0)),
+            score=float(item.score),
+            reason="hybrid_rag_match",
+        )
+        for item in reranked
+    ]
+    filtered_citations = [
+        item for item in raw_citations if not is_noisy_path(item.path)
+    ]
+    citations_source = filtered_citations or raw_citations
+    citations = sorted(citations_source, key=_citation_priority)
+
+    chunks: list[RetrievedChunk] = []
+    for item in reranked:
+        metadata = dict(item.metadata)
+        chunks.append(
+            RetrievedChunk(
+                id=item.id,
+                text=item.text,
+                score=float(item.score),
+                path=str(metadata.get("path", "unknown")),
+                start_line=int(metadata.get("start_line", 0)),
+                end_line=int(metadata.get("end_line", 0)),
+                kind=str(metadata.get("kind", "code_chunk")),
+                metadata=metadata,
+            )
+        )
+
+    answer = _build_retrieval_answer(chunks=chunks, query=query)
+    stage_timings["total_ms"] = _elapsed_milliseconds(pipeline_started_at)
+    diagnostics = build_retrieval_diagnostics(
+        settings=settings,
+        retrieved_count=len(initial),
+        reranked_count=len(reranked),
+        graph_nodes_count=len(graph_context),
+        context_chars=context_chars,
+        raw_citations_count=len(raw_citations),
+        filtered_citations_count=len(filtered_citations),
+        returned_citations_count=len(citations),
+        embedding_provider=resolved_embedding_provider,
+        embedding_model=resolved_embedding_model,
+        budget_seconds=budget_seconds,
+        budget_exhausted=(
+            _remaining_budget_seconds(pipeline_started_at, budget_seconds) <= 0
+        ),
+        stage_timings=stage_timings,
+        fallback_reason=None,
+    )
+
+    return RetrievalQueryResponse(
+        mode="retrieval_only",
+        answer=answer,
+        chunks=chunks,
+        citations=citations,
+        statistics=RetrievalStatistics(
+            total_before_rerank=len(initial),
+            total_after_rerank=len(reranked),
+            graph_nodes_count=len(graph_context),
+        ),
+        diagnostics=diagnostics,
+        context=context,
     )
 
 
