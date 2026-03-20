@@ -1,11 +1,19 @@
 """Ventana principal del escritorio para el Validador Híbrido de Respuestas RAG."""
 
 import sys
+import os
 from typing import Any
-from urllib.parse import quote_plus
+from urllib.parse import quote, quote_plus
 
 import requests
-from PySide6.QtWidgets import QApplication, QMainWindow, QTabWidget, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QApplication,
+    QMainWindow,
+    QMessageBox,
+    QTabWidget,
+    QVBoxLayout,
+    QWidget,
+)
 
 from coderag.core.settings import get_settings
 from coderag.ui.provider_action_state import (
@@ -25,8 +33,9 @@ from coderag.ui.query_response_formatter import (
 )
 from coderag.ui.query_view import QueryView
 
-API_BASE = "http://127.0.0.1:8000"
+API_BASE = os.getenv("CODERAG_API_BASE", "http://127.0.0.1:8000")
 UI_REQUEST_TIMEOUT_SECONDS = get_settings().ui_request_timeout_seconds
+JOB_POLL_LOGS_TAIL = 180
 QUERY_PROFILE_SETTINGS: dict[str, dict[str, float | int | bool]] = {
     "rapido": {
         "top_n": 40,
@@ -89,11 +98,17 @@ class MainWindow(QMainWindow):
         self.query_view.refresh_repo_ids_button.clicked.connect(
             lambda: self._refresh_repo_ids(log_on_error=True)
         )
+        self.query_view.delete_repo_button.clicked.connect(
+            self._on_delete_selected_repo
+        )
         self._connect_action_state_signals()
 
         self._active_job_id: str | None = None
         self._job_poll_enabled = False
         self._last_logs: list[str] = []
+        self._poll_timeout_seconds = max(8.0, min(float(UI_REQUEST_TIMEOUT_SECONDS), 60.0))
+        self._poll_failure_count = 0
+        self._last_poll_failure_message = ""
         self._poll_timer_id = self.startTimer(1200)
 
         self.ingestion_view.set_status("idle", "Idle")
@@ -122,6 +137,7 @@ class MainWindow(QMainWindow):
         )
         self.query_view.refresh_repo_ids_button.setDisabled(not enabled)
         self.query_view.refresh_models_button.setDisabled(not enabled)
+        self.query_view.delete_repo_button.setDisabled(not enabled)
         self.query_view.query_input.setDisabled(not enabled)
         if not enabled:
             state = evaluate_query_action(
@@ -297,6 +313,8 @@ class MainWindow(QMainWindow):
         self.ingestion_view.set_job_id("")
         self.ingestion_view.set_repo_id("")
         self._last_logs = []
+        self._poll_failure_count = 0
+        self._last_poll_failure_message = ""
 
         try:
             response = requests.post(f"{API_BASE}/repos/ingest", json=payload, timeout=30)
@@ -379,6 +397,75 @@ class MainWindow(QMainWindow):
             self.ingestion_view.set_reset_running(False)
             self._update_ingest_action_state()
 
+    def _on_delete_selected_repo(self) -> None:
+        """Solicita y ejecuta el borrado completo del repo seleccionado en consulta."""
+        repo_id = self.query_view.get_repo_id_text()
+        if not repo_id:
+            self._show_query_error("Selecciona un ID de repositorio para eliminar.")
+            return
+
+        confirmation = QMessageBox.question(
+            self,
+            "Confirmar eliminación",
+            (
+                "Se eliminará el repositorio seleccionado de Chroma, BM25, "
+                "Neo4j, workspace y metadata SQLite.\n\n"
+                f"Repositorio: {repo_id}\n"
+                "Esta acción no se puede deshacer."
+            ),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if confirmation != QMessageBox.StandardButton.Yes:
+            return
+
+        encoded_repo_id = quote(repo_id, safe="")
+        self.query_view.set_running(True)
+        self.query_view.set_status("running", "Eliminando")
+
+        try:
+            response = requests.delete(
+                f"{API_BASE}/repos/{encoded_repo_id}",
+                timeout=UI_REQUEST_TIMEOUT_SECONDS,
+            )
+            response.raise_for_status()
+            payload = response.json()
+
+            cleared = payload.get("cleared") or []
+            warnings = payload.get("warnings") or []
+
+            self.query_view.clear_history()
+            self.query_view.clear_question()
+            self.query_view.clear_repo_id()
+            self.evidence_view.set_citations([])
+            self._refresh_repo_ids(log_on_error=True)
+
+            self.query_view.set_status("success", "Eliminado")
+            self.query_view.append_assistant_message(
+                str(payload.get("message") or f"Repositorio '{repo_id}' eliminado.")
+            )
+            if cleared:
+                self.ingestion_view.append_log(
+                    "Borrado repo completado en capas: " + ", ".join(cleared)
+                )
+            for warning in warnings:
+                self.ingestion_view.append_log(
+                    f"Advertencia borrado repo '{repo_id}': {warning}"
+                )
+        except requests.HTTPError:
+            detail = "Error HTTP al eliminar repositorio."
+            try:
+                error_data = response.json()
+                detail = str(error_data.get("detail") or detail)
+            except Exception:
+                pass
+            self._show_query_error(detail)
+        except Exception as exc:
+            self._show_query_error(f"Error eliminando repositorio: {exc}")
+        finally:
+            self.query_view.set_running(False)
+            self._update_query_action_state()
+
     def timerEvent(self, event: Any) -> None:  # noqa: N802
         """Sondear el punto final del trabajo de ingesta y actualizar los widgets de estado."""
         if event.timerId() != self._poll_timer_id:
@@ -386,14 +473,29 @@ class MainWindow(QMainWindow):
         if not self._job_poll_enabled or not self._active_job_id:
             return
 
-        endpoint = f"{API_BASE}/jobs/{self._active_job_id}"
+        endpoint = f"{API_BASE}/jobs/{self._active_job_id}?logs_tail={JOB_POLL_LOGS_TAIL}"
         try:
-            response = requests.get(endpoint, timeout=5)
+            response = requests.get(endpoint, timeout=self._poll_timeout_seconds)
             response.raise_for_status()
             data = response.json()
         except Exception as exc:
-            self.ingestion_view.append_log(f"Polling falló: {exc}")
+            self._poll_failure_count += 1
+            error_message = str(exc)
+            should_log = (
+                self._poll_failure_count == 1
+                or self._poll_failure_count % 5 == 0
+                or error_message != self._last_poll_failure_message
+            )
+            if should_log:
+                self.ingestion_view.append_log(
+                    "Polling falló "
+                    f"(intentos={self._poll_failure_count}): {error_message}"
+                )
+            self._last_poll_failure_message = error_message
             return
+
+        self._poll_failure_count = 0
+        self._last_poll_failure_message = ""
 
         self._sync_job_ui(data)
 

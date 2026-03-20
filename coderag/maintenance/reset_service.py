@@ -15,6 +15,7 @@ from coderag.core.settings import get_settings
 from coderag.ingestion.graph_builder import GraphBuilder
 from coderag.ingestion.index_bm25 import GLOBAL_BM25
 from coderag.ingestion.index_chroma import COLLECTIONS, ChromaIndex
+from coderag.storage.metadata_store import MetadataStore
 
 
 def _on_remove_error(func, path: str, exc_info) -> None:
@@ -144,3 +145,100 @@ def reset_all_storage() -> tuple[list[str], list[str]]:
         graph.close()
 
     return cleared, warnings
+
+
+def _workspace_repo_paths(workspace_root: Path, repo_id: str) -> list[Path]:
+    """Lista rutas de workspace que corresponden al repo exacto o por sufijo."""
+    if not workspace_root.exists() or not workspace_root.is_dir():
+        return []
+
+    matches: list[Path] = []
+    exact_name = repo_id
+    prefix_name = f"{repo_id}_"
+    for child in workspace_root.iterdir():
+        if not child.is_dir():
+            continue
+        if child.name == exact_name or child.name.startswith(prefix_name):
+            matches.append(child)
+    return matches
+
+
+def delete_repo_storage(
+    repo_id: str,
+) -> tuple[list[str], list[str], dict[str, int]]:
+    """Elimina un repositorio puntual en todas las capas de storage del RAG."""
+    normalized_repo_id = repo_id.strip()
+    if not normalized_repo_id:
+        raise ValueError("repo_id no puede estar vacío")
+
+    settings = get_settings()
+    cleared: list[str] = []
+    warnings: list[str] = []
+    deleted_counts: dict[str, int] = {}
+
+    try:
+        chroma = ChromaIndex()
+        chroma_deleted = chroma.delete_by_repo_id(normalized_repo_id)
+        deleted_counts["chroma_total"] = int(chroma_deleted.get("total", 0) or 0)
+        for collection_name in COLLECTIONS:
+            value = int(chroma_deleted.get(collection_name, 0) or 0)
+            deleted_counts[f"chroma_{collection_name}"] = value
+        cleared.append("Chroma")
+    except Exception as exc:
+        warnings.append(f"No se pudo limpiar Chroma para '{normalized_repo_id}': {exc}")
+
+    try:
+        bm25_deleted = GLOBAL_BM25.delete_repo(normalized_repo_id)
+        deleted_counts["bm25_docs"] = int(
+            bm25_deleted.get("docs_removed", 0) or 0
+        )
+        deleted_counts["bm25_snapshots"] = int(
+            bm25_deleted.get("snapshot_removed", 0) or 0
+        )
+        cleared.append("BM25")
+    except Exception as exc:
+        warnings.append(f"No se pudo limpiar BM25 para '{normalized_repo_id}': {exc}")
+
+    graph = GraphBuilder()
+    try:
+        graph_nodes_deleted = graph.delete_repo_subgraph(normalized_repo_id)
+        deleted_counts["neo4j_nodes"] = int(graph_nodes_deleted)
+        cleared.append("Grafo Neo4j")
+    except Exception as exc:
+        warnings.append(f"No se pudo limpiar Neo4j para '{normalized_repo_id}': {exc}")
+    finally:
+        graph.close()
+
+    workspace_removed = 0
+    for path in _workspace_repo_paths(settings.workspace_path, normalized_repo_id):
+        try:
+            _remove_path(path)
+            workspace_removed += 1
+        except RuntimeError as exc:
+            warnings.append(
+                f"No se pudo eliminar workspace '{path.name}' por lock: {exc}"
+            )
+    deleted_counts["workspace_dirs"] = workspace_removed
+    if workspace_removed > 0:
+        cleared.append("Workspace")
+
+    metadata_store = MetadataStore(settings.workspace_path.parent / "metadata.db")
+    try:
+        metadata_deleted = metadata_store.delete_repo_data(normalized_repo_id)
+        deleted_counts["metadata_jobs"] = int(
+            metadata_deleted.get("jobs_deleted", 0) or 0
+        )
+        deleted_counts["metadata_repos"] = int(
+            metadata_deleted.get("repos_deleted", 0) or 0
+        )
+        deleted_counts["metadata_total"] = int(
+            metadata_deleted.get("total", 0) or 0
+        )
+        cleared.append("Metadata SQLite")
+    except Exception as exc:
+        warnings.append(
+            "No se pudo limpiar metadata SQLite para "
+            f"'{normalized_repo_id}': {exc}"
+        )
+
+    return cleared, warnings, deleted_counts

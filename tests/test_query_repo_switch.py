@@ -3,7 +3,7 @@
 import sys
 
 import pytest
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QMessageBox
 
 from coderag.ui.main_window import MainWindow
 
@@ -120,3 +120,43 @@ def test_sync_job_ui_partial_unlocks_query_controls(window: MainWindow) -> None:
     assert window.query_view.query_input.isEnabled() is True
     assert window.query_view.repo_id.isEnabled() is True
     assert window.ingestion_view.status_chip.text() == "Parcial"
+
+
+def test_delete_selected_repo_calls_endpoint_and_cleans_ui(
+    window: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Borrar repo desde Consulta invoca API DELETE y limpia estado visual."""
+    _add_history_and_evidence(window)
+    window.query_view.repo_id.setCurrentText("repo-a")
+
+    captured: dict[str, object] = {"url": None}
+
+    def _fake_delete(url: str, timeout: int) -> _FakeResponse:  # noqa: ARG001
+        captured["url"] = url
+        return _FakeResponse(
+            {
+                "message": "Repositorio 'repo-a' eliminado",
+                "repo_id": "repo-a",
+                "cleared": ["Chroma", "BM25", "Grafo Neo4j"],
+                "warnings": [],
+                "deleted_counts": {"chroma_total": 10},
+            }
+        )
+
+    import coderag.ui.main_window as module
+
+    monkeypatch.setattr(module.requests, "delete", _fake_delete)
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
+    )
+
+    window._on_delete_selected_repo()
+
+    assert captured["url"] == "http://127.0.0.1:8000/repos/repo-a"
+    history_text = window.query_view.history_output.toPlainText()
+    assert "Repositorio 'repo-a' eliminado" in history_text
+    assert window.query_view.get_question_text() == ""
+    assert window.evidence_view.table.rowCount() == 0

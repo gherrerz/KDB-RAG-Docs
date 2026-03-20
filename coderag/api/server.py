@@ -3,7 +3,7 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 
 from coderag.core.logging import configure_logging
 from coderag.core.models import (
@@ -16,6 +16,7 @@ from coderag.core.models import (
     RetrievalQueryRequest,
     RetrievalQueryResponse,
     RepoCatalogResponse,
+    RepoDeleteResponse,
     RepoQueryStatusResponse,
     RepoIngestRequest,
     ResetResponse,
@@ -110,7 +111,10 @@ def ingest_repo(request: RepoIngestRequest) -> JobInfo:
     response_model=JobInfo,
     tags=["Ingesta"],
     summary="Consultar estado de job",
-    description="Obtiene estado, progreso y logs del job de ingesta.",
+    description=(
+        "Obtiene estado, progreso y logs del job de ingesta. "
+        "Permite acotar la cola de logs para reducir latencia de polling."
+    ),
     responses={
         404: {
             "description": "No existe un job con ese identificador.",
@@ -122,12 +126,35 @@ def ingest_repo(request: RepoIngestRequest) -> JobInfo:
         }
     },
 )
-def get_job(job_id: str) -> JobInfo:
-    """Devuelve el estado actual del trabajo de ingesta."""
+def get_job(
+    job_id: str,
+    logs_tail: int = Query(
+        default=200,
+        ge=0,
+        le=2000,
+        description="Cantidad máxima de líneas de log a devolver desde el final.",
+    ),
+) -> JobInfo:
+    """Devuelve el estado actual del trabajo de ingesta con cola de logs acotada."""
     job = jobs.get_job(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Job no encontrado")
-    return job
+
+    if logs_tail == 0:
+        selected_logs: list[str] = []
+    else:
+        selected_logs = list(job.logs[-logs_tail:])
+
+    return JobInfo(
+        id=job.id,
+        status=job.status,
+        progress=job.progress,
+        logs=selected_logs,
+        repo_id=job.repo_id,
+        error=job.error,
+        created_at=job.created_at,
+        updated_at=job.updated_at,
+    )
 
 
 @app.post(
@@ -485,5 +512,52 @@ def reset_all_data() -> ResetResponse:
     return ResetResponse(
         message="Limpieza total completada",
         cleared=cleared,
+        warnings=warnings,
+    )
+
+
+@app.delete(
+    "/repos/{repo_id}",
+    response_model=RepoDeleteResponse,
+    tags=["Admin"],
+    summary="Eliminar repositorio por ID",
+    description=(
+        "Elimina un repositorio de Chroma, BM25, Neo4j, workspace y "
+        "metadata SQLite. Rechaza la acción si hay jobs activos del mismo repo."
+    ),
+    responses={
+        404: {
+            "description": "No existe un repositorio con ese identificador.",
+        },
+        409: {
+            "description": "Hay ingestas activas del mismo repositorio.",
+        },
+        500: {
+            "description": "Error inesperado durante el proceso de eliminación.",
+        },
+    },
+)
+def delete_repo(repo_id: str) -> RepoDeleteResponse:
+    """Elimine un repositorio específico de todas las capas de almacenamiento."""
+    normalized_repo_id = repo_id.strip()
+    if not normalized_repo_id:
+        raise HTTPException(status_code=422, detail="repo_id no puede estar vacío")
+
+    try:
+        cleared, warnings, deleted_counts = jobs.delete_repo(normalized_repo_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    return RepoDeleteResponse(
+        message=f"Repositorio '{normalized_repo_id}' eliminado",
+        repo_id=normalized_repo_id,
+        cleared=cleared,
+        deleted_counts=deleted_counts,
         warnings=warnings,
     )

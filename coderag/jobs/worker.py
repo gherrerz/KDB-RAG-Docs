@@ -54,6 +54,44 @@ class JobManager:
         self.store = MetadataStore(self._metadata_path)
         return cleared, warnings
 
+    def delete_repo(self, repo_id: str) -> tuple[list[str], list[str], dict[str, int]]:
+        """Elimina un repositorio por ID de todas las capas de storage."""
+        normalized_repo_id = repo_id.strip()
+        if not normalized_repo_id:
+            raise ValueError("repo_id no puede estar vacío")
+
+        running_same_repo_jobs = [
+            job_id
+            for job_id, job in self._jobs.items()
+            if job.status == JobStatus.running
+            and (job.repo_id or "").strip() == normalized_repo_id
+        ]
+        if running_same_repo_jobs:
+            joined = ", ".join(running_same_repo_jobs)
+            raise RuntimeError(
+                "No se puede eliminar el repositorio mientras haya "
+                f"ingestas activas del mismo repo: {joined}"
+            )
+
+        if normalized_repo_id not in self.list_repo_ids():
+            raise LookupError(
+                f"No existe un repositorio registrado con id '{normalized_repo_id}'"
+            )
+
+        from coderag.maintenance.reset_service import delete_repo_storage
+
+        cleared, warnings, deleted_counts = delete_repo_storage(normalized_repo_id)
+
+        tracked_jobs = [
+            job_id
+            for job_id, job in self._jobs.items()
+            if (job.repo_id or "").strip() == normalized_repo_id
+        ]
+        for job_id in tracked_jobs:
+            self._jobs.pop(job_id, None)
+
+        return cleared, warnings, deleted_counts
+
     def create_ingest_job(self, request: RepoIngestRequest) -> JobInfo:
         """Cree e inicie un trabajo de ingesta asincrónica."""
         job_id = str(uuid4())

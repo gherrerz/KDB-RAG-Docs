@@ -61,7 +61,11 @@ def test_embed_texts_keeps_dimension_on_mixed_api_and_fallback(
     import coderag.ingestion.embedding as module
 
     monkeypatch.setattr(module, "get_settings", lambda: _Settings())
-    monkeypatch.setattr(module, "OpenAI", lambda api_key: _FakeOpenAIClient())
+    monkeypatch.setattr(
+        module,
+        "OpenAI",
+        lambda *args, **kwargs: _FakeOpenAIClient(),
+    )
 
     client = EmbeddingClient()
     client.batch_size = 1
@@ -69,3 +73,37 @@ def test_embed_texts_keeps_dimension_on_mixed_api_and_fallback(
 
     assert len(vectors) == 2
     assert all(len(vector) == 1536 for vector in vectors)
+
+
+def test_embed_texts_reports_progress_per_batch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Emite progreso acumulado por lote para visibilidad en ingesta."""
+
+    class _Settings:
+        openai_embedding_model = "text-embedding-3-small"
+        openai_api_key = "test-key"
+        openai_timeout_seconds = 10.0
+
+    import coderag.ingestion.embedding as module
+
+    monkeypatch.setattr(module, "get_settings", lambda: _Settings())
+    monkeypatch.setattr(
+        module,
+        "OpenAI",
+        lambda *args, **kwargs: _FakeOpenAIClient(),
+    )
+
+    client = EmbeddingClient()
+    client.batch_size = 1
+    progress_events: list[tuple[int, int]] = []
+
+    vectors = client.embed_texts(
+        ["a", "b"],
+        progress_callback=lambda processed, total: progress_events.append(
+            (processed, total)
+        ),
+    )
+
+    assert len(vectors) == 2
+    assert progress_events == [(1, 2), (2, 2)]

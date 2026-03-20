@@ -117,6 +117,7 @@ def test_ingest_repository_continues_on_graph_failure(
     assert ".zip" in received_scan_args["excluded_extensions"]
     assert ".gitignore" in received_scan_args["excluded_files"]
     assert ".env" in received_scan_args["excluded_files"]
+    assert any("Observabilidad símbolos:" in item for item in logs)
     assert any("Advertencia: grafo Neo4j no disponible" in item for item in logs)
     assert logs[-1] == "Ingesta finalizada"
 
@@ -213,6 +214,7 @@ def test_ingest_repository_purges_existing_repo_before_reindex(
 
     assert call_order == ["purge", "index_vectors", "index_bm25", "index_graph"]
     assert any("Repositorio existente detectado" in item for item in logs)
+    assert any("Observabilidad símbolos:" in item for item in logs)
 
 
 def test_ingest_repository_fails_when_purge_fails(

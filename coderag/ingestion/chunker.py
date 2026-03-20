@@ -5,6 +5,8 @@ import json
 import re
 
 from coderag.core.models import ScannedFile, SymbolChunk
+from coderag.core.settings import get_settings
+from coderag.ingestion.extractors import DEFAULT_LANGUAGE_EXTRACTOR_REGISTRY
 
 
 def _chunk_id(repo_id: str, path: str, name: str, start_line: int) -> str:
@@ -13,71 +15,139 @@ def _chunk_id(repo_id: str, path: str, name: str, start_line: int) -> str:
     return hashlib.sha1(value).hexdigest()
 
 
-def extract_symbol_chunks(repo_id: str, scanned_files: list[ScannedFile]) -> list[SymbolChunk]:
-    """Extraiga fragmentos aproximados a nivel de símbolo utilizando heurísticas de expresiones regulares."""
+def _slice_snippet(lines: list[str], start_line: int, end_line: int) -> str:
+    """Return source text for an inclusive 1-indexed line range."""
+    if not lines:
+        return ""
+    safe_start = max(1, min(start_line, len(lines)))
+    safe_end = max(safe_start, min(end_line, len(lines)))
+    return "\n".join(lines[safe_start - 1 : safe_end])
+
+
+def _extract_code_language_symbols(
+    repo_id: str,
+    file_obj: ScannedFile,
+    lines: list[str],
+) -> list[SymbolChunk]:
+    """Extract symbols for a code-like language via registry strategies."""
+    extractor = DEFAULT_LANGUAGE_EXTRACTOR_REGISTRY.get(file_obj.language)
+    detections = extractor.detect_symbols(file_obj.content)
     chunks: list[SymbolChunk] = []
+
+    for detection in detections:
+        span = extractor.resolve_span(file_obj.content, detection)
+        snippet = _slice_snippet(lines, span.start_line, span.end_line)
+        chunks.append(
+            SymbolChunk(
+                id=_chunk_id(
+                    repo_id,
+                    file_obj.path,
+                    detection.symbol_name,
+                    detection.start_line,
+                ),
+                repo_id=repo_id,
+                path=file_obj.path,
+                language=file_obj.language,
+                symbol_name=detection.symbol_name,
+                symbol_type=detection.symbol_type,
+                start_line=span.start_line,
+                end_line=span.end_line,
+                snippet=snippet,
+            )
+        )
+
+    return chunks
+
+
+def _extract_code_language_symbols_legacy(
+    repo_id: str,
+    file_obj: ScannedFile,
+    lines: list[str],
+) -> list[SymbolChunk]:
+    """Extract symbols with the legacy fixed-window regex strategy."""
+    chunks: list[SymbolChunk] = []
+    for index, line in enumerate(lines):
+        py_match = re.match(r"\s*(def|class)\s+([A-Za-z_][A-Za-z0-9_]*)", line)
+        js_match = re.match(r"\s*function\s+([A-Za-z_][A-Za-z0-9_]*)", line)
+        java_match = re.match(
+            r"\s*(public|private|protected)?\s*(class|interface)\s+"
+            r"([A-Za-z_][A-Za-z0-9_]*)",
+            line,
+        )
+        java_method_match = re.match(
+            r"\s*(public|private|protected)?\s*(static\s+)?"
+            r"([A-Za-z_][A-Za-z0-9_<>\[\]]*\s+)+"
+            r"([A-Za-z_][A-Za-z0-9_]*)\s*\([^;]*\)\s*(\{|$)",
+            line,
+        )
+        java_constructor_match = re.match(
+            r"\s*(public|private|protected)\s+"
+            r"([A-Za-z_][A-Za-z0-9_]*)\s*\([^;]*\)\s*(\{|$)",
+            line,
+        )
+
+        symbol_type = ""
+        symbol_name = ""
+        if py_match:
+            symbol_type = "class" if py_match.group(1) == "class" else "function"
+            symbol_name = py_match.group(2)
+        elif js_match:
+            symbol_type = "function"
+            symbol_name = js_match.group(1)
+        elif java_match:
+            symbol_type = java_match.group(2)
+            symbol_name = java_match.group(3)
+        elif file_obj.language == "java" and java_constructor_match:
+            symbol_type = "constructor"
+            symbol_name = java_constructor_match.group(2)
+        elif file_obj.language == "java" and java_method_match:
+            symbol_type = "method"
+            symbol_name = java_method_match.group(4)
+        else:
+            continue
+
+        start_line = index + 1
+        end_line = min(start_line + 30, len(lines))
+        chunks.append(
+            SymbolChunk(
+                id=_chunk_id(repo_id, file_obj.path, symbol_name, start_line),
+                repo_id=repo_id,
+                path=file_obj.path,
+                language=file_obj.language,
+                symbol_name=symbol_name,
+                symbol_type=symbol_type,
+                start_line=start_line,
+                end_line=end_line,
+                snippet=_slice_snippet(lines, start_line, end_line),
+            )
+        )
+
+    return chunks
+
+
+def _is_symbol_extractor_v2_enabled() -> bool:
+    """Return whether modular symbol extraction is enabled in runtime settings."""
+    settings = get_settings()
+    return bool(getattr(settings, "symbol_extractor_v2_enabled", True))
+
+
+def extract_symbol_chunks(repo_id: str, scanned_files: list[ScannedFile]) -> list[SymbolChunk]:
+    """Extract symbol-level chunks using language-specific extractor strategies."""
+    chunks: list[SymbolChunk] = []
+    use_modular = _is_symbol_extractor_v2_enabled()
+
     for file_obj in scanned_files:
         lines = file_obj.content.splitlines()
-        extracted_in_file = 0
-        for index, line in enumerate(lines):
-            py_match = re.match(r"\s*(def|class)\s+([A-Za-z_][A-Za-z0-9_]*)", line)
-            js_match = re.match(r"\s*function\s+([A-Za-z_][A-Za-z0-9_]*)", line)
-            java_match = re.match(
-                r"\s*(public|private|protected)?\s*(class|interface)\s+"
-                r"([A-Za-z_][A-Za-z0-9_]*)",
-                line,
+        if use_modular:
+            code_chunks = _extract_code_language_symbols(repo_id, file_obj, lines)
+        else:
+            code_chunks = _extract_code_language_symbols_legacy(
+                repo_id,
+                file_obj,
+                lines,
             )
-            java_method_match = re.match(
-                r"\s*(public|private|protected)?\s*(static\s+)?"
-                r"([A-Za-z_][A-Za-z0-9_<>\[\]]*\s+)+"
-                r"([A-Za-z_][A-Za-z0-9_]*)\s*\([^;]*\)\s*(\{|$)",
-                line,
-            )
-            java_constructor_match = re.match(
-                r"\s*(public|private|protected)\s+"
-                r"([A-Za-z_][A-Za-z0-9_]*)\s*\([^;]*\)\s*(\{|$)",
-                line,
-            )
-
-            symbol_type = ""
-            symbol_name = ""
-            if py_match:
-                symbol_type = "class" if py_match.group(1) == "class" else "function"
-                symbol_name = py_match.group(2)
-            elif js_match:
-                symbol_type = "function"
-                symbol_name = js_match.group(1)
-            elif java_match:
-                symbol_type = java_match.group(2)
-                symbol_name = java_match.group(3)
-            elif file_obj.language == "java" and java_constructor_match:
-                symbol_type = "constructor"
-                symbol_name = java_constructor_match.group(2)
-            elif file_obj.language == "java" and java_method_match:
-                symbol_type = "method"
-                symbol_name = java_method_match.group(4)
-            else:
-                continue
-
-            start_line = index + 1
-            end_line = min(start_line + 30, len(lines))
-            snippet = "\n".join(lines[start_line - 1 : end_line])
-            chunks.append(
-                SymbolChunk(
-                    id=_chunk_id(repo_id, file_obj.path, symbol_name, start_line),
-                    repo_id=repo_id,
-                    path=file_obj.path,
-                    language=file_obj.language,
-                    symbol_name=symbol_name,
-                    symbol_type=symbol_type,
-                    start_line=start_line,
-                    end_line=end_line,
-                    snippet=snippet,
-                )
-            )
-            extracted_in_file += 1
-
-        if extracted_in_file > 0:
+        chunks.extend(code_chunks)
+        if code_chunks:
             continue
 
         if file_obj.language == "markdown":
@@ -90,7 +160,7 @@ def extract_symbol_chunks(repo_id: str, scanned_files: list[ScannedFile]) -> lis
                     continue
                 start_line = index + 1
                 end_line = min(start_line + 20, len(lines))
-                snippet = "\n".join(lines[start_line - 1 : end_line])
+                snippet = _slice_snippet(lines, start_line, end_line)
                 chunks.append(
                     SymbolChunk(
                         id=_chunk_id(repo_id, file_obj.path, heading, start_line),
@@ -115,7 +185,7 @@ def extract_symbol_chunks(repo_id: str, scanned_files: list[ScannedFile]) -> lis
                 key_name = key_match.group(1)
                 start_line = index + 1
                 end_line = min(start_line + 8, len(lines))
-                snippet = "\n".join(lines[start_line - 1 : end_line])
+                snippet = _slice_snippet(lines, start_line, end_line)
                 chunks.append(
                     SymbolChunk(
                         id=_chunk_id(repo_id, file_obj.path, key_name, start_line),
@@ -146,7 +216,7 @@ def extract_symbol_chunks(repo_id: str, scanned_files: list[ScannedFile]) -> lis
                             start_line = index + 1
                             break
                     end_line = min(start_line + 8, len(lines))
-                    snippet = "\n".join(lines[start_line - 1 : end_line])
+                    snippet = _slice_snippet(lines, start_line, end_line)
                     chunks.append(
                         SymbolChunk(
                             id=_chunk_id(

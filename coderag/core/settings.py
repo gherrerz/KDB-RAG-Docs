@@ -85,6 +85,10 @@ class Settings(BaseSettings):
         default="",
         alias="SCAN_EXCLUDED_FILES",
     )
+    symbol_extractor_v2_enabled: bool = Field(
+        default=True,
+        alias="SYMBOL_EXTRACTOR_V2_ENABLED",
+    )
     health_check_strict: bool = Field(default=True, alias="HEALTH_CHECK_STRICT")
     health_check_timeout_seconds: float = Field(
         default=5.0,

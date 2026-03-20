@@ -277,6 +277,25 @@ class ResetResponse(BaseModel):
     warnings: list[str] = Field(default_factory=list, description="Advertencias no bloqueantes de la operación.")
 
 
+class RepoDeleteResponse(BaseModel):
+    """Modelo de salida devuelto por el endpoint de borrado por repositorio."""
+
+    message: str = Field(description="Mensaje general del resultado de borrado.")
+    repo_id: str = Field(description="Repositorio solicitado para eliminación.")
+    cleared: list[str] = Field(
+        default_factory=list,
+        description="Capas o recursos eliminados durante la operación.",
+    )
+    deleted_counts: dict[str, int] = Field(
+        default_factory=dict,
+        description="Conteos de elementos eliminados por componente.",
+    )
+    warnings: list[str] = Field(
+        default_factory=list,
+        description="Advertencias no bloqueantes de la operación.",
+    )
+
+
 class RepoCatalogResponse(BaseModel):
     """Modelo de salida para identificadores de repositorio disponibles para consultas."""
 

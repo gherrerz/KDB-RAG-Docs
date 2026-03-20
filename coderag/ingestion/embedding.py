@@ -3,6 +3,7 @@
 import hashlib
 import logging
 from threading import Lock
+from collections.abc import Callable
 
 from openai import OpenAI
 import requests
@@ -126,7 +127,19 @@ class EmbeddingClient:
             return None
         with cls._client_lock:
             if cls._shared_client is None or cls._shared_api_key != api_key:
-                cls._shared_client = OpenAI(api_key=api_key)
+                settings = get_settings()
+                request_timeout = _timeout_value(
+                    getattr(settings, "openai_timeout_seconds", 20.0)
+                )
+                max_retries = max(
+                    0,
+                    int(getattr(settings, "openai_max_retries", 2)),
+                )
+                cls._shared_client = OpenAI(
+                    api_key=api_key,
+                    timeout=request_timeout,
+                    max_retries=max_retries,
+                )
                 cls._shared_api_key = api_key
             return cls._shared_client
 
@@ -162,8 +175,13 @@ class EmbeddingClient:
             return text
         return text[: self.max_chars_per_text]
 
-    def embed_texts(self, texts: list[str]) -> list[list[float]]:
-        """Incruste una lista de cadenas utilizando la API OpenAI o un respaldo determinista."""
+    def embed_texts(
+        self,
+        texts: list[str],
+        *,
+        progress_callback: Callable[[int, int], None] | None = None,
+    ) -> list[list[float]]:
+        """Incruste textos con callback opcional de progreso por lotes."""
         if not texts:
             return []
 
@@ -185,6 +203,7 @@ class EmbeddingClient:
             ]
 
         vectors: list[list[float]] = []
+        processed = 0
         for index in range(0, len(normalized), self.batch_size):
             batch = normalized[index : index + self.batch_size]
             try:
@@ -225,6 +244,10 @@ class EmbeddingClient:
                         for text in batch
                     ]
                 )
+            finally:
+                processed += len(batch)
+                if progress_callback is not None:
+                    progress_callback(processed, len(normalized))
         return vectors
 
     def _embed_with_gemini_rest(self, texts: list[str]) -> list[list[float]]:

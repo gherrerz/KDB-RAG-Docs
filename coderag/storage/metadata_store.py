@@ -188,3 +188,31 @@ class MetadataStore:
             "last_embedding_provider": row["embedding_provider"],
             "last_embedding_model": row["embedding_model"],
         }
+
+    def delete_repo_runtime(self, repo_id: str) -> int:
+        """Elimina metadata runtime del repositorio y devuelve filas afectadas."""
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "DELETE FROM repos WHERE id = ?",
+                (repo_id,),
+            )
+            return int(cursor.rowcount or 0)
+
+    def delete_repo_jobs(self, repo_id: str) -> int:
+        """Elimina historial de jobs asociados al repositorio y devuelve filas."""
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "DELETE FROM jobs WHERE repo_id = ?",
+                (repo_id,),
+            )
+            return int(cursor.rowcount or 0)
+
+    def delete_repo_data(self, repo_id: str) -> dict[str, int]:
+        """Elimina metadata de repositorio y jobs, retornando conteos por tabla."""
+        jobs_deleted = self.delete_repo_jobs(repo_id)
+        repos_deleted = self.delete_repo_runtime(repo_id)
+        return {
+            "jobs_deleted": jobs_deleted,
+            "repos_deleted": repos_deleted,
+            "total": jobs_deleted + repos_deleted,
+        }

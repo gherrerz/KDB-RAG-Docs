@@ -24,6 +24,7 @@ Este documento es la fuente de verdad de la API HTTP de Coderag.
 | POST | `/query/retrieval` | `run_retrieval_query` | `RetrievalQueryRequest` | `RetrievalQueryResponse` |
 | POST | `/inventory/query` | `run_inventory_query` | `InventoryQueryRequest` | `InventoryQueryResponse` |
 | GET | `/repos` | `JobManager.list_repo_ids` | N/A | `RepoCatalogResponse` |
+| DELETE | `/repos/{repo_id}` | `JobManager.delete_repo` | Path `repo_id` | `RepoDeleteResponse` |
 | GET | `/providers/models` | `discover_models` | Query params (`provider`, `kind`, `force_refresh`) | `ProviderModelCatalogResponse` |
 | GET | `/repos/{repo_id}/status` | `get_repo_query_status` | Path `repo_id` | `RepoQueryStatusResponse` |
 | GET | `/health/storage` | `run_storage_preflight` | N/A | `StorageHealthResponse` |
@@ -238,14 +239,28 @@ Notas de comportamiento:
 | cleared | list[str] | no | `[]` | Recursos limpiados. |
 | warnings | list[str] | no | `[]` | Advertencias no bloqueantes. |
 
+## RepoDeleteResponse
+
+| Campo | Tipo | Requerido | Default | Descripcion |
+|---|---|---|---|---|
+| message | str | si | N/A | Mensaje final del borrado por repositorio. |
+| repo_id | str | si | N/A | Repositorio solicitado para eliminar. |
+| cleared | list[str] | no | `[]` | Capas/recursos limpiados. |
+| deleted_counts | dict[str, int] | no | `{}` | Conteos de eliminación por storage/capa. |
+| warnings | list[str] | no | `[]` | Advertencias no bloqueantes. |
+
 ## Errores por endpoint
 
 | Codigo | Endpoint | Causa | Shape resumido |
 |---|---|---|---|
 | 404 | `GET /jobs/{job_id}` | Job inexistente | `{ "detail": "Job no encontrado" }` |
+| 404 | `DELETE /repos/{repo_id}` | Repo inexistente en catálogo | `{ "detail": "..." }` |
+| 409 | `DELETE /repos/{repo_id}` | Hay jobs activos del mismo repo | `{ "detail": "..." }` |
 | 409 | `POST /admin/reset` | Reset con jobs en ejecucion | `{ "detail": "..." }` |
 | 422 | `POST /query` | Repo no listo para consulta | `{ "detail": { "code": "repo_not_ready", "repo_status": {...} } }` |
+| 422 | `DELETE /repos/{repo_id}` | `repo_id` vacío tras normalización | `{ "detail": "repo_id no puede estar vacío" }` |
 | 422 | Endpoints con body | Error de validacion Pydantic | `{ "detail": [ ... ] }` |
+| 500 | `DELETE /repos/{repo_id}` | Error inesperado de eliminación | `{ "detail": "..." }` |
 | 500 | `POST /admin/reset` | Error inesperado de limpieza | `{ "detail": "..." }` |
 | 503 | `POST /repos/ingest`, `POST /query`, `POST /inventory/query` | Falla preflight de storage | `{ "detail": { "message": "...", "health": StorageHealthResponse } }` |
 
@@ -394,6 +409,11 @@ curl http://127.0.0.1:8000/health/storage
 Esta seccion resume respuestas de exito y error por cada servicio HTTP.
 
 ### POST /repos/ingest
+
+Notas operativas de extracción de símbolos:
+
+- La arquitectura modular de extractores por lenguaje está documentada en [docs/SYMBOL_EXTRACTORS.md](docs/SYMBOL_EXTRACTORS.md).
+- El rollout se controla con la variable de entorno SYMBOL_EXTRACTOR_V2_ENABLED (true por defecto, false para rollback al modo legacy).
 
 Exito `200`:
 
@@ -575,6 +595,50 @@ Exito `200`:
 ```json
 {
   "repo_ids": ["mall", "api-service"]
+}
+```
+
+### DELETE /repos/{repo_id}
+
+Exito `200`:
+
+```json
+{
+  "message": "Repositorio 'mall' eliminado",
+  "repo_id": "mall",
+  "cleared": ["Chroma", "BM25", "Grafo Neo4j", "Workspace", "Metadata SQLite"],
+  "deleted_counts": {
+    "chroma_total": 42,
+    "chroma_code_symbols": 25,
+    "chroma_code_files": 10,
+    "chroma_code_modules": 3,
+    "chroma_docs_misc": 2,
+    "chroma_infra_ci": 2,
+    "bm25_docs": 18,
+    "bm25_snapshots": 1,
+    "neo4j_nodes": 120,
+    "workspace_dirs": 1,
+    "metadata_jobs": 3,
+    "metadata_repos": 1,
+    "metadata_total": 4
+  },
+  "warnings": []
+}
+```
+
+Error `404` (repo no encontrado):
+
+```json
+{
+  "detail": "No existe un repositorio registrado con id 'mall'"
+}
+```
+
+Error `409` (ingesta activa del mismo repo):
+
+```json
+{
+  "detail": "No se puede eliminar el repositorio mientras haya ingestas activas del mismo repo: <job_id>"
 }
 ```
 

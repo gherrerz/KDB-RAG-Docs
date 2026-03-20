@@ -14,6 +14,7 @@ verificable (archivos y líneas).
 - [Configuración](#configuración)
 - [Ejemplos de Uso](#ejemplos-de-uso)
 - [API](#api)
+- [Extractores de Simbolos](#extractores-de-simbolos)
 - [Estructura del Proyecto](#estructura-del-proyecto)
 - [Testing](#testing)
 - [Benchmark de Latencia](#benchmark-de-latencia)
@@ -279,6 +280,14 @@ Variables relevantes en `.env`:
 - `SCAN_EXCLUDED_DIRS` (obligatoria): carpetas excluidas de la ingesta (CSV).
 - `SCAN_EXCLUDED_EXTENSIONS` (obligatoria): extensiones excluidas de la ingesta (CSV).
 - `SCAN_EXCLUDED_FILES` (opcional): nombres o rutas relativas de archivos a excluir (CSV).
+- `SYMBOL_EXTRACTOR_V2_ENABLED`: activa extractor modular por lenguaje para spans completos (`true` por defecto). Usa `false` para rollback al modo legacy de ventana fija.
+
+## Extractores de Simbolos
+
+La arquitectura modular de extraccion por lenguaje, estrategia de registro para
+nuevos lenguajes y recomendaciones de pruebas se documenta en:
+
+- `docs/SYMBOL_EXTRACTORS.md`
 
 ### Filtros de escaneo de ingesta (obligatorios)
 

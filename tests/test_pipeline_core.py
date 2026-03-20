@@ -42,6 +42,58 @@ def test_extract_symbol_chunks_python_def_and_class() -> None:
     assert "run" in names
 
 
+def test_extract_symbol_chunks_python_long_symbol_uses_full_span(
+    monkeypatch,
+) -> None:
+    """Con extractor v2 activo, conserva un símbolo Python completo (>30 líneas)."""
+
+    class _Settings:
+        symbol_extractor_v2_enabled = True
+
+    import coderag.ingestion.chunker as module
+
+    monkeypatch.setattr(module, "get_settings", lambda: _Settings())
+
+    body = "\n".join([f"    value_{i} = {i}" for i in range(40)])
+    scanned = [
+        ScannedFile(
+            path="app/long.py",
+            language="python",
+            content=f"def very_long():\n{body}\n    return value_0\n",
+        )
+    ]
+
+    chunks = extract_symbol_chunks(repo_id="repo1", scanned_files=scanned)
+    target = next(item for item in chunks if item.symbol_name == "very_long")
+    assert target.end_line > 30
+
+
+def test_extract_symbol_chunks_legacy_flag_keeps_windowed_span(
+    monkeypatch,
+) -> None:
+    """Con extractor v2 desactivado, mantiene ventana legacy de ~30 líneas."""
+
+    class _Settings:
+        symbol_extractor_v2_enabled = False
+
+    import coderag.ingestion.chunker as module
+
+    monkeypatch.setattr(module, "get_settings", lambda: _Settings())
+
+    body = "\n".join([f"    value_{i} = {i}" for i in range(40)])
+    scanned = [
+        ScannedFile(
+            path="app/long.py",
+            language="python",
+            content=f"def very_long():\n{body}\n    return value_0\n",
+        )
+    ]
+
+    chunks = extract_symbol_chunks(repo_id="repo1", scanned_files=scanned)
+    target = next(item for item in chunks if item.symbol_name == "very_long")
+    assert target.end_line <= 31
+
+
 def test_extract_symbol_chunks_markdown_headings() -> None:
     """Extrae secciones de markdown cuando no hay símbolos de código tradicionales."""
     scanned = [

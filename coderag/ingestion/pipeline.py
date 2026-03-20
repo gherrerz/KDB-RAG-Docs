@@ -1,5 +1,6 @@
 """Orquestador de canalización de ingesta de alto nivel."""
 
+from collections import defaultdict
 from typing import Callable
 
 from coderag.core.models import ScannedFile, SymbolChunk
@@ -14,6 +15,47 @@ from coderag.ingestion.repo_scanner import scan_repository_with_stats
 from coderag.ingestion.summarizer import summarize_file, summarize_modules
 
 LoggerFn = Callable[[str], None]
+
+
+def _symbol_observability_summary(
+    scanned_files: list[ScannedFile],
+    symbol_chunks: list[SymbolChunk],
+) -> str:
+    """Build a compact observability summary for extracted symbols."""
+    settings = get_settings()
+    extractor_mode = (
+        "v2" if getattr(settings, "symbol_extractor_v2_enabled", True) else "legacy"
+    )
+
+    files_by_language: dict[str, int] = defaultdict(int)
+    for item in scanned_files:
+        files_by_language[item.language] += 1
+
+    chunks_by_language: dict[str, int] = defaultdict(int)
+    span_lengths: list[int] = []
+    for chunk in symbol_chunks:
+        chunks_by_language[chunk.language] += 1
+        span_lengths.append(max(1, chunk.end_line - chunk.start_line + 1))
+
+    avg_span = 0.0
+    p95_span = 0
+    long_spans = 0
+    if span_lengths:
+        avg_span = round(sum(span_lengths) / len(span_lengths), 2)
+        sorted_spans = sorted(span_lengths)
+        p95_index = max(0, int((len(sorted_spans) - 1) * 0.95))
+        p95_span = sorted_spans[p95_index]
+        long_spans = sum(1 for value in span_lengths if value > 30)
+
+    return (
+        "Observabilidad símbolos: "
+        f"modo={extractor_mode}, "
+        f"archivos_por_lenguaje={dict(files_by_language)}, "
+        f"chunks_por_lenguaje={dict(chunks_by_language)}, "
+        f"span_promedio={avg_span}, "
+        f"span_p95={p95_span}, "
+        f"chunks_span_gt_30={long_spans}"
+    )
 
 
 def _parse_csv_set(raw_value: str, prefix_dot: bool = False) -> set[str]:
@@ -171,6 +213,7 @@ def ingest_repository(
         f"Cobertura: archivos={len(scanned_files)}, chunks={len(symbol_chunks)}, "
         f"lenguajes={language_counts}"
     )
+    logger(_symbol_observability_summary(scanned_files, symbol_chunks))
 
     logger("Generando embeddings...")
     _index_vectors(
@@ -179,6 +222,7 @@ def ingest_repository(
         symbol_chunks,
         embedding_provider=embedding_provider,
         embedding_model=embedding_model,
+        logger=logger,
     )
 
     logger("Construyendo BM25...")
@@ -200,6 +244,7 @@ def _index_vectors(
     symbols: list[SymbolChunk],
     embedding_provider: str | None = None,
     embedding_model: str | None = None,
+    logger: LoggerFn | None = None,
 ) -> None:
     """Generar y conservar vectores para símbolos/archivos/módulos."""
     chroma = ChromaIndex()
@@ -208,8 +253,32 @@ def _index_vectors(
         model=embedding_model,
     )
 
+    def _progress_logger(stage_name: str, total_items: int) -> LoggerFn | None:
+        """Construye un logger de progreso por hitos de 10% para embeddings."""
+        if logger is None or total_items <= 0:
+            return None
+
+        next_checkpoint = 10
+
+        def _log(processed: int, total: int) -> None:
+            nonlocal next_checkpoint
+            if total <= 0:
+                return
+            percentage = int((processed * 100) / total)
+            while percentage >= next_checkpoint and next_checkpoint <= 100:
+                logger(
+                    f"Embeddings {stage_name}: {processed}/{total} "
+                    f"({next_checkpoint}%)"
+                )
+                next_checkpoint += 10
+
+        return _log
+
     symbol_texts = [chunk.snippet for chunk in symbols]
-    symbol_embeddings = embedder.embed_texts(symbol_texts)
+    symbol_embeddings = embedder.embed_texts(
+        symbol_texts,
+        progress_callback=_progress_logger("símbolos", len(symbol_texts)),
+    )
     symbol_meta = [
         {
             "id": chunk.id,
@@ -233,7 +302,10 @@ def _index_vectors(
 
     file_ids = [f"{repo_id}:{item.path}" for item in scanned_files]
     file_docs = [summarize_file(item) for item in scanned_files]
-    file_embeddings = embedder.embed_texts(file_docs)
+    file_embeddings = embedder.embed_texts(
+        file_docs,
+        progress_callback=_progress_logger("archivos", len(file_docs)),
+    )
     file_meta = [
         {
             "id": file_ids[index],
@@ -256,7 +328,10 @@ def _index_vectors(
     module_summaries = summarize_modules(scanned_files)
     module_names = list(module_summaries.keys())
     module_docs = list(module_summaries.values())
-    module_embeddings = embedder.embed_texts(module_docs)
+    module_embeddings = embedder.embed_texts(
+        module_docs,
+        progress_callback=_progress_logger("módulos", len(module_docs)),
+    )
     module_ids = [f"{repo_id}:module:{name}" for name in module_names]
     module_meta = [
         {

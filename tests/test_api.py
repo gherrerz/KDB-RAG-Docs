@@ -4,6 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from coderag.api import server
+from coderag.core.models import JobInfo, JobStatus
 from coderag.core.storage_health import StoragePreflightError
 from coderag.llm.model_discovery import ModelDiscoveryResult
 
@@ -54,6 +55,26 @@ def test_get_missing_job_returns_404() -> None:
     assert response.status_code == 404
 
 
+def test_get_job_supports_logs_tail(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Permite acotar logs devueltos para reducir latencia de polling."""
+
+    def fake_get_job(_job_id: str) -> JobInfo:
+        return JobInfo(
+            id="job-1",
+            status=JobStatus.running,
+            progress=0.5,
+            logs=["l1", "l2", "l3", "l4"],
+        )
+
+    monkeypatch.setattr(server.jobs, "get_job", fake_get_job)
+    client = TestClient(app)
+
+    response = client.get("/jobs/job-1?logs_tail=2")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["logs"] == ["l3", "l4"]
+
+
 def test_admin_reset_returns_summary(monkeypatch) -> None:
     """Devuelve una carga útil resumida clara cuando la operación de reinicio se realiza correctamente."""
 
@@ -70,6 +91,65 @@ def test_admin_reset_returns_summary(monkeypatch) -> None:
     assert payload["message"] == "Limpieza total completada"
     assert "BM25 en memoria" in payload["cleared"]
     assert "warning de prueba" in payload["warnings"]
+
+
+def test_delete_repo_returns_summary(monkeypatch) -> None:
+    """Devuelve resumen detallado al eliminar un repositorio puntual."""
+
+    def fake_delete_repo(repo_id: str) -> tuple[list[str], list[str], dict[str, int]]:
+        assert repo_id == "mall"
+        return (
+            ["Chroma", "BM25", "Grafo Neo4j", "Workspace", "Metadata SQLite"],
+            ["warning de prueba"],
+            {
+                "chroma_total": 12,
+                "bm25_docs": 4,
+                "neo4j_nodes": 9,
+                "workspace_dirs": 1,
+                "metadata_total": 3,
+            },
+        )
+
+    monkeypatch.setattr(server.jobs, "delete_repo", fake_delete_repo)
+    client = TestClient(app)
+
+    response = client.delete("/repos/mall")
+    assert response.status_code == 200
+
+    payload = response.json()
+    assert payload["repo_id"] == "mall"
+    assert payload["message"] == "Repositorio 'mall' eliminado"
+    assert "Chroma" in payload["cleared"]
+    assert payload["deleted_counts"]["neo4j_nodes"] == 9
+    assert payload["warnings"] == ["warning de prueba"]
+
+
+def test_delete_repo_returns_404_when_missing(monkeypatch) -> None:
+    """Devuelve 404 cuando el repo_id no existe en el catálogo."""
+
+    def fake_delete_repo(repo_id: str) -> tuple[list[str], list[str], dict[str, int]]:
+        raise LookupError(f"repo '{repo_id}' no existe")
+
+    monkeypatch.setattr(server.jobs, "delete_repo", fake_delete_repo)
+    client = TestClient(app)
+
+    response = client.delete("/repos/nope")
+    assert response.status_code == 404
+    assert "no existe" in str(response.json().get("detail", "")).lower()
+
+
+def test_delete_repo_returns_409_when_same_repo_job_running(monkeypatch) -> None:
+    """Devuelve 409 cuando hay una ingesta activa para el mismo repo_id."""
+
+    def fake_delete_repo(_repo_id: str) -> tuple[list[str], list[str], dict[str, int]]:
+        raise RuntimeError("ingesta activa para el mismo repositorio")
+
+    monkeypatch.setattr(server.jobs, "delete_repo", fake_delete_repo)
+    client = TestClient(app)
+
+    response = client.delete("/repos/mall")
+    assert response.status_code == 409
+    assert "ingesta activa" in str(response.json().get("detail", "")).lower()
 
 
 def test_list_repos_returns_repo_id_catalog(monkeypatch) -> None:

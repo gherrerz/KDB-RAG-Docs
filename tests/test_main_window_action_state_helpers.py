@@ -3,6 +3,7 @@
 import sys
 
 import pytest
+import requests
 from PySide6.QtWidgets import QApplication
 
 from coderag.ui.main_window import MainWindow
@@ -130,3 +131,57 @@ def test_repo_switch_syncs_embedding_runtime_defaults(
 
     assert window.query_view.get_embedding_provider() == "vertex_ai"
     assert window.query_view.get_embedding_model() == "text-embedding-005"
+
+
+def test_set_query_controls_enabled_toggles_delete_button(
+    monkeypatch: pytest.MonkeyPatch,
+    qapp: QApplication,
+) -> None:
+    """El botón de eliminación sigue el estado habilitado global de consulta."""
+    window = _build_window(monkeypatch)
+
+    window._set_query_controls_enabled(False)
+    assert window.query_view.delete_repo_button.isEnabled() is False
+
+    window._set_query_controls_enabled(True)
+    assert window.query_view.delete_repo_button.isEnabled() is True
+
+
+def test_timer_event_throttles_repeated_polling_failures(
+    monkeypatch: pytest.MonkeyPatch,
+    qapp: QApplication,
+) -> None:
+    """Reduce ruido de polling cuando se repite el mismo timeout de red."""
+    window = _build_window(monkeypatch)
+    window._job_poll_enabled = True
+    window._active_job_id = "job-1"
+
+    import coderag.ui.main_window as module
+
+    def _fake_get(url: str, timeout: float):  # noqa: ARG001
+        if "/jobs/" in url:
+            raise requests.Timeout("Read timed out")
+        if url.endswith("/repos"):
+            return _FakeResponse({"repo_ids": ["repo-a"]})
+        if "/repos/repo-a/status" in url:
+            return _FakeResponse({"query_ready": True, "warnings": []})
+        return _FakeResponse({})
+
+    monkeypatch.setattr(module.requests, "get", _fake_get)
+
+    class _FakeEvent:
+        def __init__(self, timer_id: int) -> None:
+            self._timer_id = timer_id
+
+        def timerId(self) -> int:  # noqa: N802
+            return self._timer_id
+
+    event = _FakeEvent(window._poll_timer_id)
+
+    for _ in range(6):
+        window.timerEvent(event)
+
+    logs_text = window.ingestion_view.logs.toPlainText()
+    assert "Polling falló (intentos=1)" in logs_text
+    assert "Polling falló (intentos=5)" in logs_text
+    assert "Polling falló (intentos=2)" not in logs_text

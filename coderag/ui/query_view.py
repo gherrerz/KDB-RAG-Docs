@@ -71,11 +71,14 @@ class QueryView(QWidget):
         self.copy_history_button = QPushButton("Copiar Historial")
         self.refresh_repo_ids_button = QPushButton("Actualizar IDs")
         self.refresh_models_button = QPushButton("Refrescar Modelos")
+        self.delete_repo_button = QPushButton("Eliminar Repo")
         self.copy_history_button.setProperty("variant", "secondary")
         self.refresh_repo_ids_button.setProperty("variant", "secondary")
         self.refresh_models_button.setProperty("variant", "secondary")
+        self.delete_repo_button.setProperty("variant", "danger")
         self.refresh_repo_ids_button.setMinimumHeight(34)
         self.refresh_models_button.setMinimumHeight(34)
+        self.delete_repo_button.setMinimumHeight(34)
 
         self.repo_id = QComboBox()
         self.repo_id.setEditable(False)
@@ -210,6 +213,7 @@ class QueryView(QWidget):
         repo_bar.addWidget(self.repo_id, 0, 1)
         repo_bar.addWidget(self.refresh_repo_ids_button, 0, 2)
         repo_bar.addWidget(self.refresh_models_button, 0, 3)
+        repo_bar.addWidget(self.delete_repo_button, 0, 4)
         repo_bar.addWidget(QLabel("Embedding Provider"), 1, 0)
         repo_bar.addWidget(self.embedding_provider, 1, 1)
         repo_bar.addWidget(QLabel("Embedding Model"), 1, 2)
@@ -313,6 +317,9 @@ class QueryView(QWidget):
         self.refresh_models_button.clicked.connect(
             lambda: self._flash_button(self.refresh_models_button)
         )
+        self.delete_repo_button.clicked.connect(
+            lambda: self._flash_button(self.delete_repo_button)
+        )
         self.query_button.clicked.connect(lambda: self._flash_button(self.query_button))
 
         self.append_assistant_message(
@@ -409,6 +416,18 @@ class QueryView(QWidget):
             }
             QPushButton[variant="secondary"][flash="true"] {
                 background-color: #2C436A;
+            }
+            QPushButton[variant="danger"] {
+                background-color: #7E1E2D;
+                border: 1px solid #A33144;
+                color: #FFE8EC;
+                font-weight: 700;
+            }
+            QPushButton[variant="danger"]:hover {
+                background-color: #99273A;
+            }
+            QPushButton[variant="danger"][flash="true"] {
+                background-color: #B53A4F;
             }
             """
         )
@@ -578,6 +597,7 @@ class QueryView(QWidget):
         self.include_context.setDisabled(running or not self.retrieval_only_mode.isChecked())
         self.refresh_repo_ids_button.setDisabled(running)
         self.refresh_models_button.setDisabled(running)
+        self.delete_repo_button.setDisabled(running)
         self.query_input.setDisabled(running)
         self.query_button.setDisabled(running)
         self.query_button.setText("…" if running else "↑")
