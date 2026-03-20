@@ -300,6 +300,545 @@ def _is_inventory_query(query: str) -> bool:
     return any(token in normalized for token in inventory_tokens)
 
 
+def _is_literal_code_query(query: str) -> bool:
+    """Detecta solicitudes para devolver código literal de archivo completo."""
+    normalized = query.lower()
+    request_signals = (
+        "codigo completo",
+        "código completo",
+        "archivo completo",
+        "source code",
+        "full code",
+        "full source",
+        "entire file",
+        "complete file",
+        "show me the code",
+        "dame el codigo",
+        "dame el código",
+        "dame todo el codigo",
+        "dame todo el código",
+    )
+    if not any(signal in normalized for signal in request_signals):
+        return False
+    return bool(
+        _extract_literal_file_candidates(query)
+        or _extract_literal_symbol_candidates(query)
+    )
+
+
+def _extract_literal_file_candidates(query: str) -> list[str]:
+    """Extrae candidatos de ruta/archivo potenciales para modo literal."""
+    candidates: list[str] = []
+
+    quoted_matches = re.findall(r"['\"]([^'\"]+)['\"]", query)
+    for value in quoted_matches:
+        token = value.strip().strip(".,;:!?()[]{}")
+        if "." in token:
+            candidates.append(token)
+
+    inline_matches = re.findall(r"\b[\w./\\-]+\.[A-Za-z0-9_+-]+\b", query)
+    for value in inline_matches:
+        token = value.strip().strip(".,;:!?()[]{}")
+        if token:
+            candidates.append(token)
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        normalized = candidate.replace("\\", "/")
+        key = normalized.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(normalized)
+    return deduped
+
+
+def _extract_literal_symbol_candidates(query: str) -> list[str]:
+    """Extrae candidatos de símbolo potenciales para modo literal."""
+    candidates: list[str] = []
+
+    quoted_matches = re.findall(r"['\"]([^'\"]+)['\"]", query)
+    for value in quoted_matches:
+        token = value.strip().strip(".,;:!?()[]{}")
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", token):
+            candidates.append(token)
+
+    symbol_patterns = [
+        r"(?:funcion|función|function|method|metodo|método|class|clase|symbol|simbolo|símbolo)\s+([A-Za-z_][A-Za-z0-9_]*)",
+        r"([A-Za-z_][A-Za-z0-9_]*)\s*\(\)",
+    ]
+    for pattern in symbol_patterns:
+        for match in re.finditer(pattern, query, flags=re.IGNORECASE):
+            token = match.group(1)
+            if token:
+                candidates.append(token)
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        key = candidate.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(candidate)
+    return deduped
+
+
+def _resolve_repo_root(repo_id: str) -> Path | None:
+    """Resuelve la ruta raíz del repositorio local en workspace."""
+    settings = get_settings()
+    candidate = (settings.workspace_path / repo_id).resolve()
+    if candidate.exists() and candidate.is_dir():
+        return candidate
+    return None
+
+
+def _resolve_literal_file_match(
+    repo_id: str,
+    query: str,
+) -> tuple[Path | None, str | None, str]:
+    """Resuelve un archivo para modo literal con política estricta de coincidencia."""
+    candidates = _extract_literal_file_candidates(query)
+    if not candidates:
+        return None, None, "missing_file_hint"
+
+    repo_root = _resolve_repo_root(repo_id)
+
+    for candidate in candidates:
+        if "/" not in candidate:
+            continue
+        resolved_path = _resolve_repo_file_path(repo_id=repo_id, relative_path=candidate)
+        if resolved_path is None:
+            continue
+        if repo_root is not None:
+            relative_path = PurePosixPath(resolved_path.relative_to(repo_root))
+        else:
+            relative_path = PurePosixPath(candidate.strip("/"))
+        return resolved_path, str(relative_path), "exact_path"
+
+    if repo_root is None:
+        return None, None, "repo_not_found"
+
+    for candidate in candidates:
+        if "/" in candidate:
+            continue
+        matches = [
+            item
+            for item in repo_root.rglob(candidate)
+            if item.is_file()
+        ]
+        if len(matches) == 1:
+            relative = PurePosixPath(matches[0].relative_to(repo_root))
+            return matches[0], str(relative), "exact_filename_unique"
+        if len(matches) > 1:
+            return None, None, "ambiguous_filename"
+
+    return None, None, "exact_match_not_found"
+
+
+def _python_symbol_spans(content: str, symbol: str) -> list[tuple[int, int]]:
+    """Obtiene spans exactos para símbolos Python usando AST."""
+    try:
+        module_ast = ast.parse(content)
+    except (SyntaxError, ValueError):
+        return []
+
+    spans: list[tuple[int, int]] = []
+    for node in ast.walk(module_ast):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            if node.name != symbol:
+                continue
+            start_line = int(node.lineno)
+            end_line = int(getattr(node, "end_lineno", node.lineno))
+            spans.append((start_line, end_line))
+    return spans
+
+
+def _brace_block_end(lines: list[str], start_index: int) -> int:
+    """Resuelve fin de bloque por llaves a partir de una línea inicial."""
+    balance = 0
+    opened = False
+    for index in range(start_index, len(lines)):
+        line = lines[index]
+        for char in line:
+            if char == "{":
+                balance += 1
+                opened = True
+            elif char == "}" and opened:
+                balance -= 1
+                if balance <= 0:
+                    return index + 1
+        if opened and balance <= 0:
+            return index + 1
+    return start_index + 1
+
+
+def _generic_symbol_spans(content: str, symbol: str) -> list[tuple[int, int]]:
+    """Obtiene spans aproximados para símbolos en lenguajes no Python."""
+    escaped = re.escape(symbol)
+    patterns = [
+        re.compile(rf"^\s*(?:export\s+)?(?:async\s+)?function\s+{escaped}\b"),
+        re.compile(rf"^\s*class\s+{escaped}\b"),
+        re.compile(rf"^\s*(?:const|let|var)\s+{escaped}\s*=\s*(?:async\s*)?.*=>"),
+        re.compile(
+            rf"^\s*(?:public|private|protected|static|final|abstract|synchronized|native|default|strictfp|\s)+"
+            rf"(?:[A-Za-z0-9_<>,\[\]\.?]+\s+)+{escaped}\s*\([^;]*\)\s*(?:\{{)?\s*$"
+        ),
+    ]
+    lines = content.splitlines()
+    spans: list[tuple[int, int]] = []
+    for index, line in enumerate(lines):
+        if not any(pattern.match(line) for pattern in patterns):
+            continue
+        end_line = index + 1
+        if "{" in line or any("{" in next_line for next_line in lines[index:index + 2]):
+            end_line = _brace_block_end(lines, index)
+        spans.append((index + 1, max(index + 1, end_line)))
+    return spans
+
+
+def _resolve_literal_symbol_match(
+    repo_id: str,
+    query: str,
+) -> tuple[Path | None, str | None, int | None, int | None, str | None, str]:
+    """Resuelve símbolo exacto único en archivos del repositorio."""
+    candidates = _extract_literal_symbol_candidates(query)
+    if not candidates:
+        return None, None, None, None, None, "missing_symbol_hint"
+
+    repo_root = _resolve_repo_root(repo_id)
+    if repo_root is None:
+        return None, None, None, None, None, "repo_not_found"
+
+    allowed_suffixes = {
+        ".py", ".js", ".ts", ".tsx", ".jsx", ".java", ".kt", ".go", ".cs"
+    }
+    matches: list[tuple[Path, str, int, int, str]] = []
+    for symbol in candidates:
+        for file_path in repo_root.rglob("*"):
+            if not file_path.is_file() or file_path.suffix.lower() not in allowed_suffixes:
+                continue
+            try:
+                content = file_path.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                continue
+
+            if file_path.suffix.lower() == ".py":
+                spans = _python_symbol_spans(content, symbol)
+            else:
+                spans = _generic_symbol_spans(content, symbol)
+            if not spans:
+                continue
+
+            for start_line, end_line in spans:
+                relative_path = str(PurePosixPath(file_path.relative_to(repo_root)))
+                matches.append((file_path, relative_path, start_line, end_line, symbol))
+
+    if not matches:
+        return None, None, None, None, None, "symbol_exact_match_not_found"
+    if len(matches) > 1:
+        return None, None, None, None, None, "ambiguous_symbol"
+
+    file_path, relative_path, start_line, end_line, symbol = matches[0]
+    return file_path, relative_path, start_line, end_line, symbol, "exact_symbol_unique"
+
+
+def _slice_lines(content: str, start_line: int, end_line: int) -> str:
+    """Extrae un rango de líneas inclusivo desde contenido de archivo."""
+    lines = content.splitlines()
+    if not lines:
+        return ""
+    safe_start = max(1, start_line)
+    safe_end = max(safe_start, min(end_line, len(lines)))
+    return "\n".join(lines[safe_start - 1:safe_end])
+
+
+def _build_literal_code_response(repo_id: str, query: str) -> QueryResponse:
+    """Construye respuesta determinística en modo código literal sin síntesis LLM."""
+    file_path, relative_path, match_type = _resolve_literal_file_match(
+        repo_id=repo_id,
+        query=query,
+    )
+    start_line = 1
+    end_line: int | None = None
+    symbol_name: str | None = None
+    target_content: str | None = None
+    if (file_path is None or relative_path is None) and match_type == "missing_file_hint":
+        (
+            file_path,
+            relative_path,
+            symbol_start,
+            symbol_end,
+            symbol_name,
+            match_type,
+        ) = _resolve_literal_symbol_match(repo_id=repo_id, query=query)
+        if symbol_start is not None and symbol_end is not None:
+            start_line = symbol_start
+            end_line = symbol_end
+
+    if file_path is None or relative_path is None:
+        answer = (
+            "No puedo devolver código literal con precisión en esta consulta. "
+            "Indica la ruta exacta del archivo dentro del repositorio o un "
+            "nombre de archivo único."
+        )
+        diagnostics = {
+            "literal_mode": True,
+            "literal_exact_match": False,
+            "literal_match_type": None,
+            "literal_failure_reason": match_type,
+            "fallback_reason": "literal_not_exact_match",
+            "inventory_intent": False,
+            "inventory_route": None,
+        }
+        return QueryResponse(answer=answer, citations=[], diagnostics=diagnostics)
+
+    try:
+        content = file_path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        diagnostics = {
+            "literal_mode": True,
+            "literal_exact_match": False,
+            "literal_match_type": match_type,
+            "literal_failure_reason": "file_read_error",
+            "fallback_reason": "literal_not_exact_match",
+            "inventory_intent": False,
+            "inventory_route": None,
+        }
+        return QueryResponse(
+            answer=(
+                "No pude leer el archivo solicitado desde el workspace local. "
+                "Reintenta después de verificar que el archivo exista y sea accesible."
+            ),
+            citations=[],
+            diagnostics=diagnostics,
+        )
+
+    if end_line is None:
+        lines = content.splitlines()
+        end_line = max(1, len(lines))
+    else:
+        target_content = _slice_lines(content, start_line, end_line)
+
+    if target_content is None:
+        target_content = content
+
+    suffix = file_path.suffix.lower().lstrip(".") or "text"
+    answer = "\n".join(
+        [
+            "Modo código literal (sin síntesis LLM).",
+            f"Archivo: {relative_path}",
+            f"Símbolo: {symbol_name}" if symbol_name else "",
+            "",
+            f"```{suffix}",
+            target_content,
+            "```",
+        ]
+    )
+    citations = [
+        Citation(
+            path=relative_path,
+            start_line=start_line,
+            end_line=end_line,
+            score=1.0,
+            reason=(
+                "literal_symbol_exact_match"
+                if symbol_name
+                else "literal_file_exact_match"
+            ),
+        )
+    ]
+    diagnostics = {
+        "literal_mode": True,
+        "literal_exact_match": True,
+        "literal_match_type": match_type,
+        "literal_source": "live_file",
+        "literal_file_exists": True,
+        "retrieved": 1,
+        "reranked": 1,
+        "raw_citations": 1,
+        "filtered_citations": 1,
+        "returned_citations": 1,
+        "fallback_reason": None,
+        "inventory_intent": False,
+        "inventory_route": None,
+    }
+    return QueryResponse(answer=answer, citations=citations, diagnostics=diagnostics)
+
+
+def _build_literal_retrieval_response(
+    repo_id: str,
+    query: str,
+    include_context: bool,
+) -> RetrievalQueryResponse:
+    """Construye respuesta retrieval-only determinística para solicitudes de código literal."""
+    file_path, relative_path, match_type = _resolve_literal_file_match(
+        repo_id=repo_id,
+        query=query,
+    )
+    start_line = 1
+    end_line: int | None = None
+    symbol_name: str | None = None
+    target_content: str | None = None
+    if (file_path is None or relative_path is None) and match_type == "missing_file_hint":
+        (
+            file_path,
+            relative_path,
+            symbol_start,
+            symbol_end,
+            symbol_name,
+            match_type,
+        ) = _resolve_literal_symbol_match(repo_id=repo_id, query=query)
+        if symbol_start is not None and symbol_end is not None:
+            start_line = symbol_start
+            end_line = symbol_end
+
+    if file_path is None or relative_path is None:
+        answer = (
+            "Modo retrieval-only (sin LLM): no puedo devolver código literal "
+            "con precisión en esta consulta. Indica la ruta exacta del archivo "
+            "dentro del repositorio o un nombre de archivo único."
+        )
+        return RetrievalQueryResponse(
+            mode="retrieval_only",
+            answer=answer,
+            chunks=[],
+            citations=[],
+            statistics=RetrievalStatistics(
+                total_before_rerank=0,
+                total_after_rerank=0,
+                graph_nodes_count=0,
+            ),
+            diagnostics={
+                "mode": "retrieval_only",
+                "literal_mode": True,
+                "literal_exact_match": False,
+                "literal_match_type": None,
+                "literal_failure_reason": match_type,
+                "fallback_reason": "literal_not_exact_match",
+                "retrieved": 0,
+                "reranked": 0,
+                "graph_nodes": 0,
+                "context_chars": 0,
+                "raw_citations": 0,
+                "filtered_citations": 0,
+                "returned_citations": 0,
+            },
+            context=None,
+        )
+
+    try:
+        content = file_path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return RetrievalQueryResponse(
+            mode="retrieval_only",
+            answer=(
+                "Modo retrieval-only (sin LLM): no pude leer el archivo "
+                "solicitado desde el workspace local."
+            ),
+            chunks=[],
+            citations=[],
+            statistics=RetrievalStatistics(
+                total_before_rerank=0,
+                total_after_rerank=0,
+                graph_nodes_count=0,
+            ),
+            diagnostics={
+                "mode": "retrieval_only",
+                "literal_mode": True,
+                "literal_exact_match": False,
+                "literal_match_type": match_type,
+                "literal_failure_reason": "file_read_error",
+                "fallback_reason": "literal_not_exact_match",
+                "retrieved": 0,
+                "reranked": 0,
+                "graph_nodes": 0,
+                "context_chars": 0,
+                "raw_citations": 0,
+                "filtered_citations": 0,
+                "returned_citations": 0,
+            },
+            context=None,
+        )
+
+    if end_line is None:
+        lines = content.splitlines()
+        end_line = max(1, len(lines))
+    else:
+        target_content = _slice_lines(content, start_line, end_line)
+
+    if target_content is None:
+        target_content = content
+
+    chunk = RetrievedChunk(
+        id=f"literal:{relative_path}:{start_line}:{end_line}",
+        text=target_content,
+        score=1.0,
+        path=relative_path,
+        start_line=start_line,
+        end_line=end_line,
+        kind="literal_symbol" if symbol_name else "literal_file",
+        metadata={
+            "path": relative_path,
+            "start_line": start_line,
+            "end_line": end_line,
+            "kind": "literal_symbol" if symbol_name else "literal_file",
+            "literal_mode": True,
+            "symbol_name": symbol_name,
+        },
+    )
+    citation = Citation(
+        path=relative_path,
+        start_line=start_line,
+        end_line=end_line,
+        score=1.0,
+        reason=(
+            "literal_symbol_exact_match"
+            if symbol_name
+            else "literal_file_exact_match"
+        ),
+    )
+    answer = "\n".join(
+        [
+            "Modo retrieval-only (sin LLM): código literal exacto.",
+            f"Archivo: {relative_path}",
+            f"Símbolo: {symbol_name}" if symbol_name else "",
+            "",
+            target_content,
+        ]
+    )
+    context = target_content if include_context else None
+    return RetrievalQueryResponse(
+        mode="retrieval_only",
+        answer=answer,
+        chunks=[chunk],
+        citations=[citation],
+        statistics=RetrievalStatistics(
+            total_before_rerank=1,
+            total_after_rerank=1,
+            graph_nodes_count=0,
+        ),
+        diagnostics={
+            "mode": "retrieval_only",
+            "literal_mode": True,
+            "literal_exact_match": True,
+            "literal_match_type": match_type,
+            "literal_source": "live_file",
+            "literal_file_exists": True,
+            "retrieved": 1,
+            "reranked": 1,
+            "graph_nodes": 0,
+            "context_chars": len(context or ""),
+            "raw_citations": 1,
+            "filtered_citations": 1,
+            "returned_citations": 1,
+            "fallback_reason": None,
+        },
+        context=context,
+    )
+
+
 def _extract_module_name(query: str) -> str | None:
     """Extraiga el token del módulo o del paquete de una consulta en lenguaje natural."""
     normalized = query.lower()
@@ -1247,6 +1786,13 @@ def run_retrieval_query(
             include_context=include_context,
         )
 
+    if _is_literal_code_query(query):
+        return _build_literal_retrieval_response(
+            repo_id=repo_id,
+            query=query,
+            include_context=include_context,
+        )
+
     budget_seconds = max(1.0, float(settings.query_max_seconds))
     resolved_embedding_provider = (
         settings.resolve_embedding_provider(embedding_provider)
@@ -1402,6 +1948,9 @@ def run_query(
             citations=inventory_response.citations,
             diagnostics=diagnostics,
         )
+
+    if _is_literal_code_query(query):
+        return _build_literal_code_response(repo_id=repo_id, query=query)
 
     budget_seconds = max(1.0, float(settings.query_max_seconds))
     verify_enabled = (

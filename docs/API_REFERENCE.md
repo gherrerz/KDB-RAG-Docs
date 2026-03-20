@@ -134,6 +134,19 @@ Este documento es la fuente de verdad de la API HTTP de Coderag.
 | diagnostics | dict[str, Any] | no | `{}` | Metricas y flags del pipeline retrieval-only. |
 | context | str \| null | no | `null` | Contexto ensamblado cuando `include_context=true`. |
 
+Notas de comportamiento para `POST /query/retrieval`:
+
+- Si la consulta expresa intención de "código completo" y contiene un path exacto
+  (o nombre de archivo único), el endpoint entra en modo determinístico literal:
+  devuelve contenido real del archivo local, sin pasar por `hybrid_search`.
+- Si la consulta expresa intención de "código completo" por símbolo (por ejemplo,
+  "funcion X") y la coincidencia exacta del símbolo es única en el repositorio,
+  el endpoint devuelve el rango literal del símbolo (no el archivo completo).
+- Si la coincidencia no es exacta o es ambigua, responde en modo seguro con
+  `chunks=[]`, `citations=[]` y `diagnostics.literal_exact_match=false`.
+- Cuando `include_context=true` en modo literal, `context` incluye el contenido
+  literal del archivo; en caso contrario queda en `null`.
+
 ## InventoryQueryRequest
 
 | Campo | Tipo | Requerido | Default | Descripcion |
