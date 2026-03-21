@@ -1,434 +1,285 @@
-# API Reference (Espanol)
+# API Reference
 
-Este documento es la fuente de verdad de la API HTTP de Coderag.
+Fuente de verdad de la API HTTP.
 
-- Implementacion base: `coderag/api/server.py`
-- Modelos: `coderag/core/models.py`
-- Servicios de consulta: `coderag/api/query_service.py`
-- Pruebas de contrato: `tests/test_api.py`
+- Implementacion base: coderag/api/server.py
+- Modelos: coderag/core/models.py
+- Servicios de consulta: coderag/api/query_service.py
 
 ## Base URL y OpenAPI
 
-- Base URL local: `http://127.0.0.1:8000`
-- OpenAPI JSON: `GET /openapi.json`
-- Swagger UI: `GET /docs`
-- ReDoc: `GET /redoc`
+- Base URL local: http://127.0.0.1:8000
+- OpenAPI JSON: GET /openapi.json
+- Swagger UI: GET /docs
+- ReDoc: GET /redoc
 
-## Endpoints
+## Endpoints por journey
 
-| Metodo | Ruta | Servicio interno | Request | Response |
-|---|---|---|---|---|
-| POST | `/repos/ingest` | `JobManager.create_ingest_job` | `RepoIngestRequest` | `JobInfo` |
-| GET | `/jobs/{job_id}` | `JobManager.get_job` | Path `job_id` | `JobInfo` |
-| POST | `/query` | `run_query` | `QueryRequest` | `QueryResponse` |
-| POST | `/query/retrieval` | `run_retrieval_query` | `RetrievalQueryRequest` | `RetrievalQueryResponse` |
-| POST | `/inventory/query` | `run_inventory_query` | `InventoryQueryRequest` | `InventoryQueryResponse` |
-| GET | `/repos` | `JobManager.list_repo_ids` | N/A | `RepoCatalogResponse` |
-| DELETE | `/repos/{repo_id}` | `JobManager.delete_repo` | Path `repo_id` | `RepoDeleteResponse` |
-| GET | `/providers/models` | `discover_models` | Query params (`provider`, `kind`, `force_refresh`) | `ProviderModelCatalogResponse` |
-| GET | `/repos/{repo_id}/status` | `get_repo_query_status` | Path `repo_id` | `RepoQueryStatusResponse` |
-| GET | `/health/storage` | `run_storage_preflight` | N/A | `StorageHealthResponse` |
-| POST | `/admin/reset` | `JobManager.reset_all_data` | N/A | `ResetResponse` |
+### Journey 1: Setup e ingesta
 
-## Schemas
+#### POST /repos/ingest
 
-## RepoIngestRequest
+Inicia una ingesta asincrona de repositorio.
 
-| Campo | Tipo | Requerido | Default | Descripcion |
-|---|---|---|---|---|
-| provider | str | no | `github` | Proveedor Git. |
-| repo_url | str | si | N/A | URL del repositorio. |
-| token | str \| null | no | `null` | Token para repos privados. |
-| branch | str | no | `main` | Rama objetivo de ingesta. |
-| commit | str \| null | no | `null` | Commit puntual opcional. |
-| embedding_provider | str \| null | no | `null` | Provider de embeddings por operación (`openai`, `anthropic`, `gemini`, `vertex_ai`). |
-| embedding_model | str \| null | no | `null` | Modelo de embeddings por operación. |
+Request:
 
-## JobInfo
+- provider (default: github)
+- repo_url (required)
+- token (optional)
+- branch (default: main)
+- commit (optional)
+- embedding_provider (optional)
+- embedding_model (optional)
 
-| Campo | Tipo | Requerido | Default | Descripcion |
-|---|---|---|---|---|
-| id | str | si | N/A | Id del job. |
-| status | enum | si | N/A | `queued`, `running`, `partial`, `completed`, `failed`. |
-| progress | float | no | `0.0` | Progreso normalizado 0-1. |
-| logs | list[str] | no | `[]` | Logs operativos del job. |
-| repo_id | str \| null | no | `null` | Repo asociado al job. |
-| error | str \| null | no | `null` | Error terminal si aplica. |
-| created_at | datetime | no | `utcnow` | Timestamp de creacion. |
-| updated_at | datetime | no | `utcnow` | Timestamp de actualizacion. |
+Response:
 
-## QueryRequest
+- JobInfo con id, status, progress, logs, repo_id y error.
 
-| Campo | Tipo | Requerido | Default | Descripcion |
-|---|---|---|---|---|
-| repo_id | str | si | N/A | Repositorio indexado a consultar. |
-| query | str | si | N/A | Pregunta en lenguaje natural. |
-| top_n | int | no | `60` | Candidatos de retrieval inicial. |
-| top_k | int | no | `15` | Resultados tras reranking. |
-| embedding_provider | str \| null | no | `null` | Provider para embedding de la query (`openai`, `anthropic`, `gemini`, `vertex_ai`). |
-| embedding_model | str \| null | no | `null` | Modelo para embedding de la query. |
-| llm_provider | str \| null | no | `null` | Provider LLM por operación (`openai`, `anthropic`, `gemini`, `vertex_ai`). |
-| answer_model | str \| null | no | `null` | Modelo answer por operación. |
-| verifier_model | str \| null | no | `null` | Modelo verifier por operación. |
+Errores:
 
-## RetrievalQueryRequest
+- 503 preflight de storage fallido.
 
-| Campo | Tipo | Requerido | Default | Descripcion |
-|---|---|---|---|---|
-| repo_id | str | si | N/A | Repositorio indexado a consultar. |
-| query | str | si | N/A | Pregunta para recuperar evidencia sin síntesis LLM. |
-| top_n | int | no | `60` | Candidatos de retrieval inicial. |
-| top_k | int | no | `15` | Resultados tras reranking. |
-| embedding_provider | str \| null | no | `null` | Provider para embedding de la query. |
-| embedding_model | str \| null | no | `null` | Modelo para embedding de la query. |
-| include_context | bool | no | `false` | Incluye contexto ensamblado completo en el response. |
+#### GET /jobs/{job_id}
 
-## Citation
+Consulta estado y logs de ingesta.
 
-| Campo | Tipo | Requerido | Default | Descripcion |
-|---|---|---|---|---|
-| path | str | si | N/A | Archivo fuente citado. |
-| start_line | int | si | N/A | Linea inicial de evidencia. |
-| end_line | int | si | N/A | Linea final de evidencia. |
-| score | float | si | N/A | Score de recuperacion/cita. |
-| reason | str | si | N/A | Motivo de la cita (`hybrid_rag_match` o `inventory_graph_match`). |
+Path params:
 
-## QueryResponse
-
-| Campo | Tipo | Requerido | Default | Descripcion |
-|---|---|---|---|---|
-| answer | str | si | N/A | Respuesta final (LLM o fallback extractivo). |
-| citations | list[Citation] | si | N/A | Evidencia ordenada por prioridad. |
-| diagnostics | dict[str, Any] | no | `{}` | Metricas y flags del pipeline. |
-
-## RetrievedChunk
-
-| Campo | Tipo | Requerido | Default | Descripcion |
-|---|---|---|---|---|
-| id | str | si | N/A | Identificador del chunk recuperado. |
-| text | str | si | N/A | Texto del fragmento recuperado. |
-| score | float | si | N/A | Score del fragmento. |
-| path | str | si | N/A | Ruta del archivo fuente. |
-| start_line | int | si | N/A | Linea inicial del fragmento. |
-| end_line | int | si | N/A | Linea final del fragmento. |
-| kind | str | no | `code_chunk` | Tipo de evidencia. |
-| metadata | dict[str, Any] | no | `{}` | Metadata original del chunk. |
-
-## RetrievalStatistics
-
-| Campo | Tipo | Requerido | Default | Descripcion |
-|---|---|---|---|---|
-| total_before_rerank | int | no | `0` | Total recuperado antes de reranking. |
-| total_after_rerank | int | no | `0` | Total tras reranking. |
-| graph_nodes_count | int | no | `0` | Nodos añadidos por expansión de grafo. |
-
-## RetrievalQueryResponse
-
-| Campo | Tipo | Requerido | Default | Descripcion |
-|---|---|---|---|---|
-| mode | str | no | `retrieval_only` | Modo de consulta ejecutado. |
-| answer | str | si | N/A | Resumen textual de evidencia retrieval-only. |
-| chunks | list[RetrievedChunk] | no | `[]` | Fragmentos ranqueados sin síntesis LLM. |
-| citations | list[Citation] | no | `[]` | Evidencia ordenada por prioridad. |
-| statistics | RetrievalStatistics | no | `{...}` | Conteos agregados de retrieval. |
-| diagnostics | dict[str, Any] | no | `{}` | Metricas y flags del pipeline retrieval-only. |
-| context | str \| null | no | `null` | Contexto ensamblado cuando `include_context=true`. |
-
-Notas de comportamiento para `POST /query/retrieval`:
-
-- Si la consulta expresa intención de "código completo" y contiene un path exacto
-  (o nombre de archivo único), el endpoint entra en modo determinístico literal:
-  devuelve contenido real del archivo local, sin pasar por `hybrid_search`.
-- Si la consulta expresa intención de "código completo" por símbolo (por ejemplo,
-  "funcion X") y la coincidencia exacta del símbolo es única en el repositorio,
-  el endpoint devuelve el rango literal del símbolo (no el archivo completo).
-- Si la coincidencia no es exacta o es ambigua, responde en modo seguro con
-  `chunks=[]`, `citations=[]` y `diagnostics.literal_exact_match=false`.
-- Cuando `include_context=true` en modo literal, `context` incluye el contenido
-  literal del archivo; en caso contrario queda en `null`.
-
-## InventoryQueryRequest
-
-| Campo | Tipo | Requerido | Default | Descripcion |
-|---|---|---|---|---|
-| repo_id | str | si | N/A | Repositorio indexado a consultar. |
-| query | str | si | N/A | Consulta de inventario (ej: "todos los X"). |
-| page | int | no | `1` | Pagina solicitada (1-indexed). |
-| page_size | int | no | `80` | Tamano de pagina solicitado. |
-
-## InventoryItem
-
-| Campo | Tipo | Requerido | Default | Descripcion |
-|---|---|---|---|---|
-| label | str | si | N/A | Nombre visible del item. |
-| path | str | si | N/A | Archivo origen del item. |
-| kind | str | no | `file` | Tipo de entidad (`class`, `method`, etc.). |
-| start_line | int | no | `1` | Linea inicial. |
-| end_line | int | no | `1` | Linea final. |
-
-## InventoryQueryResponse
-
-| Campo | Tipo | Requerido | Default | Descripcion |
-|---|---|---|---|---|
-| answer | str | si | N/A | Resumen estructurado de inventario. |
-| target | str \| null | no | `null` | Objetivo detectado (`service`, `controller`, etc.). |
-| module_name | str \| null | no | `null` | Modulo detectado/resuelto. |
-| total | int | no | `0` | Total de items encontrados. |
-| page | int | no | `1` | Pagina efectiva aplicada. |
-| page_size | int | no | `80` | Tamano de pagina efectivo aplicado. |
-| items | list[InventoryItem] | no | `[]` | Items paginados. |
-| citations | list[Citation] | no | `[]` | Citas de inventario. |
-| diagnostics | dict[str, Any] | no | `{}` | Metricas y flags del pipeline de inventario. |
-
-## RepoCatalogResponse
-
-| Campo | Tipo | Requerido | Default | Descripcion |
-|---|---|---|---|---|
-| repo_ids | list[str] | no | `[]` | Repos disponibles para consulta. |
-
-## GET /providers/models
+- job_id
 
 Query params:
 
-| Param | Tipo | Requerido | Default | Descripcion |
+- logs_tail (default: 200, min: 0, max: 2000)
+
+Response:
+
+- JobInfo con logs acotados por logs_tail.
+
+Errores:
+
+- 404 job no encontrado.
+
+#### GET /repos
+
+Lista repo_id disponibles.
+
+Response:
+
+- RepoCatalogResponse { repo_ids: list[str] }
+
+#### GET /repos/{repo_id}/status
+
+Readiness por repositorio para consultas.
+
+Path params:
+
+- repo_id
+
+Query params:
+
+- requested_embedding_provider (optional)
+- requested_embedding_model (optional)
+
+Campos relevantes de respuesta:
+
+- query_ready
+- chroma_counts
+- bm25_loaded
+- graph_available
+- embedding_compatible
+- last_embedding_provider
+- last_embedding_model
+- warnings
+
+### Journey 2: Query con LLM
+
+#### POST /query
+
+Ejecuta retrieval hibrido y sintetiza respuesta con LLM cuando aplica.
+
+Request:
+
+- repo_id (required)
+- query (required)
+- top_n (default: 60)
+- top_k (default: 15)
+- embedding_provider (optional)
+- embedding_model (optional)
+- llm_provider (optional)
+- answer_model (optional)
+- verifier_model (optional)
+
+Response:
+
+- QueryResponse { answer, citations, diagnostics }
+
+Errores:
+
+- 422 repo_not_ready o embedding_incompatible
+- 503 preflight de storage fallido
+
+### Journey 3: Query retrieval-only
+
+#### POST /query/retrieval
+
+Ejecuta retrieval hibrido sin sintesis LLM.
+
+Request:
+
+- repo_id (required)
+- query (required)
+- top_n (default: 60)
+- top_k (default: 15)
+- embedding_provider (optional)
+- embedding_model (optional)
+- include_context (default: false)
+
+Response:
+
+- RetrievalQueryResponse
+  - mode
+  - answer
+  - chunks
+  - citations
+  - statistics
+  - diagnostics
+  - context (cuando include_context=true)
+
+Notas:
+
+- Puede entrar en modo literal deterministico para consultas de codigo exacto.
+- En modo ambiguo, retorna salida segura sin chunks/citations.
+
+#### POST /inventory/query
+
+Consulta de inventario paginada y orientada a listados amplios.
+
+Request:
+
+- repo_id (required)
+- query (required)
+- page (default: 1)
+- page_size (default: 80)
+
+Response:
+
+- InventoryQueryResponse con items, citations y diagnostics.
+
+Errores:
+
+- 503 preflight de storage fallido.
+
+### Journey 4: Operaciones y administracion
+
+#### GET /providers/models
+
+Catalogo de modelos por provider.
+
+Query params:
+
+- provider (required): openai, anthropic, gemini, vertex_ai
+- kind (required): embedding o llm
+- force_refresh (optional, default: false)
+
+Notas:
+
+- source puede ser remote, cache o fallback.
+- warning informa fallback de catalogo sin devolver error HTTP.
+
+#### GET /health/storage
+
+Reporte consolidado de salud de storage.
+
+Response:
+
+- StorageHealthResponse con ok, failed_components e items.
+
+#### DELETE /repos/{repo_id}
+
+Elimina un repositorio de todas las capas de almacenamiento.
+
+Path params:
+
+- repo_id
+
+Response:
+
+- RepoDeleteResponse con cleared, deleted_counts y warnings.
+
+Errores:
+
+- 404 repo inexistente
+- 409 jobs activos del mismo repo
+- 422 repo_id vacio
+- 500 error inesperado
+
+#### POST /admin/reset
+
+Limpieza total de estado indexado.
+
+Response:
+
+- ResetResponse con recursos limpiados y warnings.
+
+Errores:
+
+- 409 hay jobs en ejecucion
+- 500 error inesperado
+
+## Tabla de mapping interno
+
+| Metodo | Ruta | Servicio interno | Request | Response |
 |---|---|---|---|---|
-| provider | str | si | N/A | Provider objetivo (`openai`, `anthropic`, `gemini`, `vertex_ai`; incluye alias `vertex`). |
-| kind | str | si | N/A | Tipo de catálogo (`embedding` o `llm`). |
-| force_refresh | bool | no | `false` | Fuerza discovery sin usar cache TTL. |
+| POST | /repos/ingest | JobManager.create_ingest_job | RepoIngestRequest | JobInfo |
+| GET | /jobs/{job_id} | JobManager.get_job | Path job_id + query logs_tail | JobInfo |
+| POST | /query | run_query | QueryRequest | QueryResponse |
+| POST | /query/retrieval | run_retrieval_query | RetrievalQueryRequest | RetrievalQueryResponse |
+| POST | /inventory/query | run_inventory_query | InventoryQueryRequest | InventoryQueryResponse |
+| GET | /repos | JobManager.list_repo_ids | N/A | RepoCatalogResponse |
+| DELETE | /repos/{repo_id} | JobManager.delete_repo | Path repo_id | RepoDeleteResponse |
+| GET | /providers/models | discover_models | Query provider/kind/force_refresh | ProviderModelCatalogResponse |
+| GET | /repos/{repo_id}/status | get_repo_query_status | Path repo_id + query requested_embedding_* | RepoQueryStatusResponse |
+| GET | /health/storage | run_storage_preflight | N/A | StorageHealthResponse |
+| POST | /admin/reset | JobManager.reset_all_data | N/A | ResetResponse |
 
-Notas de comportamiento:
+## Errores comunes
 
-- `source` puede ser `remote`, `cache` o `fallback`.
-- `warning` incluye código técnico de fallback/error no bloqueante (por ejemplo:
-  `missing_anthropic_api_key`, `anthropic_remote_catalog_failed`,
-  `anthropic_embedding_unsupported`).
-- El endpoint no devuelve error HTTP por fallback de catálogo; siempre responde
-  `200` con `models` y metadatos de `source/warning`.
+| Codigo | Endpoint | Causa |
+|---|---|---|
+| 404 | GET /jobs/{job_id} | Job inexistente |
+| 404 | DELETE /repos/{repo_id} | Repo inexistente |
+| 409 | DELETE /repos/{repo_id} | Jobs activos del repo |
+| 409 | POST /admin/reset | Reset con jobs activos |
+| 422 | POST /query | repo_not_ready o embedding_incompatible |
+| 422 | POST /query/retrieval | repo_not_ready o embedding_incompatible |
+| 422 | DELETE /repos/{repo_id} | repo_id vacio |
+| 503 | /repos/ingest, /query, /query/retrieval, /inventory/query | preflight de storage |
 
-## RepoQueryStatusResponse
+## Ejemplos
 
-| Campo | Tipo | Requerido | Default | Descripcion |
-|---|---|---|---|---|
-| repo_id | str | si | N/A | Repo evaluado. |
-| listed_in_catalog | bool | si | N/A | Si aparece en `/repos`. |
-| query_ready | bool | si | N/A | Si esta listo para `/query`. |
-| chroma_counts | dict[str, int \| null] | no | `{}` | Conteo por coleccion (`code_symbols`, `code_files`, `code_modules`). |
-| bm25_loaded | bool | si | N/A | Si BM25 esta cargado en memoria. |
-| graph_available | bool \| null | no | `null` | Disponibilidad de nodos en Neo4j para ese repo. |
-| last_embedding_provider | str \| null | no | `null` | Provider de embedding usado en la ultima ingesta conocida. |
-| last_embedding_model | str \| null | no | `null` | Modelo de embedding usado en la ultima ingesta conocida. |
-| warnings | list[str] | no | `[]` | Advertencias operativas. |
+Ejemplos ejecutables por journey:
 
-## StorageHealthItem
+- examples/python/ingest_and_poll.py
+- examples/python/query_with_llm.py
+- examples/python/query_retrieval_only.py
+- examples/curl/
+- examples/powershell/
 
-| Campo | Tipo | Requerido | Default | Descripcion |
-|---|---|---|---|---|
-| name | str | si | N/A | Componente (`neo4j`, `chroma`, `bm25`, etc.). |
-| ok | bool | si | N/A | Estado del componente. |
-| critical | bool | si | N/A | Si rompe preflight estricto. |
-| code | str | si | N/A | Codigo tecnico (`neo4j_auth_failed`, etc.). |
-| message | str | si | N/A | Mensaje humano de estado. |
-| latency_ms | float | si | N/A | Latencia de chequeo. |
-| details | dict[str, Any] | no | `{}` | Metadatos extra por componente. |
-
-## StorageHealthResponse
-
-| Campo | Tipo | Requerido | Default | Descripcion |
-|---|---|---|---|---|
-| ok | bool | si | N/A | Salud consolidada global. |
-| strict | bool | si | N/A | Modo de severidad aplicado. |
-| checked_at | str | si | N/A | Timestamp ISO del chequeo. |
-| context | str | si | N/A | Contexto (`startup`, `ingest`, `query`, `inventory_query`, `health`). |
-| repo_id | str \| null | no | `null` | Repo asociado al chequeo, si aplica. |
-| cached | bool | no | `false` | Si fue cacheado o freshly computed. |
-| failed_components | list[str] | no | `[]` | Lista de componentes fallidos. |
-| items | list[StorageHealthItem] | no | `[]` | Estado detallado por componente. |
-
-## ResetResponse
-
-| Campo | Tipo | Requerido | Default | Descripcion |
-|---|---|---|---|---|
-| message | str | si | N/A | Mensaje final del reset. |
-| cleared | list[str] | no | `[]` | Recursos limpiados. |
-| warnings | list[str] | no | `[]` | Advertencias no bloqueantes. |
-
-## RepoDeleteResponse
-
-| Campo | Tipo | Requerido | Default | Descripcion |
-|---|---|---|---|---|
-| message | str | si | N/A | Mensaje final del borrado por repositorio. |
-| repo_id | str | si | N/A | Repositorio solicitado para eliminar. |
-| cleared | list[str] | no | `[]` | Capas/recursos limpiados. |
-| deleted_counts | dict[str, int] | no | `{}` | Conteos de eliminación por storage/capa. |
-| warnings | list[str] | no | `[]` | Advertencias no bloqueantes. |
-
-## Errores por endpoint
-
-| Codigo | Endpoint | Causa | Shape resumido |
-|---|---|---|---|
-| 404 | `GET /jobs/{job_id}` | Job inexistente | `{ "detail": "Job no encontrado" }` |
-| 404 | `DELETE /repos/{repo_id}` | Repo inexistente en catálogo | `{ "detail": "..." }` |
-| 409 | `DELETE /repos/{repo_id}` | Hay jobs activos del mismo repo | `{ "detail": "..." }` |
-| 409 | `POST /admin/reset` | Reset con jobs en ejecucion | `{ "detail": "..." }` |
-| 422 | `POST /query` | Repo no listo para consulta | `{ "detail": { "code": "repo_not_ready", "repo_status": {...} } }` |
-| 422 | `DELETE /repos/{repo_id}` | `repo_id` vacío tras normalización | `{ "detail": "repo_id no puede estar vacío" }` |
-| 422 | Endpoints con body | Error de validacion Pydantic | `{ "detail": [ ... ] }` |
-| 500 | `DELETE /repos/{repo_id}` | Error inesperado de eliminación | `{ "detail": "..." }` |
-| 500 | `POST /admin/reset` | Error inesperado de limpieza | `{ "detail": "..." }` |
-| 503 | `POST /repos/ingest`, `POST /query`, `POST /inventory/query` | Falla preflight de storage | `{ "detail": { "message": "...", "health": StorageHealthResponse } }` |
-
-Ejemplo 422 de readiness (`/query`):
-
-```json
-{
-  "detail": {
-    "message": "El repositorio no esta listo para consultas. Reingesta el repositorio o revisa el estado de indices.",
-    "code": "repo_not_ready",
-    "repo_status": {
-      "repo_id": "mall",
-      "listed_in_catalog": true,
-      "query_ready": false,
-      "chroma_counts": {
-        "code_symbols": 0,
-        "code_files": 0,
-        "code_modules": 0
-      },
-      "bm25_loaded": false,
-      "graph_available": null,
-      "warnings": ["No hay indice BM25 en memoria para repo 'mall'."]
-    }
-  }
-}
-```
-
-Ejemplo 503 de preflight:
-
-```json
-{
-  "detail": {
-    "message": "Preflight de storage fallo antes de consulta.",
-    "health": {
-      "ok": false,
-      "strict": true,
-      "checked_at": "2026-01-01T00:00:00+00:00",
-      "context": "query",
-      "repo_id": "mall",
-      "cached": false,
-      "failed_components": ["neo4j"],
-      "items": [
-        {
-          "name": "neo4j",
-          "ok": false,
-          "critical": true,
-          "code": "neo4j_unreachable",
-          "message": "neo4j failed",
-          "latency_ms": 1.0,
-          "details": {}
-        }
-      ]
-    }
-  }
-}
-```
-
-## Diagnostics
-
-## Diagnostics de /query
-
-Campos frecuentes:
-
-- `retrieved`: candidatos recuperados por hybrid search.
-- `reranked`: candidatos luego de reranking.
-- `graph_nodes`: nodos agregados por expansion de grafo.
-- `context_chars`: longitud de contexto ensamblado.
-- `raw_citations`, `filtered_citations`, `returned_citations`.
-- `low_signal_retrieval`: true cuando `retrieved < 3`.
-- `context_sufficient`: validacion minima de contexto.
-- `llm_enabled`, `llm_provider`, `llm_answer_model`, `llm_verifier_model`, `llm_verify_enabled`.
-- `llm_capabilities`, `embedding_provider`, `embedding_model`, `embedding_capabilities`.
-- `discovered_modules`: modulos detectados por heuristica.
-- `inventory_intent`: true solo cuando la consulta contiene `inventario` o `inventory`.
-- `inventory_route`: `graph_first` (cuando hay intent + target) o `fallback_to_general`.
-- `fallback_reason`: `not_configured`, `verification_failed`, `generation_error`, `time_budget_exhausted`, `insufficient_context`.
-- `verify_valid`, `verify_skipped`.
-- `query_budget_seconds`, `budget_exhausted`.
-- `stage_timings_ms`: latencia por etapa (`hybrid_search_ms`, `rerank_ms`, `graph_expand_ms`, `module_discovery_ms`, `context_assembly_ms`, `llm_answer_ms`, `llm_verify_ms`, `total_ms`).
-- `llm_error`: solo cuando hubo excepcion de generacion/verificacion.
-
-## Diagnostics de /inventory/query
-
-Campos frecuentes:
-
-- `inventory_target`.
-- `inventory_terms`.
-- `inventory_count`.
-- `inventory_explain`.
-- `inventory_purpose_count`.
-- `module_name_raw`, `module_name_resolved`.
-- `query_budget_seconds`, `budget_exhausted`.
-- `stage_timings_ms`: `parse_ms`, `graph_inventory_ms`, `pagination_ms`, `component_purpose_ms`, `total_ms`.
-- `fallback_reason`: `inventory_target_missing`, `inventory_structured`, `time_budget_exhausted`.
-
-## Comportamientos importantes
-
-- `/query` solo redirige internamente a inventario cuando la consulta contiene `inventario` o `inventory`.
-- Si hay intencion de inventario pero no se detecta target, `/query` sigue por flujo general con `inventory_route = fallback_to_general`.
-- `/repos/{repo_id}/status` evalua readiness de query por repo sin ejecutar consulta.
-- `/health/storage` ejecuta preflight explicito y retorna estado detallado por componente.
-- La readiness de query depende de Chroma con documentos para ese repo y BM25 cargado en memoria.
-
-## Ejemplos rapidos
-
-Consulta general:
-
-```bash
-curl -X POST http://127.0.0.1:8000/query \
-  -H "Content-Type: application/json" \
-  -d '{
-    "repo_id": "mall",
-    "query": "cuales son todos los controller del modulo mall-admin?",
-    "top_n": 60,
-    "top_k": 15
-  }'
-```
-
-Consulta inventario:
-
-```bash
-curl -X POST http://127.0.0.1:8000/inventory/query \
-  -H "Content-Type: application/json" \
-  -d '{
-    "repo_id": "mall",
-    "query": "cuales son todos los modelos de mall-mbg",
-    "page": 1,
-    "page_size": 80
-  }'
-```
-
-Estado por repo:
-
-```bash
-curl http://127.0.0.1:8000/repos/mall/status
-```
-
-Salud de storage:
-
-```bash
-curl http://127.0.0.1:8000/health/storage
-```
-
-## Casos por endpoint
-
-Esta seccion resume respuestas de exito y error por cada servicio HTTP.
+## Ejemplos por endpoint
 
 ### POST /repos/ingest
 
-Notas operativas de extracción de símbolos:
+Request:
 
-- La arquitectura modular de extractores por lenguaje está documentada en [docs/SYMBOL_EXTRACTORS.md](docs/SYMBOL_EXTRACTORS.md).
-- El rollout se controla con la variable de entorno SYMBOL_EXTRACTOR_V2_ENABLED (true por defecto, false para rollback al modo legacy).
+```json
+{
+  "provider": "github",
+  "repo_url": "https://github.com/macrozheng/mall.git",
+  "branch": "main"
+}
+```
 
-Exito `200`:
+Response:
 
 ```json
 {
@@ -437,58 +288,46 @@ Exito `200`:
   "progress": 0.0,
   "logs": [],
   "repo_id": null,
-  "error": null,
-  "created_at": "2026-03-13T10:00:00.000000",
-  "updated_at": "2026-03-13T10:00:00.000000"
+  "error": null
 }
 ```
 
-Error `503` (preflight de storage):
+### GET /jobs/{job_id}?logs_tail=200
 
-```json
-{
-  "detail": {
-    "message": "Preflight de storage falló antes de ingesta.",
-    "health": {
-      "ok": false,
-      "failed_components": ["chroma"]
-    }
-  }
-}
-```
-
-### GET /jobs/{job_id}
-
-Exito `200`:
+Response:
 
 ```json
 {
   "id": "job-123",
   "status": "running",
-  "progress": 0.45,
-  "logs": ["Escaneando archivos..."],
+  "progress": 0.42,
+  "logs": [
+    "Clonando repositorio...",
+    "Escaneando archivos..."
+  ],
   "repo_id": null,
-  "error": null,
-  "created_at": "2026-03-13T10:00:00.000000",
-  "updated_at": "2026-03-13T10:00:18.000000"
-}
-```
-
-Error `404`:
-
-```json
-{
-  "detail": "Job no encontrado"
+  "error": null
 }
 ```
 
 ### POST /query
 
-Exito `200`:
+Request:
 
 ```json
 {
-  "answer": "...",
+  "repo_id": "mall",
+  "query": "cuales son los controller del modulo mall-admin",
+  "top_n": 60,
+  "top_k": 15
+}
+```
+
+Response:
+
+```json
+{
+  "answer": "Se encontraron controllers en el modulo mall-admin...",
   "citations": [
     {
       "path": "mall-admin/src/main/java/.../AdminController.java",
@@ -502,17 +341,98 @@ Exito `200`:
     "retrieved": 60,
     "reranked": 15,
     "graph_nodes": 12,
-    "fallback_reason": null,
-    "stage_timings_ms": {
-      "hybrid_search_ms": 93.2,
-      "rerank_ms": 5.4,
-      "total_ms": 312.8
-    }
+    "fallback_reason": null
   }
 }
 ```
 
-Error `422` (repo no listo):
+### POST /query/retrieval
+
+Request:
+
+```json
+{
+  "repo_id": "mall",
+  "query": "donde esta la configuracion de neo4j",
+  "top_n": 60,
+  "top_k": 15,
+  "include_context": false
+}
+```
+
+Response:
+
+```json
+{
+  "mode": "retrieval_only",
+  "answer": "Se encontraron archivos de configuracion de Neo4j...",
+  "chunks": [
+    {
+      "id": "chunk-1",
+      "path": "coderag/core/settings.py",
+      "start_line": 10,
+      "end_line": 40,
+      "score": 0.88
+    }
+  ],
+  "citations": [],
+  "statistics": {
+    "total_before_rerank": 60,
+    "total_after_rerank": 15,
+    "graph_nodes_count": 8
+  },
+  "diagnostics": {}
+}
+```
+
+### GET /repos/{repo_id}/status
+
+Response:
+
+```json
+{
+  "repo_id": "mall",
+  "listed_in_catalog": true,
+  "query_ready": true,
+  "chroma_counts": {
+    "code_symbols": 1200,
+    "code_files": 350,
+    "code_modules": 18
+  },
+  "bm25_loaded": true,
+  "graph_available": true,
+  "warnings": []
+}
+```
+
+### DELETE /repos/{repo_id}
+
+Response:
+
+```json
+{
+  "message": "Repositorio 'mall' eliminado",
+  "repo_id": "mall",
+  "cleared": ["chroma", "bm25", "neo4j", "workspace", "metadata"],
+  "deleted_counts": {
+    "chroma": 1568,
+    "neo4j": 923
+  },
+  "warnings": []
+}
+```
+
+## Ejemplos de errores operativos
+
+### GET /jobs/{job_id} - 404
+
+```json
+{
+  "detail": "Job no encontrado"
+}
+```
+
+### POST /query - 422 (repo_not_ready)
 
 ```json
 {
@@ -530,13 +450,33 @@ Error `422` (repo no listo):
       },
       "bm25_loaded": false,
       "graph_available": null,
-      "warnings": ["No hay indice BM25 en memoria para repo 'mall'."]
+      "warnings": [
+        "No hay indice BM25 en memoria para repo 'mall'."
+      ]
     }
   }
 }
 ```
 
-Error `503` (preflight):
+### POST /query - 422 (embedding_incompatible)
+
+```json
+{
+  "detail": {
+    "message": "El embedding seleccionado para consulta no es compatible con la última ingesta del repositorio. Reingesta con el mismo modelo/provider o limpia índices antes de consultar.",
+    "code": "embedding_incompatible",
+    "repo_status": {
+      "repo_id": "mall",
+      "query_ready": false,
+      "embedding_compatible": false,
+      "last_embedding_provider": "openai",
+      "last_embedding_model": "text-embedding-3-large"
+    }
+  }
+}
+```
+
+### POST /query - 503 (preflight)
 
 ```json
 {
@@ -544,178 +484,60 @@ Error `503` (preflight):
     "message": "Preflight de storage falló antes de consulta.",
     "health": {
       "ok": false,
-      "failed_components": ["neo4j"]
+      "strict": true,
+      "context": "query",
+      "failed_components": ["neo4j"],
+      "items": [
+        {
+          "name": "neo4j",
+          "ok": false,
+          "critical": true,
+          "code": "neo4j_unreachable",
+          "message": "No se pudo conectar a Neo4j"
+        }
+      ]
     }
   }
 }
 ```
 
-### POST /inventory/query
-
-Exito `200`:
+### DELETE /repos/{repo_id} - 409
 
 ```json
 {
-  "answer": "Se encontraron 11 elementos de inventario.",
-  "target": "modelo",
-  "module_name": "mall-mbg",
-  "total": 11,
-  "page": 2,
-  "page_size": 5,
-  "items": [
-    {
-      "label": "CmsHelp.java",
-      "path": "mall-mbg/src/main/java/com/macro/mall/model/CmsHelp.java",
-      "kind": "file",
-      "start_line": 1,
-      "end_line": 1
-    }
-  ],
-  "citations": [
-    {
-      "path": "mall-mbg/src/main/java/com/macro/mall/model/CmsHelp.java",
-      "start_line": 1,
-      "end_line": 1,
-      "score": 1.0,
-      "reason": "inventory_graph_match"
-    }
-  ],
-  "diagnostics": {
-    "inventory_count": 11,
-    "fallback_reason": null
-  }
+  "detail": "No se puede eliminar el repo 'mall' porque tiene jobs en ejecución"
 }
 ```
 
-Error `503` (preflight):
+### DELETE /repos/{repo_id} - 422
 
 ```json
 {
-  "detail": {
-    "message": "Preflight de storage falló antes de inventario.",
-    "health": {
-      "ok": false,
-      "failed_components": ["neo4j"]
-    }
-  }
+  "detail": "repo_id no puede estar vacío"
 }
 ```
 
-### GET /repos
-
-Exito `200`:
+### POST /admin/reset - 409
 
 ```json
 {
-  "repo_ids": ["mall", "api-service"]
+  "detail": "No se puede limpiar mientras hay jobs en ejecución"
 }
 ```
 
-### DELETE /repos/{repo_id}
+## Matriz de accion recomendada
 
-Exito `200`:
+| Error | Endpoint | Que significa | Accion recomendada |
+|---|---|---|---|
+| 404 | GET /jobs/{job_id} | El identificador de job no existe o expiró del contexto esperado. | Verifica el job_id devuelto por POST /repos/ingest y relanza la ingesta si fue descartado. |
+| 422 repo_not_ready | POST /query | El repositorio no tiene indices listos para consulta. | Ejecuta GET /repos/{repo_id}/status, valida query_ready y reingesta el repo. |
+| 422 embedding_incompatible | POST /query, POST /query/retrieval | El embedding de consulta no coincide con la ultima ingesta. | Usa provider/modelo de embedding compatible o limpia y reingesta con la configuracion deseada. |
+| 503 preflight | POST /repos/ingest, POST /query, POST /query/retrieval, POST /inventory/query | Fallo de componentes criticos de storage (por ejemplo Neo4j/Chroma). | Revisa GET /health/storage, corrige el componente fallido y reintenta. |
+| 409 | DELETE /repos/{repo_id} | Hay jobs activos para el mismo repositorio. | Espera a que terminen los jobs o cancela flujo operativo antes de eliminar. |
+| 422 | DELETE /repos/{repo_id} | repo_id vacio tras normalizacion. | Envia un repo_id no vacio y sin espacios laterales. |
+| 409 | POST /admin/reset | Hay jobs en ejecucion y no se permite limpieza total. | Espera fin de jobs activos y vuelve a ejecutar reset. |
 
-```json
-{
-  "message": "Repositorio 'mall' eliminado",
-  "repo_id": "mall",
-  "cleared": ["Chroma", "BM25", "Grafo Neo4j", "Workspace", "Metadata SQLite"],
-  "deleted_counts": {
-    "chroma_total": 42,
-    "chroma_code_symbols": 25,
-    "chroma_code_files": 10,
-    "chroma_code_modules": 3,
-    "chroma_docs_misc": 2,
-    "chroma_infra_ci": 2,
-    "bm25_docs": 18,
-    "bm25_snapshots": 1,
-    "neo4j_nodes": 120,
-    "workspace_dirs": 1,
-    "metadata_jobs": 3,
-    "metadata_repos": 1,
-    "metadata_total": 4
-  },
-  "warnings": []
-}
-```
+Notas:
 
-Error `404` (repo no encontrado):
-
-```json
-{
-  "detail": "No existe un repositorio registrado con id 'mall'"
-}
-```
-
-Error `409` (ingesta activa del mismo repo):
-
-```json
-{
-  "detail": "No se puede eliminar el repositorio mientras haya ingestas activas del mismo repo: <job_id>"
-}
-```
-
-### GET /repos/{repo_id}/status
-
-Exito `200`:
-
-```json
-{
-  "repo_id": "mall",
-  "listed_in_catalog": true,
-  "query_ready": true,
-  "chroma_counts": {
-    "code_symbols": 10,
-    "code_files": 5,
-    "code_modules": 2
-  },
-  "bm25_loaded": true,
-  "graph_available": true,
-  "warnings": []
-}
-```
-
-### GET /health/storage
-
-Exito `200`:
-
-```json
-{
-  "ok": true,
-  "strict": true,
-  "checked_at": "2026-03-13T10:00:00+00:00",
-  "context": "health",
-  "repo_id": null,
-  "cached": true,
-  "failed_components": [],
-  "items": []
-}
-```
-
-### POST /admin/reset
-
-Exito `200`:
-
-```json
-{
-  "message": "Limpieza total completada",
-  "cleared": ["BM25 en memoria", "Grafo Neo4j"],
-  "warnings": []
-}
-```
-
-Error `409` (jobs en ejecucion):
-
-```json
-{
-  "detail": "No se puede limpiar mientras hay jobs en ejecución."
-}
-```
-
-Error `500` (fallo inesperado):
-
-```json
-{
-  "detail": "<mensaje de error interno>"
-}
-```
+- Para diagnostico detallado de readiness: GET /repos/{repo_id}/status.
+- Para diagnostico detallado de infraestructura: GET /health/storage.
