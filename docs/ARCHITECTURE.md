@@ -39,32 +39,54 @@ flowchart TB
     end
 
     subgraph L2[Layer 2 - API and Application]
+        direction TB
         API[FastAPI<br/>coderag/api/server.py]
         QS[Query Service<br/>coderag/api/query_service.py]
     end
 
     subgraph L3[Layer 3 - Domain and Orchestration]
-        JM[JobManager<br/>coderag/jobs/worker.py]
-        ING[Ingestion Pipeline<br/>coderag/ingestion/*]
-        RET[Retrieval Pipeline<br/>coderag/retrieval/*]
-        HEALTH[Storage Health<br/>coderag/core/storage_health.py]
+        direction LR
+
+        subgraph L3L[ ]
+            direction TB
+            HEALTH[Storage Health<br/>coderag/core/storage_health.py]
+            JM[JobManager<br/>coderag/jobs/worker.py]
+        end
+
+        subgraph L3R[ ]
+            direction TB
+            ING[Ingestion Pipeline<br/>coderag/ingestion/*]
+            RET[Retrieval Pipeline<br/>coderag/retrieval/*]
+        end
     end
 
     subgraph L4[Layer 4 - AI and Model Integration]
-        LLM[LLM Clients<br/>coderag/llm/*]
+        direction TB
         EMB[Embedding Clients<br/>coderag/ingestion/embedding.py]
+        LLM[LLM Clients<br/>coderag/llm/*]
     end
 
     subgraph L5[Layer 5 - Data and Infrastructure]
-        IDX[(Retrieval Stores)]
-        OPS[(Operational Stores)]
+        direction LR
 
-        CH[(ChromaDB)]
-        BM[(BM25 in-memory)]
-        NEO[(Neo4j)]
-        META[(SQLite<br/>metadata.db)]
-        WS[(Workspace<br/>local clones)]
+        subgraph L5L[Retrieval Data Plane]
+            direction TB
+            IDX[(Retrieval Stores)]
+            CH[(ChromaDB)]
+            BM[(BM25 in-memory)]
+            NEO[(Neo4j)]
+        end
+
+        subgraph L5R[Operational Data Plane]
+            direction TB
+            OPS[(Operational Stores)]
+            META[(SQLite<br/>metadata.db)]
+            WS[(Workspace<br/>local clones)]
+        end
     end
+
+    style L3L fill:transparent,stroke:transparent
+    style L3R fill:transparent,stroke:transparent
 
     UI --> API
     API --> QS
