@@ -4,16 +4,26 @@ Guia de instalacion y arranque local.
 
 ## Requisitos
 
-- Python 3.10+
+- Python 3.12.3 recomendado (compatibilidad verificada)
 - Git
 - Rancher Desktop con nerdctl compose o Docker Desktop con docker compose
+
+Requisito adicional en Windows (solo si falla instalacion de dependencias nativas):
+
+- Microsoft Visual Studio 2022 Build Tools con workload C++
+	(`Microsoft.VisualStudio.Workload.VCTools`)
 
 ## Setup rapido
 
 1. Instalar dependencias.
 
+```powershell
+py -3.12 -m venv .venv
+```
+
 ```bash
-pip install -r requirements.txt
+.\.venv\Scripts\python -m pip install --upgrade pip
+.\.venv\Scripts\python -m pip install -r requirements.txt
 ```
 
 2. Crear archivo de entorno.

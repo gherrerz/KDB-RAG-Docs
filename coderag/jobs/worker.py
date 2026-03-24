@@ -1,6 +1,6 @@
 """Gestión de trabajos para ingesta con integración opcional de Redis/RQ."""
 
-from datetime import datetime
+import datetime
 from threading import Thread
 from uuid import uuid4
 
@@ -115,15 +115,13 @@ class JobManager:
         """Ejecute el flujo de trabajo de ingesta y actualice las transiciones de estado."""
         job = self._jobs[job_id]
         job.status = JobStatus.running
-        job.updated_at = datetime.utcnow()
-
+        job.updated_at = datetime.datetime.now(datetime.UTC)
         def logger(message: str) -> None:
             job.logs.append(message)
             steps = max(1, len(job.logs))
             job.progress = min(0.95, steps / 8)
-            job.updated_at = datetime.utcnow()
+            job.updated_at = datetime.datetime.now(datetime.UTC)
             self.store.upsert_job(job)
-
         try:
             from coderag.ingestion.pipeline import ingest_repository
             from coderag.core.storage_health import get_repo_query_status
@@ -165,7 +163,7 @@ class JobManager:
             job.error = str(exc)
             job.logs.append(f"Error: {exc}")
         finally:
-            job.updated_at = datetime.utcnow()
+            job.updated_at = datetime.datetime.now(datetime.UTC)
             self.store.upsert_job(job)
 
 

@@ -1,6 +1,6 @@
 """Pruebas de estados operativos del JobManager durante la ingesta."""
 
-from datetime import datetime
+import datetime
 from uuid import uuid4
 
 from coderag.core.models import JobInfo, JobStatus, RepoIngestRequest
@@ -152,8 +152,8 @@ def test_job_manager_recovers_interrupted_running_jobs(
         logs=["Extrayendo símbolos..."],
         repo_id="orphan-repo",
         error=None,
-        created_at=datetime.utcnow(),
-        updated_at=datetime.utcnow(),
+        created_at=datetime.datetime.now(datetime.UTC),
+        updated_at=datetime.datetime.now(datetime.UTC),
     )
     first_manager.store.upsert_job(orphan)
 

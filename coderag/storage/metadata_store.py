@@ -1,8 +1,8 @@
 """Almacén de metadatos en SQLite para repositorios y trabajos."""
 
+import datetime
 import sqlite3
 from pathlib import Path
-from datetime import datetime
 
 from coderag.core.models import JobInfo, JobStatus
 
@@ -102,7 +102,7 @@ class MetadataStore:
             "Job interrumpido por reinicio del servicio. "
             "Reintenta la ingesta."
         )
-        now = datetime.utcnow().isoformat()
+        now = datetime.datetime.now(datetime.UTC).isoformat()
         with self._connect() as connection:
             cursor = connection.execute(
                 """
@@ -179,7 +179,7 @@ class MetadataStore:
         embedding_model: str | None,
     ) -> None:
         """Inserta o actualiza metadata runtime por repositorio."""
-        now = datetime.utcnow().isoformat()
+        now = datetime.datetime.now(datetime.UTC).isoformat()
         with self._connect() as connection:
             connection.execute(
                 """

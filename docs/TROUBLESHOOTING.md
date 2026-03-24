@@ -26,6 +26,15 @@ Incidencias frecuentes y acciones sugeridas.
 - Usa modo estable sin autoreload para ingestas largas.
 - Revisa logs del job con GET /jobs/{job_id}?logs_tail=400.
 
+## Error al instalar dependencias en Windows
+
+Si durante `pip install -r requirements.txt` aparece un error en
+`chroma-hnswlib` indicando que falta `Microsoft Visual C++ 14.0 or greater`:
+
+- Instala Visual Studio 2022 Build Tools.
+- Incluye el workload C++: `Microsoft.VisualStudio.Workload.VCTools`.
+- Reintenta instalacion con `\.venv\Scripts\python -m pip install -r requirements.txt`.
+
 ## Errores de puertos o runtime de contenedores
 
 - Si nerdctl no responde, usa scripts/compose_neo4j.ps1 para fallback.

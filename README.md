@@ -12,12 +12,24 @@ de codigo con evidencia verificable (archivos y lineas).
   - Retrieval-only sin sintesis LLM.
 - Devuelve citas y diagnosticos para trazabilidad de resultados.
 
+## Requisitos
+
+- Python 3.12.3 recomendado (compatibilidad verificada)
+- Git
+- Rancher Desktop con nerdctl compose o Docker Desktop con docker compose
+
+Nota Windows: si `pip install -r requirements.txt` falla al compilar
+`chroma-hnswlib`, instala Visual Studio 2022 Build Tools con workload C++
+(`Microsoft.VisualStudio.Workload.VCTools`).
+
 ## Quick Start
 
 1. Instala dependencias y crea entorno.
 
 ```powershell
-pip install -r requirements.txt
+py -3.12 -m venv .venv
+.\.venv\Scripts\python -m pip install --upgrade pip
+.\.venv\Scripts\python -m pip install -r requirements.txt
 copy .env.example .env
 ```
 
