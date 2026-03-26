@@ -1,13 +1,35 @@
 services:
-  neo4j:
-    image: neo4j:5.24
+  api:
+    build: .
+    container_name: coderag-api
     ports:
-      - "17474:7474"
-      - "17687:7687"
-    environment:
-      NEO4J_AUTH: neo4j/password
+      - "8000:8000"
     volumes:
-      - neo4j_data:/data
+      - ./:/app
+    environment:
+      - PYTHONUNBUFFERED=1
+    depends_on:
+      - redis
+      - neo4j
+      - chroma
 
-volumes:
-  neo4j_data:
+  redis:
+    image: redis:7-alpine
+    container_name: coderag-redis
+    ports:
+      - "6379:6379"
+
+  neo4j:
+    image: neo4j:5
+    container_name: coderag-neo4j
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    environment:
+      - NEO4J_AUTH=neo4j/password
+
+  chroma:
+    image: chromadb/chroma:latest
+    container_name: coderag-chroma
+    ports:
+      - "8001:8000"

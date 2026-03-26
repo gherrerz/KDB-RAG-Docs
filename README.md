@@ -1,188 +1,152 @@
 # RAG Hybrid Response Validator
 
-Plataforma de analisis de repositorios con Hybrid RAG para responder preguntas
-de codigo con evidencia verificable (archivos y lineas).
+Aplicacion Python para ingesta documental y consulta con RAG hibrido
+(vector + BM25 + grafo) con UI de escritorio (PySide6) y API (FastAPI).
 
-## Que hace
+## Features
 
-- Ingesta repositorios Git en segundo plano con seguimiento por job.
-- Construye indices complementarios: vectorial, lexico y grafo.
-- Responde consultas por dos rutas:
-  - Query con LLM y verificacion.
-  - Retrieval-only sin sintesis LLM.
-- Devuelve citas y diagnosticos para trazabilidad de resultados.
+- Ingesta de documentos locales (`.md`, `.txt`, `.html`)
+- Pipeline de chunking semantico por secciones
+- Recuperacion hibrida: vectorial + BM25
+- Expansion por grafo multi-hop
+- Respuesta con evidencia y trazabilidad
+- Soporte de proveedores LLM: local, OpenAI, Gemini y Vertex AI
+- UI para operacion de ingesta y consultas
+- API REST para integracion externa
+- Ingesta asincrona opcional con Redis + RQ
+
+## Arquitectura
+
+- UI: PySide6
+- API: FastAPI
+- Vector index: `LocalVectorIndex` (compatible con evolucion a ChromaDB)
+- BM25: `rank-bm25`
+- Grafo: `networkx` (compatible con evolucion a Neo4j)
+- Storage metadata: SQLite en `storage/metadata.db`
 
 ## Requisitos
 
-- Python 3.12.3 recomendado (compatibilidad verificada)
-- Git
-- Rancher Desktop con nerdctl compose o Docker Desktop con docker compose
+- Python 3.11+
+- Windows, Linux o macOS
 
-Nota Windows: si `pip install -r requirements.txt` falla al compilar
-`chroma-hnswlib`, instala Visual Studio 2022 Build Tools con workload C++
-(`Microsoft.VisualStudio.Workload.VCTools`).
+## Instalacion
 
-## Quick Start
-
-1. Instala dependencias y crea entorno.
-
-```powershell
-py -3.12 -m venv .venv
-.\.venv\Scripts\python -m pip install --upgrade pip
-.\.venv\Scripts\python -m pip install -r requirements.txt
-copy .env.example .env
+```bash
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
 ```
 
-2. Levanta Neo4j y API.
+## Ejecucion
 
-```powershell
-./scripts/compose_neo4j.ps1 up
-.\.venv\Scripts\python -m uvicorn coderag.api.server:app
+1. Iniciar API:
+
+```bash
+python run_api.py
 ```
 
-3. Inicia una ingesta.
+2. Iniciar UI en otra terminal:
 
-```powershell
-$body = @{
-  provider = 'github'
-  repo_url = 'https://github.com/macrozheng/mall.git'
-  branch = 'main'
-} | ConvertTo-Json
-
-Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/repos/ingest -ContentType 'application/json' -Body $body
+```bash
+python run_ui.py
 ```
 
-4. Consulta estado del job.
+3. En la UI, pestaña Ingestion:
+- `Source Type`: `folder`
+- `Local Path`: `sample_data`
+- Click en `Ingest`
 
-```powershell
-Invoke-RestMethod -Method Get -Uri "http://127.0.0.1:8000/jobs/<job_id>?logs_tail=200"
+4. En la pestaña Query, preguntar por ejemplo:
+- `Who works on Project Atlas?`
+- `Which procedure depends on Policy FIN-001?`
+
+## API Endpoints
+
+- `GET /health`
+- `POST /sources/ingest`
+- `POST /sources/ingest/async`
+- `GET /jobs/{id}`
+- `POST /query`
+- `POST /query/retrieval`
+
+Ejemplo `POST /sources/ingest`:
+
+```json
+{
+  "source": {
+    "source_type": "folder",
+    "local_path": "sample_data"
+  }
+}
 ```
 
-## Customer Journeys
+Ejemplo `POST /query`:
 
-```mermaid
-flowchart LR
-    U[Usuario] --> I[Ingesta]
-    U --> Q1[Query con LLM]
-    U --> Q2[Query retrieval-only]
-
-    I --> R[Repo query_ready]
-    R --> Q1
-    R --> Q2
-
-    Q1 --> O1[Respuesta sintetizada + citas]
-    Q2 --> O2[Evidencia estructurada + citas]
+```json
+{
+  "question": "Who works on Project Atlas?",
+  "hops": 2,
+  "llm_provider": "local",
+  "force_fallback": false
+}
 ```
 
-| Journey | Entrada | Salida | Referencia |
-|---|---|---|---|
-| Ingesta | POST /repos/ingest | Job con estado y logs | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
-| Query con LLM | POST /query | Answer con citas + diagnostics | [docs/API_REFERENCE.md](docs/API_REFERENCE.md) |
-| Query retrieval-only | POST /query/retrieval | Chunks + citations + stats | [docs/API_REFERENCE.md](docs/API_REFERENCE.md) |
+Ejemplo `POST /sources/ingest/async`:
 
-## API Rapida
-
-Rutas principales:
-
-- POST /repos/ingest
-- GET /jobs/{job_id}
-- POST /query
-- POST /query/retrieval
-- POST /inventory/query
-- GET /repos
-- DELETE /repos/{repo_id}
-- GET /repos/{repo_id}/status
-- GET /providers/models
-- GET /health/storage
-- POST /admin/reset
-
-Referencia completa por journeys y contratos:
-
-- [docs/API_REFERENCE.md](docs/API_REFERENCE.md)
-
-## Errores HTTP frecuentes
-
-Si recibes errores durante ingesta o consulta:
-
-- Revisa guia de troubleshooting: [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)
-- Revisa matriz de accion recomendada: [docs/API_REFERENCE.md#matriz-de-accion-recomendada](docs/API_REFERENCE.md#matriz-de-accion-recomendada)
-
-Atajo de diagnostico:
-
-- Readiness por repo: GET /repos/{repo_id}/status
-- Salud de storage: GET /health/storage
-
-## Comandos por Journey
-
-Consulta con LLM:
-
-```powershell
-$q = @{
-  repo_id = 'mall'
-  query = 'cuales son los controller del modulo mall-admin'
-  top_n = 60
-  top_k = 15
-} | ConvertTo-Json
-
-Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/query -ContentType 'application/json' -Body $q
+```json
+{
+  "source": {
+    "source_type": "folder",
+    "local_path": "sample_data"
+  }
+}
 ```
 
-Consulta retrieval-only:
+Respuesta:
 
-```powershell
-$r = @{
-  repo_id = 'mall'
-  query = 'donde esta la configuracion de neo4j'
-  top_n = 60
-  top_k = 15
-  include_context = $false
-} | ConvertTo-Json
-
-Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/query/retrieval -ContentType 'application/json' -Body $r
-```
-
-Eliminar repositorio indexado:
-
-```powershell
-Invoke-RestMethod -Method Delete -Uri http://127.0.0.1:8000/repos/mall
-```
-
-## Documentacion
-
-- Instalacion: [docs/INSTALLATION.md](docs/INSTALLATION.md)
-- Configuracion: [docs/CONFIGURATION.md](docs/CONFIGURATION.md)
-- Arquitectura y secuencias Mermaid: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
-- API detallada: [docs/API_REFERENCE.md](docs/API_REFERENCE.md)
-- Troubleshooting: [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)
-- Extractores de simbolos: [docs/SYMBOL_EXTRACTORS.md](docs/SYMBOL_EXTRACTORS.md)
-- Guia de contribucion: [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md)
-- Migraciones: [docs/migration-guides/README.md](docs/migration-guides/README.md)
-- Historial de cambios: [CHANGELOG.md](CHANGELOG.md)
-
-## Ejemplos Ejecutables
-
-- Python: [examples/python/](examples/python/)
-- Curl: [examples/curl/](examples/curl/)
-- PowerShell: [examples/powershell/](examples/powershell/)
-
-Resultado esperado de los ejemplos:
-
-- Ingesta: obtienes job_id y estado final completed o partial.
-- Query con LLM: obtienes answer, citations y diagnostics.
-- Retrieval-only: obtienes chunks, citations y statistics sin sintesis LLM.
-
-## Validacion de Documentacion
-
-```powershell
-.\.venv\Scripts\python scripts/docs/validate_docs.py
-.\.venv\Scripts\python scripts/docs/validate_links.py
-.\.venv\Scripts\python scripts/docs/validate_examples.py
+```json
+{
+  "job_id": "rq-job-id",
+  "status": "queued",
+  "message": "Ingestion job enqueued"
+}
 ```
 
 ## Testing
 
-En Windows, usa el interprete del venv de forma explicita:
+En Windows (recomendado en este repo):
 
-```powershell
-.\.venv\Scripts\python -m pytest -q
+```bash
+.venv\Scripts\python.exe -m pytest -q
 ```
+
+## Cleanup artifacts
+
+Para limpiar artefactos locales sin usar `Remove-Item` (bloqueado en algunos
+entornos):
+
+```bash
+.venv\Scripts\python.exe scripts/clean_artifacts.py --remove-metadata-db
+```
+
+Opcional para incluir caches dentro de `.venv`:
+
+```bash
+.venv\Scripts\python.exe scripts/clean_artifacts.py --include-venv --remove-metadata-db
+```
+
+## Configuracion
+
+Ver:
+- `docs/INSTALLATION.md`
+- `docs/CONFIGURATION.md`
+- `docs/API_REFERENCE.md`
+
+## Estado y roadmap
+
+Este MVP es funcional end-to-end sin dependencias externas obligatorias.
+El diseño de modulos permite reemplazar componentes locales por:
+- ChromaDB para vectores
+- Neo4j para grafo (opcional habilitado por `USE_NEO4J=true`)
+- Redis + RQ para jobs asincronos (opcional con `USE_RQ=true`)
+- Proveedores LLM (OpenAI, Gemini, Vertex AI)

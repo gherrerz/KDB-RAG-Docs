@@ -1,27 +1,54 @@
-"""Módulo de expansión GraphRAG que utiliza vecinos Neo4j."""
+"""Multi-hop graph expansion based on query entities."""
 
-import logging
+from __future__ import annotations
 
-from coderag.core.models import RetrievalChunk
-from coderag.core.settings import get_settings
-from coderag.ingestion.graph_builder import GraphBuilder
+import re
+from typing import Iterable, List
+
+import networkx as nx
+
+from coderag.core.models import GraphPath
+
+ENTITY_PATTERN = re.compile(r"\b[A-Z][a-zA-Z]{2,}\b")
 
 
-LOGGER = logging.getLogger(__name__)
+def build_graph(edges: Iterable[tuple[str, str, str]]) -> nx.Graph:
+    """Build undirected graph from edge triplets."""
+    graph = nx.Graph()
+    for source_node, relation, target_node in edges:
+        graph.add_edge(source_node, target_node, relation=relation)
+    return graph
 
 
-def expand_with_graph(chunks: list[RetrievalChunk]) -> list[dict]:
-    """Amplíe el contexto atravesando los vecinos del gráfico desde los símbolos recuperados."""
-    symbol_ids = [item.id for item in chunks]
-    if not symbol_ids:
-        return []
+def expand_paths(
+    query: str,
+    graph: nx.Graph,
+    hops: int,
+    max_paths: int = 6,
+) -> List[GraphPath]:
+    """Find graph paths connected to entities mentioned in query."""
+    entities = list(dict.fromkeys(ENTITY_PATTERN.findall(query)))
+    if not entities:
+        entities = list(graph.nodes)[:3]
 
-    settings = get_settings()
-    graph = GraphBuilder()
-    try:
-        return graph.expand_symbols(symbol_ids=symbol_ids, hops=settings.graph_hops)
-    except Exception as exc:
-        LOGGER.warning("Graph expansion falló; se usará contexto sin grafo: %s", exc)
-        return []
-    finally:
-        graph.close()
+    paths: List[GraphPath] = []
+    for source in entities:
+        if source not in graph:
+            continue
+        for target in graph.nodes:
+            if source == target:
+                continue
+            try:
+                path = nx.shortest_path(graph, source=source, target=target)
+            except (nx.NetworkXNoPath, nx.NodeNotFound):
+                continue
+            if len(path) - 1 > hops:
+                continue
+            relationships = []
+            for idx in range(len(path) - 1):
+                edge = graph.get_edge_data(path[idx], path[idx + 1])
+                relationships.append(edge.get("relation", "RELATES_TO"))
+            paths.append(GraphPath(nodes=path, relationships=relationships))
+            if len(paths) >= max_paths:
+                return paths
+    return paths

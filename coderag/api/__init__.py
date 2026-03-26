@@ -1,1 +1,1 @@
-"""Paquete API para el servidor FastAPI."""
+"""FastAPI application package."""

@@ -1,1 +1,1 @@
-"""Módulos principales compartidos para CodeRAG."""
+"""Core abstractions for the RAG system."""

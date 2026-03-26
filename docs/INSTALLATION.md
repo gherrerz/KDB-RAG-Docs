@@ -1,76 +1,55 @@
-# Installation
+# Installation Guide
 
-Guia de instalacion y arranque local.
+## Prerequisites
 
-## Requisitos
+- Python 3.11 or newer
+- `pip`
 
-- Python 3.12.3 recomendado (compatibilidad verificada)
-- Git
-- Rancher Desktop con nerdctl compose o Docker Desktop con docker compose
-
-Requisito adicional en Windows (solo si falla instalacion de dependencias nativas):
-
-- Microsoft Visual Studio 2022 Build Tools con workload C++
-	(`Microsoft.VisualStudio.Workload.VCTools`)
-
-## Setup rapido
-
-1. Instalar dependencias.
-
-```powershell
-py -3.12 -m venv .venv
-```
+## Setup
 
 ```bash
-.\.venv\Scripts\python -m pip install --upgrade pip
-.\.venv\Scripts\python -m pip install -r requirements.txt
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
 ```
 
-2. Crear archivo de entorno.
+## Run backend
 
-```powershell
-copy .env.example .env
+```bash
+python run_api.py
 ```
 
-3. Levantar Neo4j.
+## Run async worker (optional)
 
-```powershell
-./scripts/compose_neo4j.ps1 up
+Habilita primero en entorno:
+
+```bash
+set USE_RQ=true
+set REDIS_URL=redis://localhost:6379/0
 ```
 
-4. Levantar API.
+Luego ejecuta:
 
-```powershell
-.\.venv\Scripts\python -m uvicorn coderag.api.server:app
+```bash
+python -c "from coderag.jobs.worker import run_worker; run_worker()"
 ```
 
-5. Levantar UI (opcional).
+## Run desktop UI
 
-```powershell
-.\.venv\Scripts\python -m coderag.ui.main_window
+```bash
+python run_ui.py
 ```
 
-## Modos recomendados
+## Run tests
 
-- Estable para ingestas largas:
-
-```powershell
-./scripts/start_stable.ps1
+```bash
+.venv\Scripts\python.exe -m pytest -q
 ```
 
-- Desarrollo con autoreload:
+## Cleanup local artifacts
 
-```powershell
-./scripts/start_dev.ps1
+En sesiones con politica que bloquea `Remove-Item`, usa:
+
+```bash
+.venv\Scripts\python.exe scripts/clean_artifacts.py --remove-metadata-db
 ```
-
-## Verificacion
-
-- OpenAPI: http://127.0.0.1:8000/docs
-- Health storage: GET /health/storage
-
-## Siguientes pasos
-
-- Configuracion de providers: ver docs/CONFIGURATION.md.
-- Flujos y arquitectura: ver docs/ARCHITECTURE.md.
-- Referencia de endpoints: ver docs/API_REFERENCE.md.

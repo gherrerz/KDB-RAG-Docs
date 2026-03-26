@@ -1,1 +1,1 @@
-"""Módulos de recuperación y ensamblaje de contexto."""
+"""Retrieval and ranking pipeline modules."""

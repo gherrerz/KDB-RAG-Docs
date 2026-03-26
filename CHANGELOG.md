@@ -1,22 +1,21 @@
 # Changelog
 
-Todos los cambios relevantes de este proyecto se documentan en este archivo.
-
-Este formato sigue Keep a Changelog y Semantic Versioning.
-
-## [Unreleased]
+## [0.1.0] - 2026-03-26
 
 ### Added
-- Estructura documental orientada a customer journeys.
-- Nuevas guias en docs/ para instalacion, configuracion, arquitectura,
-  troubleshooting y contribucion.
-- Ejemplos ejecutables en examples/ para ingesta y consultas.
-- Scripts iniciales de validacion de documentacion en scripts/docs/.
+- Estructura completa del proyecto `coderag/`.
+- API FastAPI con endpoints de salud, ingesta, estado de job y query.
+- Endpoint `POST /sources/ingest/async` con Redis + RQ opcional.
+- UI PySide6 con vistas de ingesta, consulta y evidencias.
+- Pipeline RAG hibrido funcional (vector + BM25 + grafo).
+- Persistencia local en SQLite para documentos, chunks, grafo y jobs.
+- Integracion opcional Neo4j para expansion de paths multi-hop.
+- Cliente LLM con soporte configurable para local, OpenAI, Gemini y Vertex AI.
+- Datos de ejemplo en `sample_data/`.
+- Tests de flujo end-to-end y nuevos tests para fallback/async.
 
 ### Changed
-- README reestructurado como portal corto de navegacion.
-- API reference reorganizada por journeys y operaciones.
+- N/A
 
 ### Fixed
-- Cobertura explicita de DELETE /repos/{repo_id} en documentacion de API.
-- Cobertura de parametro logs_tail en GET /jobs/{job_id}.
+- N/A

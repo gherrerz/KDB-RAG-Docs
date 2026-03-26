@@ -1,1 +1,1 @@
-"""OpenAI integration modules."""
+"""LLM provider adapters and prompts."""

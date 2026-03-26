@@ -1,11 +1,13 @@
-"""Asistentes de configuración de registro para la aplicación."""
+"""Logging configuration helpers."""
+
+from __future__ import annotations
 
 import logging
 
 
-def configure_logging(level: int = logging.INFO) -> None:
-    """Configure el registro global con un formateador conciso."""
+def configure_logging(level: str = "INFO") -> None:
+    """Configure root logging for the application."""
     logging.basicConfig(
-        level=level,
+        level=getattr(logging, level.upper(), logging.INFO),
         format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
     )

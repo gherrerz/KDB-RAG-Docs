@@ -1,254 +1,319 @@
-"""Almacén de metadatos en SQLite para repositorios y trabajos."""
+"""SQLite-backed persistence for docs, chunks, graph, and jobs."""
 
-import datetime
+from __future__ import annotations
+
+import json
 import sqlite3
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-from coderag.core.models import JobInfo, JobStatus
+from coderag.core.models import ChunkRecord, DocumentRecord, JobStatus
 
 
 class MetadataStore:
-    """Almacén simple en SQLite para estado de trabajos y repositorios."""
+    """Persistence layer used by API and UI workflows."""
 
     def __init__(self, db_path: Path) -> None:
-        """Crea el almacenamiento e inicializa el esquema si es necesario."""
         self.db_path = db_path
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_schema()
 
     def _connect(self) -> sqlite3.Connection:
-        """Abre conexión sqlite con fábrica de filas habilitada."""
-        connection = sqlite3.connect(self.db_path)
-        connection.row_factory = sqlite3.Row
-        return connection
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        return conn
 
     def _init_schema(self) -> None:
-        """Inicializa las tablas requeridas para metadatos del repositorio."""
-        with self._connect() as connection:
-            connection.execute(
+        conn = self._connect()
+        try:
+            conn.executescript(
                 """
+                CREATE TABLE IF NOT EXISTS documents (
+                    document_id TEXT PRIMARY KEY,
+                    source_id TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    path_or_url TEXT NOT NULL,
+                    content_type TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    metadata_json TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS chunks (
+                    chunk_id TEXT PRIMARY KEY,
+                    document_id TEXT NOT NULL,
+                    source_id TEXT NOT NULL,
+                    section_name TEXT NOT NULL,
+                    text TEXT NOT NULL,
+                    start_ref INTEGER NOT NULL,
+                    end_ref INTEGER NOT NULL,
+                    entity_name TEXT,
+                    entity_type TEXT,
+                    metadata_json TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS graph_edges (
+                    edge_id TEXT PRIMARY KEY,
+                    source_node TEXT NOT NULL,
+                    relation TEXT NOT NULL,
+                    target_node TEXT NOT NULL,
+                    source_id TEXT NOT NULL
+                );
+
                 CREATE TABLE IF NOT EXISTS jobs (
-                    id TEXT PRIMARY KEY,
+                    job_id TEXT PRIMARY KEY,
                     status TEXT NOT NULL,
-                    progress REAL NOT NULL,
-                    logs TEXT NOT NULL,
-                    repo_id TEXT,
-                    error TEXT,
+                    message TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
-                )
+                );
                 """
             )
-            connection.execute(
-                """
-                CREATE TABLE IF NOT EXISTS repos (
-                    id TEXT PRIMARY KEY,
-                    url TEXT NOT NULL,
-                    branch TEXT NOT NULL,
-                    local_path TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT,
-                    embedding_provider TEXT,
-                    embedding_model TEXT
-                )
-                """
-            )
-            self._ensure_repo_runtime_columns(connection)
+            conn.commit()
+        finally:
+            conn.close()
 
-    @staticmethod
-    def _ensure_repo_runtime_columns(connection: sqlite3.Connection) -> None:
-        """Garantiza columnas runtime en repos para bases existentes."""
-        columns = {
-            str(row["name"])
-            for row in connection.execute("PRAGMA table_info(repos)").fetchall()
-        }
-        required_columns = {
-            "updated_at": "TEXT",
-            "embedding_provider": "TEXT",
-            "embedding_model": "TEXT",
-        }
-        for column_name, column_type in required_columns.items():
-            if column_name in columns:
-                continue
-            connection.execute(
-                f"ALTER TABLE repos ADD COLUMN {column_name} {column_type}"
-            )
-
-    def upsert_job(self, job: JobInfo) -> None:
-        """Inserta o reemplaza la instantánea del trabajo."""
-        with self._connect() as connection:
-            connection.execute(
+    def upsert_document(self, doc: DocumentRecord) -> None:
+        """Insert or update a document row."""
+        conn = self._connect()
+        try:
+            conn.execute(
                 """
-                INSERT OR REPLACE INTO jobs (
-                    id, status, progress, logs, repo_id, error,
-                    created_at, updated_at
+                INSERT INTO documents (
+                    document_id, source_id, title, content, path_or_url,
+                    content_type, updated_at, metadata_json
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(document_id) DO UPDATE SET
+                    source_id = excluded.source_id,
+                    title = excluded.title,
+                    content = excluded.content,
+                    path_or_url = excluded.path_or_url,
+                    content_type = excluded.content_type,
+                    updated_at = excluded.updated_at,
+                    metadata_json = excluded.metadata_json;
                 """,
                 (
-                    job.id,
-                    job.status.value,
-                    job.progress,
-                    "\n".join(job.logs),
-                    job.repo_id,
-                    job.error,
+                    doc.document_id,
+                    doc.source_id,
+                    doc.title,
+                    doc.content,
+                    doc.path_or_url,
+                    doc.content_type,
+                    doc.updated_at.isoformat(),
+                    json.dumps(doc.metadata),
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def replace_chunks(
+        self,
+        source_id: str,
+        chunks: Iterable[ChunkRecord],
+    ) -> None:
+        """Replace all chunks for one source with a new list."""
+        conn = self._connect()
+        try:
+            conn.execute(
+                "DELETE FROM chunks WHERE source_id = ?",
+                (source_id,),
+            )
+            conn.executemany(
+                """
+                INSERT INTO chunks (
+                    chunk_id, document_id, source_id, section_name,
+                    text, start_ref, end_ref, entity_name,
+                    entity_type, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        c.chunk_id,
+                        c.document_id,
+                        c.source_id,
+                        c.section_name,
+                        c.text,
+                        c.start_ref,
+                        c.end_ref,
+                        c.entity_name,
+                        c.entity_type,
+                        json.dumps(c.metadata),
+                    )
+                    for c in chunks
+                ],
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def list_chunks(
+        self,
+        source_id: Optional[str] = None,
+    ) -> List[ChunkRecord]:
+        """Return stored chunks, optionally by source."""
+        conn = self._connect()
+        try:
+            if source_id:
+                rows = conn.execute(
+                    "SELECT * FROM chunks WHERE source_id = ?",
+                    (source_id,),
+                ).fetchall()
+            else:
+                rows = conn.execute("SELECT * FROM chunks").fetchall()
+            return [
+                ChunkRecord(
+                    chunk_id=row["chunk_id"],
+                    document_id=row["document_id"],
+                    source_id=row["source_id"],
+                    section_name=row["section_name"],
+                    text=row["text"],
+                    start_ref=row["start_ref"],
+                    end_ref=row["end_ref"],
+                    entity_name=row["entity_name"],
+                    entity_type=row["entity_type"],
+                    metadata=json.loads(row["metadata_json"]),
+                )
+                for row in rows
+            ]
+        finally:
+            conn.close()
+
+    def replace_graph_edges(
+        self,
+        source_id: str,
+        edges: Iterable[Tuple[str, str, str, str]],
+    ) -> None:
+        """Replace graph edges for source with generated edges."""
+        conn = self._connect()
+        try:
+            conn.execute(
+                "DELETE FROM graph_edges WHERE source_id = ?",
+                (source_id,),
+            )
+            conn.executemany(
+                """
+                INSERT INTO graph_edges (
+                    edge_id, source_node, relation, target_node, source_id
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                list(edges),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def list_graph_edges(
+        self,
+        source_id: Optional[str] = None,
+    ) -> List[Tuple[str, str, str]]:
+        """Return graph edges with optional source filter."""
+        conn = self._connect()
+        try:
+            if source_id:
+                rows = conn.execute(
+                    """
+                    SELECT source_node, relation, target_node
+                    FROM graph_edges
+                    WHERE source_id = ?
+                    """,
+                    (source_id,),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT source_node, relation, target_node "
+                    "FROM graph_edges"
+                ).fetchall()
+            return [(r[0], r[1], r[2]) for r in rows]
+        finally:
+            conn.close()
+
+    def upsert_job(self, job: JobStatus) -> None:
+        """Insert or update job status."""
+        conn = self._connect()
+        try:
+            conn.execute(
+                """
+                INSERT INTO jobs (
+                    job_id, status, message, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(job_id) DO UPDATE SET
+                    status = excluded.status,
+                    message = excluded.message,
+                    updated_at = excluded.updated_at;
+                """,
+                (
+                    job.job_id,
+                    job.status,
+                    job.message,
                     job.created_at.isoformat(),
                     job.updated_at.isoformat(),
                 ),
             )
+            conn.commit()
+        finally:
+            conn.close()
 
-    def recover_interrupted_jobs(self) -> int:
-        """Marca jobs queued/running como failed tras reinicio inesperado."""
-        reason = (
-            "Job interrumpido por reinicio del servicio. "
-            "Reintenta la ingesta."
-        )
-        now = datetime.datetime.now(datetime.UTC).isoformat()
-        with self._connect() as connection:
-            cursor = connection.execute(
-                """
-                UPDATE jobs
-                SET
-                    status = ?,
-                    error = CASE
-                        WHEN error IS NULL OR error = '' THEN ?
-                        ELSE error
-                    END,
-                    logs = CASE
-                        WHEN logs IS NULL OR logs = '' THEN ?
-                        ELSE logs || char(10) || ?
-                    END,
-                    updated_at = ?
-                WHERE status IN (?, ?)
-                """,
-                (
-                    JobStatus.failed.value,
-                    reason,
-                    reason,
-                    reason,
-                    now,
-                    JobStatus.queued.value,
-                    JobStatus.running.value,
-                ),
-            )
-            return int(cursor.rowcount or 0)
-
-    def get_job(self, job_id: str) -> JobInfo | None:
-        """Lee la instantánea del trabajo por identificador."""
-        with self._connect() as connection:
-            row = connection.execute(
-                "SELECT * FROM jobs WHERE id = ?",
+    def get_job(self, job_id: str) -> Optional[JobStatus]:
+        """Fetch one job by id."""
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                "SELECT * FROM jobs WHERE job_id = ?",
                 (job_id,),
             ).fetchone()
-        if row is None:
-            return None
+            if row is None:
+                return None
+            return JobStatus(
+                job_id=row["job_id"],
+                status=row["status"],
+                message=row["message"],
+                created_at=datetime.fromisoformat(row["created_at"]),
+                updated_at=datetime.fromisoformat(row["updated_at"]),
+            )
+        finally:
+            conn.close()
 
-        logs = row["logs"].splitlines() if row["logs"] else []
-        return JobInfo(
-            id=row["id"],
-            status=JobStatus(row["status"]),
-            progress=float(row["progress"]),
-            logs=logs,
-            repo_id=row["repo_id"],
-            error=row["error"],
-            created_at=row["created_at"],
-            updated_at=row["updated_at"],
+    def touch_job(self, job_id: str, status: str, message: str) -> JobStatus:
+        """Convenience helper for quick job updates."""
+        now = datetime.now(UTC)
+        current = self.get_job(job_id)
+        created_at = current.created_at if current else now
+        job = JobStatus(
+            job_id=job_id,
+            status=status,
+            message=message,
+            created_at=created_at,
+            updated_at=now,
         )
+        self.upsert_job(job)
+        return job
 
-    def list_repo_ids(self) -> list[str]:
-        """Lista ids de repositorio conocidos desde tablas de metadatos de trabajos y repos."""
-        with self._connect() as connection:
-            rows = connection.execute(
-                """
-                SELECT DISTINCT id as repo_id FROM repos
-                UNION
-                SELECT DISTINCT repo_id as repo_id FROM jobs
-                WHERE repo_id IS NOT NULL AND repo_id <> ''
-                ORDER BY repo_id ASC
-                """
-            ).fetchall()
-        return [str(row["repo_id"]) for row in rows if row["repo_id"]]
-
-    def upsert_repo_runtime(
+    def get_document_map(
         self,
-        *,
-        repo_id: str,
-        repo_url: str,
-        branch: str,
-        local_path: str,
-        embedding_provider: str | None,
-        embedding_model: str | None,
-    ) -> None:
-        """Inserta o actualiza metadata runtime por repositorio."""
-        now = datetime.datetime.now(datetime.UTC).isoformat()
-        with self._connect() as connection:
-            connection.execute(
-                """
-                INSERT INTO repos (
-                    id, url, branch, local_path, created_at,
-                    updated_at, embedding_provider, embedding_model
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(id) DO UPDATE SET
-                    url=excluded.url,
-                    branch=excluded.branch,
-                    local_path=excluded.local_path,
-                    updated_at=excluded.updated_at,
-                    embedding_provider=excluded.embedding_provider,
-                    embedding_model=excluded.embedding_model
-                """,
-                (
-                    repo_id,
-                    repo_url,
-                    branch,
-                    local_path,
-                    now,
-                    now,
-                    embedding_provider,
-                    embedding_model,
-                ),
-            )
-
-    def get_repo_runtime(self, repo_id: str) -> dict[str, str | None] | None:
-        """Obtiene metadata runtime almacenada para un repositorio."""
-        with self._connect() as connection:
-            row = connection.execute(
-                """
-                SELECT embedding_provider, embedding_model
-                FROM repos
-                WHERE id = ?
-                """,
-                (repo_id,),
-            ).fetchone()
-        if row is None:
-            return None
-        return {
-            "last_embedding_provider": row["embedding_provider"],
-            "last_embedding_model": row["embedding_model"],
-        }
-
-    def delete_repo_runtime(self, repo_id: str) -> int:
-        """Elimina metadata runtime del repositorio y devuelve filas afectadas."""
-        with self._connect() as connection:
-            cursor = connection.execute(
-                "DELETE FROM repos WHERE id = ?",
-                (repo_id,),
-            )
-            return int(cursor.rowcount or 0)
-
-    def delete_repo_jobs(self, repo_id: str) -> int:
-        """Elimina historial de jobs asociados al repositorio y devuelve filas."""
-        with self._connect() as connection:
-            cursor = connection.execute(
-                "DELETE FROM jobs WHERE repo_id = ?",
-                (repo_id,),
-            )
-            return int(cursor.rowcount or 0)
-
-    def delete_repo_data(self, repo_id: str) -> dict[str, int]:
-        """Elimina metadata de repositorio y jobs, retornando conteos por tabla."""
-        jobs_deleted = self.delete_repo_jobs(repo_id)
-        repos_deleted = self.delete_repo_runtime(repo_id)
-        return {
-            "jobs_deleted": jobs_deleted,
-            "repos_deleted": repos_deleted,
-            "total": jobs_deleted + repos_deleted,
-        }
+        source_id: Optional[str] = None,
+    ) -> Dict[str, Dict[str, Any]]:
+        """Return quick metadata map by document_id."""
+        conn = self._connect()
+        try:
+            if source_id:
+                rows = conn.execute(
+                    "SELECT document_id, title, path_or_url FROM documents "
+                    "WHERE source_id = ?",
+                    (source_id,),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT document_id, title, path_or_url FROM documents"
+                ).fetchall()
+            return {
+                row["document_id"]: {
+                    "title": row["title"],
+                    "path_or_url": row["path_or_url"],
+                }
+                for row in rows
+            }
+        finally:
+            conn.close()

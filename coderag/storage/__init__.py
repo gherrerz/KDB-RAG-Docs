@@ -1,1 +1,1 @@
-"""Módulos de almacenamiento para persistencia de metadatos."""
+"""Storage adapters for metadata and indexes."""

@@ -1,1 +1,1 @@
-"""Language parser modules."""
+"""Content parsers for supported file types."""

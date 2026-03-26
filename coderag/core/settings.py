@@ -1,293 +1,147 @@
-"""Configuración de la aplicación cargada desde variables de entorno."""
+"""Application settings loaded from environment variables."""
 
-from functools import lru_cache
+from __future__ import annotations
+
+import os
 from pathlib import Path
-from typing import Literal
+from typing import Optional
 
-from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
-
-
-ProviderName = Literal["openai", "anthropic", "gemini", "vertex_ai"]
-HnswSpaceName = Literal["l2", "cosine"]
+from pydantic import BaseModel, Field
 
 
-class Settings(BaseSettings):
-    """Configuraciones centralizadas para la configuración del tiempo de ejecución."""
+def _env_str(name: str, default: Optional[str] = None) -> Optional[str]:
+    """Read string value from environment with default handling."""
+    value = os.getenv(name)
+    if value is None or value.strip() == "":
+        return default
+    return value.strip()
 
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
-    openai_embedding_model: str = Field(
-        default="text-embedding-3-small",
-        alias="OPENAI_EMBEDDING_MODEL",
+def _env_int(name: str, default: int) -> int:
+    """Read integer value from environment safely."""
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    """Read boolean environment values using common true tokens."""
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+class Settings(BaseModel):
+    """Configuration model for runtime parameters."""
+
+    workspace_dir: Path = Field(
+        default_factory=lambda: Path(_env_str("WORKSPACE_DIR", "workspace"))
+    )
+    data_dir: Path = Field(
+        default_factory=lambda: Path(_env_str("DATA_DIR", "storage"))
+    )
+    max_context_chars: int = Field(
+        default_factory=lambda: _env_int("MAX_CONTEXT_CHARS", 16000)
+    )
+    graph_hops: int = Field(default_factory=lambda: _env_int("GRAPH_HOPS", 2))
+    retrieval_top_n: int = Field(
+        default_factory=lambda: _env_int("RETRIEVAL_TOP_N", 60)
+    )
+    rerank_top_k: int = Field(
+        default_factory=lambda: _env_int("RERANK_TOP_K", 15)
+    )
+    embedding_size: int = Field(
+        default_factory=lambda: _env_int("EMBEDDING_SIZE", 256)
+    )
+
+    llm_provider: str = Field(
+        default_factory=lambda: _env_str("LLM_PROVIDER", "local") or "local"
+    )
+    openai_api_key: Optional[str] = Field(
+        default_factory=lambda: _env_str("OPENAI_API_KEY")
+    )
+    openai_base_url: str = Field(
+        default_factory=lambda: (
+            _env_str("OPENAI_BASE_URL", "https://api.openai.com/v1")
+            or "https://api.openai.com/v1"
+        )
     )
     openai_answer_model: str = Field(
-        default="gpt-4.1-mini",
-        alias="OPENAI_ANSWER_MODEL",
-    )
-    openai_verifier_model: str = Field(
-        default="gpt-4.1-mini",
-        alias="OPENAI_VERIFIER_MODEL",
-    )
-    openai_verify_enabled: bool = Field(
-        default=True,
-        alias="OPENAI_VERIFY_ENABLED",
-    )
-    llm_provider: ProviderName = Field(default="openai", alias="LLM_PROVIDER")
-    llm_answer_model: str = Field(default="", alias="LLM_ANSWER_MODEL")
-    llm_verifier_model: str = Field(default="", alias="LLM_VERIFIER_MODEL")
-    llm_verify_enabled: bool = Field(default=True, alias="LLM_VERIFY_ENABLED")
-    embedding_provider: ProviderName = Field(
-        default="openai",
-        alias="EMBEDDING_PROVIDER",
-    )
-    embedding_model: str = Field(default="", alias="EMBEDDING_MODEL")
-
-    anthropic_api_key: str = Field(default="", alias="ANTHROPIC_API_KEY")
-    gemini_api_key: str = Field(default="", alias="GEMINI_API_KEY")
-    vertex_ai_api_key: str = Field(default="", alias="VERTEX_AI_API_KEY")
-    vertex_ai_project_id: str = Field(default="", alias="VERTEX_AI_PROJECT_ID")
-    vertex_ai_location: str = Field(default="us-central1", alias="VERTEX_AI_LOCATION")
-    chroma_path: Path = Field(default=Path("./storage/chroma"), alias="CHROMA_PATH")
-    chroma_hnsw_space: HnswSpaceName = Field(
-        default="cosine",
-        alias="CHROMA_HNSW_SPACE",
-    )
-    neo4j_uri: str = Field(default="bolt://localhost:7687", alias="NEO4J_URI")
-    neo4j_user: str = Field(default="neo4j", alias="NEO4J_USER")
-    neo4j_password: str = Field(default="password", alias="NEO4J_PASSWORD")
-    redis_url: str = Field(default="redis://localhost:6379/0", alias="REDIS_URL")
-    workspace_path: Path = Field(
-        default=Path("./storage/workspace"),
-        alias="WORKSPACE_PATH",
-    )
-    max_context_tokens: int = Field(default=8000, alias="MAX_CONTEXT_TOKENS")
-    graph_hops: int = Field(default=2, alias="GRAPH_HOPS")
-    query_max_seconds: float = Field(default=55.0, alias="QUERY_MAX_SECONDS")
-    openai_timeout_seconds: float = Field(default=20.0, alias="OPENAI_TIMEOUT_SECONDS")
-    ui_request_timeout_seconds: float = Field(
-        default=90.0,
-        alias="UI_REQUEST_TIMEOUT_SECONDS",
-    )
-    inventory_page_size: int = Field(default=80, alias="INVENTORY_PAGE_SIZE")
-    inventory_max_page_size: int = Field(default=300, alias="INVENTORY_MAX_PAGE_SIZE")
-    inventory_alias_limit: int = Field(default=8, alias="INVENTORY_ALIAS_LIMIT")
-    inventory_entity_limit: int = Field(default=500, alias="INVENTORY_ENTITY_LIMIT")
-    scan_max_file_size_bytes: int | None = Field(
-        default=None,
-        alias="SCAN_MAX_FILE_SIZE_BYTES",
-    )
-    scan_excluded_dirs: str = Field(
-        default="",
-        alias="SCAN_EXCLUDED_DIRS",
-    )
-    scan_excluded_extensions: str = Field(
-        default="",
-        alias="SCAN_EXCLUDED_EXTENSIONS",
-    )
-    scan_excluded_files: str = Field(
-        default="",
-        alias="SCAN_EXCLUDED_FILES",
-    )
-    symbol_extractor_v2_enabled: bool = Field(
-        default=True,
-        alias="SYMBOL_EXTRACTOR_V2_ENABLED",
-    )
-    health_check_strict: bool = Field(default=True, alias="HEALTH_CHECK_STRICT")
-    health_check_timeout_seconds: float = Field(
-        default=5.0,
-        alias="HEALTH_CHECK_TIMEOUT_SECONDS",
-    )
-    health_check_ttl_seconds: float = Field(
-        default=10.0,
-        alias="HEALTH_CHECK_TTL_SECONDS",
-    )
-    health_check_openai: bool = Field(default=True, alias="HEALTH_CHECK_OPENAI")
-    health_check_redis: bool = Field(default=False, alias="HEALTH_CHECK_REDIS")
-    discovery_timeout_seconds: float = Field(
-        default=8.0,
-        alias="MODEL_DISCOVERY_TIMEOUT_SECONDS",
-    )
-    discovery_cache_ttl_seconds: int = Field(
-        default=3600,
-        alias="MODEL_DISCOVERY_CACHE_TTL_SECONDS",
-    )
-    discovery_max_results: int = Field(
-        default=80,
-        alias="MODEL_DISCOVERY_MAX_RESULTS",
-    )
-    discovery_gemini_sdk_enabled: bool = Field(
-        default=True,
-        alias="MODEL_DISCOVERY_GEMINI_SDK_ENABLED",
+        default_factory=lambda: (
+            _env_str("OPENAI_ANSWER_MODEL", "gpt-4.1-mini")
+            or "gpt-4.1-mini"
+        )
     )
 
-    @field_validator("chroma_hnsw_space", mode="before")
-    @classmethod
-    def _validate_chroma_hnsw_space(cls, value: object) -> str:
-        """Valida y normaliza el espacio HNSW soportado por Chroma."""
-        normalized = str(value or "").strip().lower()
-        if normalized not in {"l2", "cosine"}:
-            raise ValueError(
-                "CHROMA_HNSW_SPACE debe ser 'l2' o 'cosine' "
-                f"(valor recibido: {value!r})."
-            )
-        return normalized
+    gemini_api_key: Optional[str] = Field(
+        default_factory=lambda: _env_str("GEMINI_API_KEY")
+    )
+    gemini_answer_model: str = Field(
+        default_factory=lambda: (
+            _env_str("GEMINI_ANSWER_MODEL", "gemini-2.0-flash")
+            or "gemini-2.0-flash"
+        )
+    )
 
-    def resolve_embedding_provider(self, override: str | None = None) -> ProviderName:
-        """Resuelve el proveedor de embeddings con prioridad override > env."""
-        provider = (override or self.embedding_provider or "openai").strip().lower()
-        if provider in {"openai", "anthropic", "gemini", "vertex_ai"}:
-            return provider  # type: ignore[return-value]
-        return "openai"
+    vertex_ai_api_key: Optional[str] = Field(
+        default_factory=lambda: _env_str("VERTEX_AI_API_KEY")
+    )
+    vertex_project_id: Optional[str] = Field(
+        default_factory=lambda: _env_str("VERTEX_PROJECT_ID")
+    )
+    vertex_location: str = Field(
+        default_factory=lambda: (
+            _env_str("VERTEX_LOCATION", "us-central1")
+            or "us-central1"
+        )
+    )
+    vertex_answer_model: str = Field(
+        default_factory=lambda: (
+            _env_str("VERTEX_ANSWER_MODEL", "gemini-2.0-flash")
+            or "gemini-2.0-flash"
+        )
+    )
 
-    def resolve_chroma_hnsw_space(
-        self,
-        override: str | None = None,
-    ) -> HnswSpaceName:
-        """Resuelve el espacio HNSW de Chroma con prioridad override > env."""
-        candidate = (override or self.chroma_hnsw_space or "cosine").strip().lower()
-        if candidate in {"l2", "cosine"}:
-            return candidate  # type: ignore[return-value]
-        return "cosine"
+    use_neo4j: bool = Field(
+        default_factory=lambda: _env_bool("USE_NEO4J", False)
+    )
+    neo4j_uri: Optional[str] = Field(
+        default_factory=lambda: _env_str("NEO4J_URI")
+    )
+    neo4j_user: Optional[str] = Field(
+        default_factory=lambda: _env_str("NEO4J_USER")
+    )
+    neo4j_password: Optional[str] = Field(
+        default_factory=lambda: _env_str("NEO4J_PASSWORD")
+    )
 
-    def resolve_embedding_model(self, provider: ProviderName, override: str | None = None) -> str:
-        """Resuelve el modelo de embeddings manteniendo fallback legado OpenAI."""
-        if override and override.strip():
-            return override.strip()
-        if self.embedding_model.strip():
-            return self.embedding_model.strip()
-        if provider == "gemini":
-            return "text-embedding-004"
-        if provider == "vertex_ai":
-            return "text-embedding-005"
-        return self.openai_embedding_model
+    use_rq: bool = Field(default_factory=lambda: _env_bool("USE_RQ", False))
+    redis_url: str = Field(
+        default_factory=lambda: (
+            _env_str("REDIS_URL", "redis://localhost:6379/0")
+            or "redis://localhost:6379/0"
+        )
+    )
 
-    def resolve_llm_provider(self, override: str | None = None) -> ProviderName:
-        """Resuelve el proveedor LLM con prioridad override > env."""
-        provider = (override or self.llm_provider or "openai").strip().lower()
-        if provider in {"openai", "anthropic", "gemini", "vertex_ai"}:
-            return provider  # type: ignore[return-value]
-        return "openai"
+    def resolve_llm_provider(self, override: Optional[str] = None) -> str:
+        """Resolve effective provider considering request override."""
+        return (override or self.llm_provider).strip().lower()
 
-    def resolve_answer_model(self, provider: ProviderName, override: str | None = None) -> str:
-        """Resuelve el modelo answer con fallback a configuración actual."""
-        if override and override.strip():
-            return override.strip()
-        if self.llm_answer_model.strip():
-            return self.llm_answer_model.strip()
-        if provider == "anthropic":
-            return "claude-3-5-sonnet-20241022"
-        if provider == "gemini":
-            return "gemini-2.0-flash"
-        if provider == "vertex_ai":
-            return "gemini-2.0-flash"
-        return self.openai_answer_model
-
-    def resolve_verifier_model(self, provider: ProviderName, override: str | None = None) -> str:
-        """Resuelve el modelo verifier con fallback a configuración actual."""
-        if override and override.strip():
-            return override.strip()
-        if self.llm_verifier_model.strip():
-            return self.llm_verifier_model.strip()
-        if provider == "anthropic":
-            return "claude-3-5-sonnet-20241022"
-        if provider == "gemini":
-            return "gemini-2.0-flash"
-        if provider == "vertex_ai":
-            return "gemini-2.0-flash"
-        return self.openai_verifier_model
-
-    def resolve_api_key(self, provider: ProviderName) -> str:
-        """Obtiene la API key efectiva por proveedor con fallback legacy."""
-        if provider == "anthropic":
-            return self.anthropic_api_key
-        if provider == "gemini":
-            return self.gemini_api_key
-        if provider == "vertex_ai":
-            return self.vertex_ai_api_key
-        return self.openai_api_key
-
-    def is_vertex_ai_configured(self) -> bool:
-        """Valida si Vertex AI tiene credenciales y proyecto mínimos."""
-        return bool(self.vertex_ai_api_key and self.vertex_ai_project_id)
-
-    def embedding_provider_capabilities(self, provider: ProviderName) -> dict[str, str | bool]:
-        """Devuelve capacidades/configuración del provider de embeddings."""
-        if provider == "openai":
-            configured = bool(self.openai_api_key)
-            reason = "ok" if configured else "missing_openai_api_key"
-            return {"provider": provider, "supported": True, "configured": configured, "reason": reason}
-        if provider == "gemini":
-            configured = bool(self.gemini_api_key)
-            reason = "ok" if configured else "missing_gemini_api_key"
-            return {"provider": provider, "supported": True, "configured": configured, "reason": reason}
-        if provider == "vertex_ai":
-            configured = self.is_vertex_ai_configured()
-            reason = "ok" if configured else "missing_vertex_ai_api_key_or_project"
-            return {"provider": provider, "supported": True, "configured": configured, "reason": reason}
-        return {
-            "provider": provider,
-            "supported": False,
-            "configured": False,
-            "reason": "provider_without_embedding_backend",
-        }
-
-    def llm_provider_capabilities(self, provider: ProviderName) -> dict[str, str | bool]:
-        """Devuelve capacidades/configuración del provider LLM."""
-        if provider == "openai":
-            configured = bool(self.openai_api_key)
-            reason = "ok" if configured else "missing_openai_api_key"
-            return {
-                "provider": provider,
-                "supported": True,
-                "configured": configured,
-                "answer": True,
-                "verify": True,
-                "reason": reason,
-            }
-        if provider == "anthropic":
-            configured = bool(self.anthropic_api_key)
-            reason = "ok" if configured else "missing_anthropic_api_key"
-            return {
-                "provider": provider,
-                "supported": True,
-                "configured": configured,
-                "answer": True,
-                "verify": True,
-                "reason": reason,
-            }
-        if provider == "gemini":
-            configured = bool(self.gemini_api_key)
-            reason = "ok" if configured else "missing_gemini_api_key"
-            return {
-                "provider": provider,
-                "supported": True,
-                "configured": configured,
-                "answer": True,
-                "verify": True,
-                "reason": reason,
-            }
-        configured = self.is_vertex_ai_configured()
-        reason = "ok" if configured else "missing_vertex_ai_api_key_or_project"
-        return {
-            "provider": provider,
-            "supported": True,
-            "configured": configured,
-            "answer": True,
-            "verify": True,
-            "reason": reason,
-        }
-
-    def is_verify_enabled(self) -> bool:
-        """Devuelve si la verificación LLM está habilitada."""
-        return bool(self.llm_verify_enabled and self.openai_verify_enabled)
+    def is_provider_configured(self, provider: str) -> bool:
+        """Check whether provider credentials are available."""
+        provider_name = provider.strip().lower()
+        if provider_name == "openai":
+            return bool(self.openai_api_key)
+        if provider_name == "gemini":
+            return bool(self.gemini_api_key)
+        if provider_name == "vertex_ai":
+            return bool(self.vertex_ai_api_key and self.vertex_project_id)
+        return True
 
 
-@lru_cache(maxsize=1)
-def get_settings() -> Settings:
-    """Devuelve la instancia de configuración singleton."""
-    settings = Settings()
-    settings.chroma_path.mkdir(parents=True, exist_ok=True)
-    settings.workspace_path.mkdir(parents=True, exist_ok=True)
-    return settings
+SETTINGS = Settings()
