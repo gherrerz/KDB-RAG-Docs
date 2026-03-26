@@ -46,6 +46,12 @@ python run_ui.py
 .venv\Scripts\python.exe -m pytest -q
 ```
 
+## Supported ingestion file types
+
+- Supported: `.md`, `.txt`, `.html`, `.htm`, `.pdf`, `.docx`, `.doc`,
+  `.pptx`, `.xlsx`
+- Not supported in this version: `.ppt`, `.xls`
+
 ## Cleanup local artifacts
 
 En sesiones con politica que bloquea `Remove-Item`, usa:

@@ -52,10 +52,15 @@ class RagApplicationService:
 
         documents = load_documents(request.source)
         if not documents:
+            local_path = request.source.local_path or "<not-set>"
             self.store.touch_job(
                 job_id,
                 "failed",
-                "No documents found for configured source",
+                (
+                    "No supported documents found in source path "
+                    f"'{local_path}'. Supported: .md, .txt, .html, .htm, "
+                    ".pdf, .docx, .doc, .pptx, .xlsx"
+                ),
             )
             return {"job_id": job_id, "status": "failed"}
 

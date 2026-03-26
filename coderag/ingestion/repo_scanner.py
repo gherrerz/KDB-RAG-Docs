@@ -5,7 +5,17 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Iterable, List
 
-ALLOWED_EXTENSIONS = {".md", ".txt", ".html", ".htm"}
+ALLOWED_EXTENSIONS = {
+    ".md",
+    ".txt",
+    ".html",
+    ".htm",
+    ".pdf",
+    ".docx",
+    ".doc",
+    ".pptx",
+    ".xlsx",
+}
 
 
 def scan_folder(path: Path) -> List[Path]:

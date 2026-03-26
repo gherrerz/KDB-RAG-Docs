@@ -5,7 +5,8 @@ Aplicacion Python para ingesta documental y consulta con RAG hibrido
 
 ## Features
 
-- Ingesta de documentos locales (`.md`, `.txt`, `.html`)
+- Ingesta de documentos locales (`.md`, `.txt`, `.html`, `.pdf`, `.docx`,
+  `.doc`, `.pptx`, `.xlsx`)
 - Pipeline de chunking semantico por secciones
 - Recuperacion hibrida: vectorial + BM25
 - Expansion por grafo multi-hop
