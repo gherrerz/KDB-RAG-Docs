@@ -14,6 +14,15 @@ La configuracion principal se define en `src/coderag/core/settings.py`.
 - `ingest_embed_workers`: concurrencia para embeddings durante ingesta
 - `chroma_upsert_batch_size`: lote de escritura para upserts en Chroma
 
+### Resolucion de rutas de almacenamiento
+
+- `workspace_dir`, `data_dir` y `CHROMA_PERSIST_DIR` aceptan rutas relativas
+  o absolutas.
+- Si son relativas, el runtime las normaliza contra el root del repositorio
+  para evitar drift al iniciar API/UI desde directorios distintos.
+- Recomendacion operativa: en ambientes multi-servicio o scripts externos,
+  usar rutas absolutas explicitas en `.env`.
+
 ## Vector store actual
 
 - `USE_CHROMA`: debe estar en `true` para habilitar runtime vectorial.
@@ -152,7 +161,8 @@ Ejemplo `confluence`:
   "source_id": null,
   "hops": 2,
   "llm_provider": "local",
-  "force_fallback": false
+  "force_fallback": false,
+  "include_llm_answer": true
 }
 ```
 

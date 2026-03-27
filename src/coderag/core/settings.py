@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 from typing import Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from dotenv import load_dotenv
 
 
@@ -38,6 +38,9 @@ def _env_bool(name: str, default: bool) -> bool:
     if raw is None:
         return default
     return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 class Settings(BaseModel):
@@ -193,6 +196,23 @@ class Settings(BaseModel):
         if value <= 0:
             raise ValueError("RQ_INGEST_JOB_TIMEOUT_SEC must be > 0")
         return value
+
+    @staticmethod
+    def _resolve_repo_path(path_value: Path) -> Path:
+        """Resolve relative paths against repository root."""
+        if path_value.is_absolute():
+            return path_value
+        return (REPO_ROOT / path_value).resolve()
+
+    @model_validator(mode="after")
+    def normalize_paths(self) -> "Settings":
+        """Normalize workspace and storage paths to absolute locations."""
+        self.workspace_dir = self._resolve_repo_path(self.workspace_dir)
+        self.data_dir = self._resolve_repo_path(self.data_dir)
+        self.chroma_persist_dir = self._resolve_repo_path(
+            self.chroma_persist_dir
+        )
+        return self
 
     @staticmethod
     def _normalize_provider_name(provider: str) -> str:

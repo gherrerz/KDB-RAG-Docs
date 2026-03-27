@@ -70,6 +70,11 @@
 - Modo LLM estricto en consulta (`include_llm_answer=true` y
 	`force_fallback=false`): si falla el provider remoto, se evita fallback
 	silencioso y se retorna error explicito.
+- Robustez de persistencia post-restart: rutas relativas de `workspace_dir`,
+	`data_dir` y `CHROMA_PERSIST_DIR` ahora se normalizan a absolutas contra el
+	root del repositorio para evitar drift entre procesos API/UI.
+- `run_api.py` y `run_ui.py` fijan CWD al root del repositorio al iniciar,
+	reduciendo inconsistencias cuando se ejecutan desde otras carpetas.
 
 ## [0.1.1] - 2026-03-27
 

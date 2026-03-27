@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from coderag.core.settings import Settings
@@ -60,3 +62,36 @@ def test_neo4j_must_be_enabled_in_runtime() -> None:
     settings = Settings(use_neo4j=False)
     with pytest.raises(RuntimeError):
         settings.require_neo4j_enabled()
+
+
+def test_relative_paths_are_resolved_to_repo_root() -> None:
+    """Resolve default relative paths to absolute repository-root paths."""
+    settings = Settings(
+        workspace_dir=Path("workspace"),
+        data_dir=Path("storage"),
+        chroma_persist_dir=Path("storage/chromadb"),
+    )
+    repo_root = Path(__file__).resolve().parents[1]
+
+    assert settings.workspace_dir == (repo_root / "workspace").resolve()
+    assert settings.data_dir == (repo_root / "storage").resolve()
+    assert settings.chroma_persist_dir == (
+        repo_root / "storage/chromadb"
+    ).resolve()
+
+
+def test_absolute_paths_remain_unchanged(tmp_path: Path) -> None:
+    """Keep absolute path values untouched during normalization."""
+    workspace_dir = (tmp_path / "workspace").resolve()
+    data_dir = (tmp_path / "data").resolve()
+    chroma_dir = (tmp_path / "chroma").resolve()
+
+    settings = Settings(
+        workspace_dir=workspace_dir,
+        data_dir=data_dir,
+        chroma_persist_dir=chroma_dir,
+    )
+
+    assert settings.workspace_dir == workspace_dir
+    assert settings.data_dir == data_dir
+    assert settings.chroma_persist_dir == chroma_dir
