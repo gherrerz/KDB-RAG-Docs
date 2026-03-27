@@ -21,15 +21,15 @@ adicionales de produccion:
 
 ### Runtime principal
 
-- UI de escritorio en PySide6 (`coderag/ui/*`) para operar ingesta y consulta.
-- API FastAPI (`coderag/api/server.py`) como fachada de operaciones.
-- Orquestador de negocio (`coderag/core/service.py`) con flujo end-to-end.
-- Persistencia SQLite (`coderag/storage/metadata_store.py`) para documentos,
+- UI de escritorio en PySide6 (`src/coderag/ui/*`) para operar ingesta y consulta.
+- API FastAPI (`src/coderag/api/server.py`) como fachada de operaciones.
+- Orquestador de negocio (`src/coderag/core/service.py`) con flujo end-to-end.
+- Persistencia SQLite (`src/coderag/storage/metadata_store.py`) para documentos,
   chunks, aristas, jobs y eventos de timeline por job (`job_events`).
-- Persistencia vectorial en Chroma (`coderag/ingestion/index_chroma.py`) para
+- Persistencia vectorial en Chroma (`src/coderag/ingestion/index_chroma.py`) para
   embeddings de chunks y busqueda de similitud.
-- Retrieval hibrido (`coderag/retrieval/*`) con ranking y expansion por grafo.
-- Integracion de LLM (`coderag/llm/providerlmm_client.py`) para respuesta.
+- Retrieval hibrido (`src/coderag/retrieval/*`) con ranking y expansion por grafo.
+- Integracion de LLM (`src/coderag/llm/providerlmm_client.py`) para respuesta.
 
 ### Principios de diseno actuales
 

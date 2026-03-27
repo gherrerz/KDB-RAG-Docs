@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from typing import Callable
 
+from PySide6.QtCore import QObject, QThread, Signal, Slot
 from PySide6.QtWidgets import (
     QApplication,
     QFormLayout,
@@ -20,6 +21,37 @@ from PySide6.QtWidgets import (
 )
 
 
+class _IngestionWorker(QObject):
+    """Background worker that runs ingestion outside the UI thread."""
+
+    progress = Signal(dict)
+    finished = Signal(dict)
+    failed = Signal(str)
+
+    def __init__(
+        self,
+        on_ingest: Callable[[dict, Callable[[dict], None] | None], dict],
+        payload: dict,
+    ) -> None:
+        super().__init__()
+        self._on_ingest = on_ingest
+        self._payload = payload
+
+    @Slot()
+    def run(self) -> None:
+        """Execute ingestion and emit progress/results safely."""
+        try:
+            result = self._on_ingest(self._payload, self._emit_progress)
+        except Exception as exc:  # pragma: no cover - defensive UI guard
+            self.failed.emit(str(exc))
+            return
+        self.finished.emit(result)
+
+    def _emit_progress(self, update: dict) -> None:
+        """Forward live updates through Qt signals."""
+        self.progress.emit(update)
+
+
 class IngestionView(QWidget):
     """Widget for invoking source ingestion via callback."""
 
@@ -31,6 +63,8 @@ class IngestionView(QWidget):
         super().__init__()
         self._on_ingest = on_ingest
         self._on_reset_all = on_reset_all
+        self._ingest_thread: QThread | None = None
+        self._ingest_worker: _IngestionWorker | None = None
 
         layout = QVBoxLayout(self)
         form_group = QGroupBox("Source Configuration")
@@ -65,6 +99,10 @@ class IngestionView(QWidget):
         layout.addWidget(self.output)
 
     def _run_ingestion(self) -> None:
+        if self._ingest_thread is not None and self._ingest_thread.isRunning():
+            self.output.setPlainText("Ingestion already running...\n")
+            return
+
         payload = {
             "source": {
                 "source_type": self.source_type.text().strip() or "folder",
@@ -75,16 +113,58 @@ class IngestionView(QWidget):
             }
         }
         self.output.setPlainText("Ingestion running...\n")
-        QApplication.processEvents()
-        result = self._on_ingest(payload, self._handle_live_update)
-        rendered = self._format_ingestion_result(result)
-        self.output.setPlainText(rendered)
+        self.ingest_button.setEnabled(False)
+        self.reset_all_button.setEnabled(False)
+
+        thread = QThread(self)
+        worker = _IngestionWorker(self._on_ingest, payload)
+        worker.moveToThread(thread)
+
+        thread.started.connect(worker.run)
+        worker.progress.connect(self._handle_live_update)
+        worker.finished.connect(self._handle_ingestion_finished)
+        worker.failed.connect(self._handle_ingestion_failed)
+
+        worker.finished.connect(thread.quit)
+        worker.failed.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        worker.failed.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(self._on_ingestion_thread_finished)
+
+        self._ingest_thread = thread
+        self._ingest_worker = worker
+        thread.start()
 
     def _handle_live_update(self, result: dict) -> None:
         """Render incremental updates while ingestion is running."""
         rendered = self._format_ingestion_result(result)
         self.output.setPlainText(rendered)
         QApplication.processEvents()
+
+    @Slot(dict)
+    def _handle_ingestion_finished(self, result: dict) -> None:
+        """Render final ingestion result and restore UI state."""
+        rendered = self._format_ingestion_result(result)
+        self.output.setPlainText(rendered)
+        self.ingest_button.setEnabled(True)
+        self.reset_all_button.setEnabled(True)
+
+    @Slot(str)
+    def _handle_ingestion_failed(self, error: str) -> None:
+        """Render unexpected worker errors and restore UI state."""
+        self.output.setPlainText(
+            "Status: failed\n"
+            f"Message: Unexpected ingestion error in UI worker: {error}"
+        )
+        self.ingest_button.setEnabled(True)
+        self.reset_all_button.setEnabled(True)
+
+    @Slot()
+    def _on_ingestion_thread_finished(self) -> None:
+        """Clear thread/worker refs after background ingestion exits."""
+        self._ingest_thread = None
+        self._ingest_worker = None
 
     def _run_reset_all(self) -> None:
         """Run destructive reset after explicit user confirmation."""

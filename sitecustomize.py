@@ -1,15 +1,13 @@
-"""Run FastAPI backend with Uvicorn."""
+"""Automatically add src/ to sys.path for local execution."""
 
 from __future__ import annotations
 
 import sys
 from pathlib import Path
 
-import uvicorn
 
-
-def _bootstrap_src_path() -> None:
-    """Ensure src layout package is importable for local execution."""
+def _ensure_src_on_path() -> None:
+    """Prepend src path so imports resolve with src layout."""
     repo_root = Path(__file__).resolve().parent
     src_dir = repo_root / "src"
     if not src_dir.exists():
@@ -19,8 +17,4 @@ def _bootstrap_src_path() -> None:
         sys.path.insert(0, src_path)
 
 
-_bootstrap_src_path()
-
-
-if __name__ == "__main__":
-    uvicorn.run("coderag.api.server:app", host="127.0.0.1", port=8000)
+_ensure_src_on_path()

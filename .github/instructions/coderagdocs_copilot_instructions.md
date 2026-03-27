@@ -54,7 +54,7 @@ OpenAI o Gemini Responses API
 
 # 3. Arquitectura de módulos Python
 
-    coderag/
+    src/coderag/
     │
     ├── ui/
     │   ├── main_window.py

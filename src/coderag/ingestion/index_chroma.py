@@ -207,7 +207,12 @@ class ChromaVectorIndex:
 
     def clear_all(self) -> None:
         """Delete and recreate active collection to reset dimensionality."""
-        self._client.delete_collection(name=SETTINGS.chroma_collection)
+        try:
+            self._client.delete_collection(name=SETTINGS.chroma_collection)
+        except ValueError:
+            # Chroma raises when the collection is already missing; reset must
+            # stay idempotent for API/UI flows.
+            pass
         self._collection = self._get_or_create_collection()
 
     def close(self) -> None:

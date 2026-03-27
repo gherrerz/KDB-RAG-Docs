@@ -37,15 +37,25 @@ class MainWindow(QMainWindow):
         async_response = self._post_json(
             "/sources/ingest/async", payload, timeout=15
         )
-        if on_update is not None:
-            on_update(async_response)
-
         if self._is_async_disabled(async_response):
             # Fallback keeps compatibility when USE_RQ is disabled.
+            if on_update is not None:
+                on_update(
+                    {
+                        "status": "running",
+                        "message": (
+                            "Async ingestion disabled (USE_RQ=false). "
+                            "Running synchronous ingestion."
+                        ),
+                    }
+                )
             sync_response = self._post_json("/sources/ingest", payload, timeout=3600)
             if on_update is not None:
                 on_update(sync_response)
             return sync_response
+
+        if on_update is not None:
+            on_update(async_response)
 
         job_id = async_response.get("job_id")
         if not isinstance(job_id, str) or not job_id:

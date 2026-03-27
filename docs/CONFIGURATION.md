@@ -1,6 +1,6 @@
 # Configuration
 
-La configuracion principal se define en `coderag/core/settings.py`.
+La configuracion principal se define en `src/coderag/core/settings.py`.
 
 ## Parameters
 
