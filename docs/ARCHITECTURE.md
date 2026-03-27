@@ -15,7 +15,6 @@ capa vectorial y Neo4j obligatorio para capa de grafo. Componentes opcionales
 adicionales de produccion:
 
 - Redis + RQ para ingesta asincrona.
-- Neo4j para expansion de paths multi-hop.
 - Proveedores de embedding/answer externos (OpenAI, Gemini, Vertex AI).
 
 ## Descripcion general
@@ -26,7 +25,7 @@ adicionales de produccion:
 - API FastAPI (`coderag/api/server.py`) como fachada de operaciones.
 - Orquestador de negocio (`coderag/core/service.py`) con flujo end-to-end.
 - Persistencia SQLite (`coderag/storage/metadata_store.py`) para documentos,
-  chunks, aristas y jobs.
+  chunks, aristas, jobs y eventos de timeline por job (`job_events`).
 - Persistencia vectorial en Chroma (`coderag/ingestion/index_chroma.py`) para
   embeddings de chunks y busqueda de similitud.
 - Retrieval hibrido (`coderag/retrieval/*`) con ranking y expansion por grafo.
@@ -35,10 +34,15 @@ adicionales de produccion:
 ### Principios de diseno actuales
 
 - Chroma-first: la capa vectorial requiere Chroma (`USE_CHROMA=true`).
+- Neo4j obligatorio: la capa de grafo requiere `USE_NEO4J=true` y credenciales.
 - Evolutivo: interfaces internas permiten reemplazar componentes por equivalentes
   gestionados sin romper contratos API/UI.
 - Explicable: cada respuesta expone evidencias (`citations`) y rutas de grafo
   (`graph_paths`) con diagnosticos de pipeline.
+- Observable: la ingesta persiste eventos con progreso y tiempos acumulados,
+  reutilizados por UI/API para seguimiento en vivo.
+- Performante por lotes: documentos, Chroma y Neo4j se procesan con estrategias
+  de batching para reducir latencia total en ingestas medianas/grandes.
 
 ## Diagrama de infraestructura por capas
 
@@ -167,6 +171,7 @@ sequenceDiagram
     User->>API: POST /sources/ingest o /sources/ingest/async
     API->>SVC: ingest(request)
     SVC->>DB: touch_job(running)
+    SVC->>DB: append_job_event(...)
 
     SVC->>DL: load_documents(source)
     DL->>PRS: parse_by_extension(...)
@@ -179,15 +184,18 @@ sequenceDiagram
     else Con documentos
         loop por documento
             SVC->>SVC: build_chunks(doc)
-            SVC->>DB: upsert_document(doc)
         end
+        SVC->>DB: upsert_documents(docs) en lote
         SVC->>DB: replace_chunks(source_id, chunks)
-        SVC->>EMB: embed(chunk.text) por chunk
-        EMB-->>SVC: vectors
         SVC->>SVC: build_graph_edges(chunks)
         SVC->>DB: replace_graph_edges(source_id, edges)
         SVC->>GS: replace_edges(source_id, edges)
-        SVC->>IDX: upsert/rebuild en Chroma
+        Note over SVC,GS: UNWIND por bloques + transaccion por lote + retry acotado
+        SVC->>IDX: rebuild indexes
+        IDX->>EMB: embeddings en paralelo por lote
+        EMB-->>IDX: vectors
+        IDX->>IDX: upsert por lotes en Chroma
+        SVC->>DB: append_job_event(...)
         SVC->>DB: touch_job(completed)
         SVC-->>API: status=completed + metrics + steps
     end
@@ -242,3 +250,22 @@ sequenceDiagram
 - Modo expandido: activar `USE_RQ=true` para procesamiento asincrono.
 - Docker Compose incluye servicios `redis` y `neo4j`; la capa vectorial usa
   Chroma embebido en disco dentro de la API (`CHROMA_PERSIST_DIR`).
+
+## Optimizaciones recientes de ingesta
+
+- Persistencia de documentos en SQLite en lote (`upsert_documents`) para
+  reducir commits por documento.
+- Persistencia de relaciones en Neo4j con UNWIND por bloques configurables,
+  transaccion por lote y reintentos acotados para fallas transitorias.
+- Generacion de embeddings de chunks con concurrencia configurable y escritura
+  a Chroma por lotes para mejorar throughput.
+- Timeline de ingesta persistido en `job_events` con progreso (`progress_pct`)
+  y `elapsed_ms` acumulado para visualizacion en UI y polling de jobs.
+
+Parametros de tuning relevantes:
+
+- `INGEST_EMBED_WORKERS`
+- `CHROMA_UPSERT_BATCH_SIZE`
+- `NEO4J_INGEST_BATCH_SIZE`
+- `NEO4J_INGEST_MAX_RETRIES`
+- `NEO4J_INGEST_RETRY_DELAY_MS`
