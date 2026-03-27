@@ -7,6 +7,9 @@
 	vectorial de chunks.
 - Configuracion dedicada de Chroma por entorno: `USE_CHROMA`,
 	`CHROMA_PERSIST_DIR`, `CHROMA_COLLECTION`.
+- Script de operacion `scripts/cold_reset.ps1` para reset cold end-to-end:
+	detiene API/UI, limpia Chroma completo, elimina metadata local, limpia
+	aristas Neo4j y reinicia servicios.
 - Timeline de ingesta persistido por job (`job_events`) con pasos,
 	progreso y tiempos acumulados.
 - UI de ingesta con visualizacion en vivo del progreso (`progress_pct`) y

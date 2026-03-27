@@ -181,6 +181,18 @@ Opcional para incluir caches dentro de `.venv`:
 .venv\Scripts\python.exe scripts/clean_artifacts.py --include-venv --remove-metadata-db
 ```
 
+Reset cold completo (detiene servicios, borra Chroma completo + metadata,
+limpia aristas Neo4j y vuelve a levantar API/UI):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\cold_reset.ps1 -Force
+```
+
+Opciones utiles:
+- `-SkipStart`: no vuelve a levantar servicios.
+- `-SkipUI`: levanta solo API.
+- `-ApiPort 8000`: puerto usado para validar `/health`.
+
 ## Configuracion
 
 Ver:
