@@ -25,6 +25,25 @@ class IngestionRequest(BaseModel):
     source: SourceConfig
 
 
+class ResetAllRequest(BaseModel):
+    """API contract for destructive full reset operation."""
+
+    confirm: bool = False
+
+
+class ResetAllResponse(BaseModel):
+    """Response payload for full reset operation."""
+
+    status: str
+    message: str
+    deleted_documents: int
+    deleted_chunks: int
+    deleted_graph_edges: int
+    deleted_jobs: int
+    neo4j_enabled: bool
+    neo4j_edges_deleted: int
+
+
 class DocumentRecord(BaseModel):
     """Canonical document object inside local storage."""
 

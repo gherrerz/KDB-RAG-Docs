@@ -21,6 +21,13 @@ class GraphStore:
     def __init__(self) -> None:
         self._driver = None
 
+    def close(self) -> None:
+        """Close Neo4j driver when it was initialized."""
+        if self._driver is None:
+            return
+        self._driver.close()
+        self._driver = None
+
     def is_enabled(self) -> bool:
         """Return whether Neo4j integration is configured."""
         return bool(SETTINGS.use_neo4j and SETTINGS.neo4j_uri)
@@ -74,6 +81,17 @@ class GraphStore:
                     tgt=tgt,
                     source_id=src_id,
                 )
+
+    def clear_all_edges(self) -> int:
+        """Delete all RELATES_TO edges from Neo4j and return count."""
+        driver = self._get_driver()
+        if driver is None:
+            return 0
+
+        with driver.session() as session:
+            result = session.run("MATCH ()-[r:RELATES_TO]-() DELETE r")
+            summary = result.consume()
+            return int(summary.counters.relationships_deleted)
 
     def expand_paths(
         self,

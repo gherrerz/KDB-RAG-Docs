@@ -38,3 +38,25 @@ def test_local_fallback_with_chunks() -> None:
         force_fallback=True,
     )
     assert "Basado en la evidencia recuperada" in answer
+
+
+def test_vertex_alias_uses_local_fallback() -> None:
+    """Keep fallback behavior when provider is configured as vertex alias."""
+    client = ProviderLlmClient()
+    chunk = ChunkRecord(
+        chunk_id="c2",
+        document_id="d2",
+        source_id="s2",
+        section_name="General",
+        text="Policy FIN-001 requires two-step approval.",
+        start_ref=0,
+        end_ref=45,
+        metadata={},
+    )
+    answer = client.answer(
+        question="What does FIN-001 require?",
+        chunks=[chunk],
+        provider="vertex",
+        force_fallback=True,
+    )
+    assert "Basado en la evidencia recuperada" in answer

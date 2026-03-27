@@ -13,6 +13,7 @@ from coderag.core.models import (
     IngestionRequest,
     QueryRequest,
     QueryResponse,
+    ResetAllResponse,
 )
 from coderag.core.graph_store import GraphStore
 from coderag.core.runtime import RUNTIME
@@ -35,7 +36,11 @@ class RagApplicationService:
     def __init__(self) -> None:
         self.store = RUNTIME.store
         self.bm25_index = BM25Index()
-        self.vector_index = LocalVectorIndex(size=SETTINGS.embedding_size)
+        self.vector_index = LocalVectorIndex(
+            size=SETTINGS.embedding_size,
+            provider=SETTINGS.llm_provider,
+            model=SETTINGS.llm_embedding,
+        )
         self.llm = ProviderLlmClient()
         self.graph_store = GraphStore()
         self.rebuild_indexes()
@@ -45,6 +50,35 @@ class RagApplicationService:
         chunks = self.store.list_chunks(source_id=source_id)
         self.bm25_index.rebuild(chunks)
         self.vector_index.rebuild(chunks)
+
+    def close(self) -> None:
+        """Release external resources held by the service."""
+        self.graph_store.close()
+
+    def reset_all(self) -> ResetAllResponse:
+        """Reset all persisted and in-memory indexing artifacts."""
+        deleted = self.store.clear_all_data()
+
+        neo4j_enabled = self.graph_store.is_enabled()
+        neo4j_edges_deleted = 0
+        if neo4j_enabled:
+            neo4j_edges_deleted = self.graph_store.clear_all_edges()
+
+        # Rebuild both retrieval indexes from now-empty metadata tables.
+        self.rebuild_indexes()
+
+        return ResetAllResponse(
+            status="completed",
+            message=(
+                "All repositories were cleared and indexes were reset."
+            ),
+            deleted_documents=deleted["deleted_documents"],
+            deleted_chunks=deleted["deleted_chunks"],
+            deleted_graph_edges=deleted["deleted_graph_edges"],
+            deleted_jobs=deleted["deleted_jobs"],
+            neo4j_enabled=neo4j_enabled,
+            neo4j_edges_deleted=neo4j_edges_deleted,
+        )
 
     def ingest(self, request: IngestionRequest) -> Dict[str, object]:
         """Run full ingestion pipeline and persist generated artifacts."""
@@ -265,6 +299,8 @@ class RagApplicationService:
             "reranked": len(reranked),
             "graph_paths": len(graph_paths),
             "llm_provider": provider,
+            "embedding_provider": self.vector_index.embedding_provider,
+            "embedding_model": self.vector_index.embedding_model,
             "llm_fallback_forced": request.force_fallback,
             "timestamp": datetime.now(UTC).isoformat(),
         }

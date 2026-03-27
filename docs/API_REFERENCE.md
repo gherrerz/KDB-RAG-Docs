@@ -57,6 +57,42 @@ Response:
 }
 ```
 
+## POST /sources/reset
+
+Borra completamente los repositorios de ingesta y deja el sistema listo para
+una primera ingesta.
+
+Alcance del borrado:
+
+- metadata de documentos en SQLite
+- chunks indexados para retrieval BM25/vector
+- aristas de grafo en SQLite
+- historial de jobs
+- relaciones `RELATES_TO` en Neo4j (si `USE_NEO4J=true`)
+
+Request:
+
+```json
+{
+  "confirm": true
+}
+```
+
+Response:
+
+```json
+{
+  "status": "completed",
+  "message": "All repositories were cleared and indexes were reset.",
+  "deleted_documents": 19,
+  "deleted_chunks": 961,
+  "deleted_graph_edges": 204,
+  "deleted_jobs": 10,
+  "neo4j_enabled": true,
+  "neo4j_edges_deleted": 204
+}
+```
+
 ## POST /query
 
 Ejecuta retrieval hibrido, expansion de grafo y respuesta con evidencia.

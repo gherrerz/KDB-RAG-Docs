@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QTextEdit,
     QVBoxLayout,
@@ -22,9 +23,14 @@ from PySide6.QtWidgets import (
 class IngestionView(QWidget):
     """Widget for invoking source ingestion via callback."""
 
-    def __init__(self, on_ingest: Callable[[dict], dict]) -> None:
+    def __init__(
+        self,
+        on_ingest: Callable[[dict], dict],
+        on_reset_all: Callable[[], dict],
+    ) -> None:
         super().__init__()
         self._on_ingest = on_ingest
+        self._on_reset_all = on_reset_all
 
         layout = QVBoxLayout(self)
         form_group = QGroupBox("Source Configuration")
@@ -45,7 +51,10 @@ class IngestionView(QWidget):
         actions = QHBoxLayout()
         self.ingest_button = QPushButton("Ingest")
         self.ingest_button.clicked.connect(self._run_ingestion)
+        self.reset_all_button = QPushButton("BORRAR TODO")
+        self.reset_all_button.clicked.connect(self._run_reset_all)
         actions.addWidget(self.ingest_button)
+        actions.addWidget(self.reset_all_button)
         actions.addWidget(QLabel("Indexes chunks + graph + retrieval."))
 
         self.output = QTextEdit()
@@ -68,6 +77,29 @@ class IngestionView(QWidget):
         self.output.setPlainText("Ingestion running...\n")
         QApplication.processEvents()
         result = self._on_ingest(payload)
+        rendered = self._format_ingestion_result(result)
+        self.output.setPlainText(rendered)
+
+    def _run_reset_all(self) -> None:
+        """Run destructive reset after explicit user confirmation."""
+        decision = QMessageBox.question(
+            self,
+            "Confirmar borrado total",
+            (
+                "Esta accion borrara TODO: documentos, chunks, BM25, "
+                "grafo local, Neo4j y jobs historicos.\n\n"
+                "Deseas continuar?"
+            ),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if decision != QMessageBox.StandardButton.Yes:
+            self.output.setPlainText("Operacion cancelada por el usuario.")
+            return
+
+        self.output.setPlainText("Reset total en ejecucion...\n")
+        QApplication.processEvents()
+        result = self._on_reset_all()
         rendered = self._format_ingestion_result(result)
         self.output.setPlainText(rendered)
 

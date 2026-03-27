@@ -317,3 +317,29 @@ class MetadataStore:
             }
         finally:
             conn.close()
+
+    def clear_all_data(self) -> Dict[str, int]:
+        """Delete all persisted rows while keeping schema intact."""
+        conn = self._connect()
+        try:
+            deleted_documents = conn.execute(
+                "DELETE FROM documents"
+            ).rowcount
+            deleted_chunks = conn.execute(
+                "DELETE FROM chunks"
+            ).rowcount
+            deleted_graph_edges = conn.execute(
+                "DELETE FROM graph_edges"
+            ).rowcount
+            deleted_jobs = conn.execute(
+                "DELETE FROM jobs"
+            ).rowcount
+            conn.commit()
+            return {
+                "deleted_documents": max(0, int(deleted_documents)),
+                "deleted_chunks": max(0, int(deleted_chunks)),
+                "deleted_graph_edges": max(0, int(deleted_graph_edges)),
+                "deleted_jobs": max(0, int(deleted_jobs)),
+            }
+        finally:
+            conn.close()

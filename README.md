@@ -12,11 +12,17 @@ Aplicacion Python para ingesta documental y consulta con RAG hibrido
 - Expansion por grafo multi-hop
 - Respuesta con evidencia y trazabilidad
 - Soporte de proveedores LLM: local, OpenAI, Gemini y Vertex AI
+- Seleccion de provider por entorno (`LLM_PROVIDER`) con soporte para
+  `openai`, `gemini` y `vertex` (`vertex_ai` como alias)
+- Modelo de embedding configurable por provider y override global por
+  `LLM_EMBEDDING`
 - UI para operacion de ingesta y consultas
 - UI de ingesta con polling de jobs async y fallback sync para cargas largas
 - API REST para integracion externa
 - Ingesta asincrona opcional con Redis + RQ
 - Trazabilidad de ingesta en UI con pasos y metricas de la API
+- Boton `BORRAR TODO` en Ingestion para reset completo de BM25, vector,
+  grafo y jobs antes de una nueva primera ingesta
 
 ## Arquitectura
 
@@ -144,6 +150,18 @@ Ver:
 - `docs/INSTALLATION.md`
 - `docs/CONFIGURATION.md`
 - `docs/API_REFERENCE.md`
+
+Variables relevantes de entorno:
+- `LLM_PROVIDER`: provider para consulta y embeddings (`openai`, `gemini`,
+  `vertex`)
+- `LLM_EMBEDDING`: override global opcional para modelo de embedding
+- `OPENAI_EMBEDDING_MODEL`, `GEMINI_EMBEDDING_MODEL`,
+  `VERTEX_EMBEDDING_MODEL`: modelos por provider
+
+Plantillas listas para copiar:
+- `.env.openai.example`
+- `.env.gemini.example`
+- `.env.vertex.example`
 
 ## Estado y roadmap
 

@@ -14,16 +14,46 @@ La configuracion principal se define en `coderag/core/settings.py`.
 
 ## LLM providers
 
-- `LLM_PROVIDER`: `local`, `openai`, `gemini`, `vertex_ai`
+- `LLM_PROVIDER`: `openai`, `gemini`, `vertex`
+  - Compatibilidad: `vertex_ai` tambien es aceptado como alias.
 - `OPENAI_API_KEY`
 - `OPENAI_BASE_URL` (default `https://api.openai.com/v1`)
 - `OPENAI_ANSWER_MODEL`
+- `OPENAI_EMBEDDING_MODEL` (default `text-embedding-3-small`)
 - `GEMINI_API_KEY`
 - `GEMINI_ANSWER_MODEL`
+- `GEMINI_EMBEDDING_MODEL` (default `text-embedding-004`)
 - `VERTEX_AI_API_KEY`
 - `VERTEX_PROJECT_ID`
 - `VERTEX_LOCATION`
 - `VERTEX_ANSWER_MODEL`
+- `VERTEX_EMBEDDING_MODEL` (default `text-embedding-005`)
+- `LLM_EMBEDDING` (override global opcional para el modelo de embedding)
+
+### Plantillas .env por provider
+
+El repositorio incluye plantillas listas para copiar segun provider:
+- `.env.openai.example`
+- `.env.gemini.example`
+- `.env.vertex.example`
+
+Uso sugerido en Windows PowerShell:
+
+```powershell
+Copy-Item .env.openai.example .env
+```
+
+Reemplaza `openai` por `gemini` o `vertex` segun el caso, luego completa
+las credenciales necesarias.
+
+### Resolucion de modelo de embedding
+
+Precedencia:
+1. `LLM_EMBEDDING` (si esta definido)
+2. Modelo por proveedor segun `LLM_PROVIDER`
+   (`OPENAI_EMBEDDING_MODEL`, `GEMINI_EMBEDDING_MODEL`,
+   `VERTEX_EMBEDDING_MODEL`)
+3. Fallback interno `local-hash-v1`
 
 ## Graph and async integration
 

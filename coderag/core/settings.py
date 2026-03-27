@@ -66,6 +66,9 @@ class Settings(BaseModel):
     llm_provider: str = Field(
         default_factory=lambda: _env_str("LLM_PROVIDER", "local") or "local"
     )
+    llm_embedding: Optional[str] = Field(
+        default_factory=lambda: _env_str("LLM_EMBEDDING")
+    )
     openai_api_key: Optional[str] = Field(
         default_factory=lambda: _env_str("OPENAI_API_KEY")
     )
@@ -81,6 +84,12 @@ class Settings(BaseModel):
             or "gpt-4.1-mini"
         )
     )
+    openai_embedding_model: str = Field(
+        default_factory=lambda: (
+            _env_str("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
+            or "text-embedding-3-small"
+        )
+    )
 
     gemini_api_key: Optional[str] = Field(
         default_factory=lambda: _env_str("GEMINI_API_KEY")
@@ -89,6 +98,12 @@ class Settings(BaseModel):
         default_factory=lambda: (
             _env_str("GEMINI_ANSWER_MODEL", "gemini-2.0-flash")
             or "gemini-2.0-flash"
+        )
+    )
+    gemini_embedding_model: str = Field(
+        default_factory=lambda: (
+            _env_str("GEMINI_EMBEDDING_MODEL", "text-embedding-004")
+            or "text-embedding-004"
         )
     )
 
@@ -108,6 +123,12 @@ class Settings(BaseModel):
         default_factory=lambda: (
             _env_str("VERTEX_ANSWER_MODEL", "gemini-2.0-flash")
             or "gemini-2.0-flash"
+        )
+    )
+    vertex_embedding_model: str = Field(
+        default_factory=lambda: (
+            _env_str("VERTEX_EMBEDDING_MODEL", "text-embedding-005")
+            or "text-embedding-005"
         )
     )
 
@@ -132,18 +153,55 @@ class Settings(BaseModel):
         )
     )
 
+    @staticmethod
+    def _normalize_provider_name(provider: str) -> str:
+        """Normalize provider aliases used in env values and requests."""
+        normalized = provider.strip().lower()
+        if normalized == "vertex_ai":
+            return "vertex"
+        return normalized
+
     def resolve_llm_provider(self, override: Optional[str] = None) -> str:
         """Resolve effective provider considering request override."""
-        return (override or self.llm_provider).strip().lower()
+        provider_name = override or self.llm_provider
+        return self._normalize_provider_name(provider_name)
+
+    def resolve_embedding_provider(
+        self,
+        override: Optional[str] = None,
+    ) -> str:
+        """Resolve provider used for embeddings."""
+        provider_name = override or self.llm_provider
+        return self._normalize_provider_name(provider_name)
+
+    def resolve_embedding_model(
+        self,
+        provider_override: Optional[str] = None,
+        model_override: Optional[str] = None,
+    ) -> str:
+        """Resolve embedding model with global override precedence."""
+        if model_override and model_override.strip():
+            return model_override.strip()
+        if self.llm_embedding and self.llm_embedding.strip():
+            return self.llm_embedding.strip()
+
+        provider_name = self.resolve_embedding_provider(provider_override)
+        if provider_name == "openai":
+            return self.openai_embedding_model
+        if provider_name == "gemini":
+            return self.gemini_embedding_model
+        if provider_name == "vertex":
+            return self.vertex_embedding_model
+        return "local-hash-v1"
 
     def is_provider_configured(self, provider: str) -> bool:
         """Check whether provider credentials are available."""
-        provider_name = provider.strip().lower()
+        provider_name = self._normalize_provider_name(provider)
         if provider_name == "openai":
             return bool(self.openai_api_key)
         if provider_name == "gemini":
             return bool(self.gemini_api_key)
-        if provider_name == "vertex_ai":
+        if provider_name == "vertex":
             return bool(self.vertex_ai_api_key and self.vertex_project_id)
         return True
 

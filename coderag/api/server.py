@@ -2,16 +2,35 @@
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
 
-from coderag.core.models import IngestionRequest, QueryRequest
+from coderag.core.models import (
+    IngestionRequest,
+    QueryRequest,
+    ResetAllRequest,
+)
 from coderag.core.service import SERVICE
 from coderag.core.settings import SETTINGS
 from coderag.jobs.queue import enqueue_ingest_job, get_rq_job_status
 
-app = FastAPI(title="RAG Hybrid Response Validator", version="0.1.0")
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    """Release service resources when application shuts down."""
+    try:
+        yield
+    finally:
+        SERVICE.close()
+
+
+app = FastAPI(
+    title="RAG Hybrid Response Validator",
+    version="0.1.0",
+    lifespan=_lifespan,
+)
 
 
 @app.get("/health")
@@ -24,6 +43,18 @@ def health() -> dict[str, str]:
 def ingest_source(request: IngestionRequest) -> dict[str, Any]:
     """Trigger source ingestion and indexing."""
     return SERVICE.ingest(request)
+
+
+@app.post("/sources/reset")
+def reset_sources(request: ResetAllRequest) -> dict[str, Any]:
+    """Clear all ingestion artifacts and reset indexes."""
+    if not request.confirm:
+        raise HTTPException(
+            status_code=400,
+            detail="Reset requires explicit confirmation.",
+        )
+    response = SERVICE.reset_all()
+    return response.model_dump()
 
 
 @app.post("/sources/ingest/async")

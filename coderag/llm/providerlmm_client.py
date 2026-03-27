@@ -40,7 +40,7 @@ class ProviderLlmClient:
             output = self._answer_gemini(question, chunks)
             if output:
                 return output
-        elif provider_name == "vertex_ai":
+        elif provider_name in {"vertex", "vertex_ai"}:
             output = self._answer_vertex(question, chunks)
             if output:
                 return output

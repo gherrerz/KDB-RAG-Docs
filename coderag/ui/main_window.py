@@ -24,7 +24,7 @@ class MainWindow(QMainWindow):
         self.resize(1100, 760)
 
         tabs = QTabWidget()
-        tabs.addTab(IngestionView(self.ingest), "Ingestion")
+        tabs.addTab(IngestionView(self.ingest, self.reset_all), "Ingestion")
         tabs.addTab(QueryView(self.query), "Query")
         self.setCentralWidget(tabs)
 
@@ -50,6 +50,14 @@ class MainWindow(QMainWindow):
     def query(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Call backend query endpoint."""
         return self._post_json("/query", payload, timeout=60)
+
+    def reset_all(self) -> Dict[str, Any]:
+        """Call backend endpoint to clear all repositories and indexes."""
+        return self._post_json(
+            "/sources/reset",
+            {"confirm": True},
+            timeout=180,
+        )
 
     def _post_json(
         self,
