@@ -11,7 +11,8 @@ servicios para resolver dos capacidades principales:
   evidencia.
 
 El sistema esta disenado para operar con ChromaDB activo en runtime para la
-capa vectorial y habilitar componentes opcionales adicionales en produccion:
+capa vectorial y Neo4j obligatorio para capa de grafo. Componentes opcionales
+adicionales de produccion:
 
 - Redis + RQ para ingesta asincrona.
 - Neo4j para expansion de paths multi-hop.
@@ -68,7 +69,7 @@ flowchart TB
     subgraph L1[CAPA 1 - Datos]
         SQLite[(SQLite metadata.db)]
       Chroma[(Chroma vector store)]
-        Neo4j[(Neo4j opcional)]
+        Neo4j[(Neo4j obligatorio)]
         Redis[(Redis opcional)]
     end
 
@@ -160,7 +161,7 @@ sequenceDiagram
     participant PRS as Parsers
     participant DB as SQLite MetadataStore
     participant EMB as Embedding Provider API
-    participant GS as GraphStore (Neo4j opcional)
+    participant GS as GraphStore (Neo4j obligatorio)
     participant IDX as BM25 + ChromaVectorIndex
 
     User->>API: POST /sources/ingest o /sources/ingest/async
@@ -206,8 +207,7 @@ sequenceDiagram
     participant VEC as ChromaVectorIndex
     participant EMB as Embedding Provider API
     participant RET as hybrid_search + reranker
-    participant GS as GraphStore (Neo4j opcional)
-    participant GL as graph_expand (networkx fallback)
+    participant GS as GraphStore (Neo4j obligatorio)
     participant DB as SQLite MetadataStore
     participant LLM as ProviderLlmClient
 
@@ -225,13 +225,7 @@ sequenceDiagram
     RET-->>SVC: chunks rerankeados
 
     SVC->>GS: expand_paths(question, hops)
-    alt Neo4j devuelve paths
-        GS-->>SVC: graph_paths
-    else Sin paths o Neo4j deshabilitado
-        SVC->>DB: list_graph_edges(source_id)
-        SVC->>GL: build_graph + expand_paths
-        GL-->>SVC: graph_paths fallback
-    end
+    GS-->>SVC: graph_paths
 
     SVC->>LLM: answer(question, chunks, provider)
     LLM-->>SVC: respuesta
@@ -245,7 +239,6 @@ sequenceDiagram
 ## Consideraciones de despliegue
 
 - Modo local (default): API + UI + SQLite + Chroma persistente.
-- Modo expandido: activar `USE_RQ=true` y `USE_NEO4J=true` para procesamiento
-  asincrono y expansion de grafo remota.
+- Modo expandido: activar `USE_RQ=true` para procesamiento asincrono.
 - Docker Compose incluye servicios `redis` y `neo4j`; la capa vectorial usa
   Chroma embebido en disco dentro de la API (`CHROMA_PERSIST_DIR`).

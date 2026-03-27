@@ -1,4 +1,4 @@
-"""Graph storage adapter with optional Neo4j support."""
+"""Graph storage adapter backed by mandatory Neo4j runtime."""
 
 from __future__ import annotations
 
@@ -14,8 +14,8 @@ ENTITY_PATTERN = re.compile(r"\b[A-Z][a-zA-Z]{2,}\b")
 class GraphStore:
     """Bridge for graph persistence and traversal.
 
-    When Neo4j is disabled or unavailable, methods become no-ops and
-    callers should rely on local fallback graph behavior.
+    Neo4j is mandatory in runtime. Operations fail explicitly when
+    configuration or connectivity is invalid.
     """
 
     def __init__(self) -> None:
@@ -30,25 +30,39 @@ class GraphStore:
 
     def is_enabled(self) -> bool:
         """Return whether Neo4j integration is configured."""
-        return bool(SETTINGS.use_neo4j and SETTINGS.neo4j_uri)
+        return bool(
+            SETTINGS.use_neo4j
+            and SETTINGS.neo4j_uri
+            and SETTINGS.neo4j_user
+            and SETTINGS.neo4j_password
+        )
 
     def _get_driver(self):
         """Lazy-create Neo4j driver when integration is enabled."""
         if not self.is_enabled():
-            return None
+            raise RuntimeError(
+                "Neo4j runtime is not fully configured. Set USE_NEO4J=true, "
+                "NEO4J_URI, NEO4J_USER and NEO4J_PASSWORD."
+            )
         if self._driver is not None:
             return self._driver
 
         try:
             from neo4j import GraphDatabase
-        except Exception:
-            return None
+        except Exception as exc:
+            raise RuntimeError("Neo4j driver is not available.") from exc
 
-        auth = None
-        if SETTINGS.neo4j_user and SETTINGS.neo4j_password:
-            auth = (SETTINGS.neo4j_user, SETTINGS.neo4j_password)
+        auth = (SETTINGS.neo4j_user, SETTINGS.neo4j_password)
 
         self._driver = GraphDatabase.driver(SETTINGS.neo4j_uri, auth=auth)
+        try:
+            self._driver.verify_connectivity()
+        except Exception as exc:
+            self._driver.close()
+            self._driver = None
+            raise RuntimeError(
+                "Neo4j connectivity check failed."
+            ) from exc
         return self._driver
 
     def replace_edges(
@@ -58,8 +72,6 @@ class GraphStore:
     ) -> None:
         """Replace edge set for one source in Neo4j."""
         driver = self._get_driver()
-        if driver is None:
-            return
 
         edge_rows = list(edges)
         with driver.session() as session:
@@ -85,8 +97,6 @@ class GraphStore:
     def clear_all_edges(self) -> int:
         """Delete all RELATES_TO edges from Neo4j and return count."""
         driver = self._get_driver()
-        if driver is None:
-            return 0
 
         with driver.session() as session:
             result = session.run("MATCH ()-[r:RELATES_TO]-() DELETE r")
@@ -99,10 +109,8 @@ class GraphStore:
         hops: int,
         max_paths: int,
     ) -> List[GraphPath]:
-        """Expand multi-hop graph paths using Neo4j if available."""
+        """Expand multi-hop graph paths using Neo4j runtime."""
         driver = self._get_driver()
-        if driver is None:
-            return []
 
         entities = list(dict.fromkeys(ENTITY_PATTERN.findall(query)))
         if not entities:

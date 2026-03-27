@@ -30,11 +30,25 @@ def test_ingest_and_query_roundtrip() -> None:
     original_embed = index_chroma.embed_text
     original_provider = SETTINGS.llm_provider
     original_openai_key = SETTINGS.openai_api_key
+    original_use_neo4j = SETTINGS.use_neo4j
+    original_neo4j_uri = SETTINGS.neo4j_uri
+    original_neo4j_user = SETTINGS.neo4j_user
+    original_neo4j_password = SETTINGS.neo4j_password
     index_chroma.embed_text = _fake_embed_text
     SETTINGS.llm_provider = "openai"
     SETTINGS.openai_api_key = "test-key"
+    SETTINGS.use_neo4j = True
+    SETTINGS.neo4j_uri = "bolt://test-neo4j:7687"
+    SETTINGS.neo4j_user = "neo4j"
+    SETTINGS.neo4j_password = "password"
 
     service = RagApplicationService()
+    service.graph_store.replace_edges = lambda source_id, edges: None
+    service.graph_store.expand_paths = (
+        lambda query, hops, max_paths: []
+    )
+    service.graph_store.clear_all_edges = lambda: 0
+    service.graph_store.close = lambda: None
     try:
         result = service.ingest(
             IngestionRequest(
@@ -59,6 +73,10 @@ def test_ingest_and_query_roundtrip() -> None:
         index_chroma.embed_text = original_embed
         SETTINGS.llm_provider = original_provider
         SETTINGS.openai_api_key = original_openai_key
+        SETTINGS.use_neo4j = original_use_neo4j
+        SETTINGS.neo4j_uri = original_neo4j_uri
+        SETTINGS.neo4j_user = original_neo4j_user
+        SETTINGS.neo4j_password = original_neo4j_password
 
 
 def test_reset_all_clears_repositories() -> None:
@@ -66,11 +84,25 @@ def test_reset_all_clears_repositories() -> None:
     original_embed = index_chroma.embed_text
     original_provider = SETTINGS.llm_provider
     original_openai_key = SETTINGS.openai_api_key
+    original_use_neo4j = SETTINGS.use_neo4j
+    original_neo4j_uri = SETTINGS.neo4j_uri
+    original_neo4j_user = SETTINGS.neo4j_user
+    original_neo4j_password = SETTINGS.neo4j_password
     index_chroma.embed_text = _fake_embed_text
     SETTINGS.llm_provider = "openai"
     SETTINGS.openai_api_key = "test-key"
+    SETTINGS.use_neo4j = True
+    SETTINGS.neo4j_uri = "bolt://test-neo4j:7687"
+    SETTINGS.neo4j_user = "neo4j"
+    SETTINGS.neo4j_password = "password"
 
     service = RagApplicationService()
+    service.graph_store.replace_edges = lambda source_id, edges: None
+    service.graph_store.expand_paths = (
+        lambda query, hops, max_paths: []
+    )
+    service.graph_store.clear_all_edges = lambda: 0
+    service.graph_store.close = lambda: None
     try:
         service.ingest(
             IngestionRequest(
@@ -107,3 +139,7 @@ def test_reset_all_clears_repositories() -> None:
         index_chroma.embed_text = original_embed
         SETTINGS.llm_provider = original_provider
         SETTINGS.openai_api_key = original_openai_key
+        SETTINGS.use_neo4j = original_use_neo4j
+        SETTINGS.neo4j_uri = original_neo4j_uri
+        SETTINGS.neo4j_user = original_neo4j_user
+        SETTINGS.neo4j_password = original_neo4j_password

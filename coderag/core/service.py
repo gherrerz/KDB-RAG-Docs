@@ -25,7 +25,6 @@ from coderag.ingestion.index_bm25 import BM25Index
 from coderag.ingestion.index_chroma import LocalVectorIndex
 from coderag.llm.providerlmm_client import ProviderLlmClient
 from coderag.retrieval.context_assembler import assemble_context
-from coderag.retrieval.graph_expand import build_graph, expand_paths
 from coderag.retrieval.hybrid_search import hybrid_search
 from coderag.retrieval.reranker import rerank_results
 
@@ -35,6 +34,7 @@ class RagApplicationService:
 
     def __init__(self) -> None:
         SETTINGS.require_chroma_enabled()
+        SETTINGS.require_neo4j_enabled()
         self.store = RUNTIME.store
         self.bm25_index = BM25Index()
         self.vector_index = LocalVectorIndex(
@@ -62,10 +62,8 @@ class RagApplicationService:
         deleted = self.store.clear_all_data()
         self.vector_index.clear_all()
 
-        neo4j_enabled = self.graph_store.is_enabled()
-        neo4j_edges_deleted = 0
-        if neo4j_enabled:
-            neo4j_edges_deleted = self.graph_store.clear_all_edges()
+        neo4j_enabled = True
+        neo4j_edges_deleted = self.graph_store.clear_all_edges()
 
         # Rebuild both retrieval indexes from now-empty metadata tables.
         self.rebuild_indexes()
@@ -256,15 +254,6 @@ class RagApplicationService:
             hops=max(1, hops),
             max_paths=6,
         )
-        if not graph_paths:
-            edges = self.store.list_graph_edges(source_id=request.source_id)
-            graph = build_graph(edges)
-            graph_paths = expand_paths(
-                request.question,
-                graph,
-                hops=max(1, hops),
-                max_paths=6,
-            )
 
         _context = assemble_context(
             chunks=chunks,

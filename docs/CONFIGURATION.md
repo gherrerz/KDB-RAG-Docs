@@ -72,7 +72,7 @@ Precedencia:
 
 La aplicacion carga automaticamente variables desde `.env` en runtime.
 
-- `USE_NEO4J`: habilita escritura/lectura de paths multi-hop en Neo4j
+- `USE_NEO4J`: debe estar en `true` (Neo4j es obligatorio en runtime)
 - `NEO4J_URI`
 - `NEO4J_USER`
 - `NEO4J_PASSWORD`

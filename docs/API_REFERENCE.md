@@ -119,7 +119,7 @@ Alcance del borrado:
 - chunks indexados para retrieval BM25/vector
 - aristas de grafo en SQLite
 - historial de jobs
-- relaciones `RELATES_TO` en Neo4j (si `USE_NEO4J=true`)
+- relaciones `RELATES_TO` en Neo4j
 
 Request:
 

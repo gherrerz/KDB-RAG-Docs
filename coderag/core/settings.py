@@ -148,16 +148,16 @@ class Settings(BaseModel):
     )
 
     use_neo4j: bool = Field(
-        default_factory=lambda: _env_bool("USE_NEO4J", False)
+        default_factory=lambda: _env_bool("USE_NEO4J", True)
     )
     neo4j_uri: Optional[str] = Field(
-        default_factory=lambda: _env_str("NEO4J_URI")
+        default_factory=lambda: _env_str("NEO4J_URI", "bolt://127.0.0.1:7687")
     )
     neo4j_user: Optional[str] = Field(
-        default_factory=lambda: _env_str("NEO4J_USER")
+        default_factory=lambda: _env_str("NEO4J_USER", "neo4j")
     )
     neo4j_password: Optional[str] = Field(
-        default_factory=lambda: _env_str("NEO4J_PASSWORD")
+        default_factory=lambda: _env_str("NEO4J_PASSWORD", "password")
     )
 
     use_rq: bool = Field(default_factory=lambda: _env_bool("USE_RQ", False))
@@ -229,6 +229,23 @@ class Settings(BaseModel):
             raise RuntimeError(
                 "USE_CHROMA must be true. This runtime requires ChromaDB "
                 "for vector storage and search."
+            )
+
+    def require_neo4j_enabled(self) -> None:
+        """Fail fast when runtime is not configured for Neo4j graph store."""
+        if not self.use_neo4j:
+            raise RuntimeError(
+                "USE_NEO4J must be true. This runtime requires Neo4j "
+                "for graph persistence and traversal."
+            )
+        if not self.neo4j_uri:
+            raise RuntimeError(
+                "NEO4J_URI is required when Neo4j is mandatory at runtime."
+            )
+        if not self.neo4j_user or not self.neo4j_password:
+            raise RuntimeError(
+                "NEO4J_USER and NEO4J_PASSWORD are required when Neo4j is "
+                "mandatory at runtime."
             )
 
     def require_embedding_provider_configured(

@@ -32,12 +32,13 @@ Aplicacion Python para ingesta documental y consulta con RAG hibrido
 - API: FastAPI
 - Vector index: `ChromaVectorIndex` persistente en `CHROMA_PERSIST_DIR`
 - BM25: `rank-bm25`
-- Grafo: `networkx` (compatible con evolucion a Neo4j)
+- Grafo: Neo4j obligatorio para persistencia y expansion de paths
 - Storage metadata: SQLite en `storage/metadata.db`
 
 ### Estado del vector store
 
 - El runtime requiere `USE_CHROMA=true`.
+- El runtime requiere `USE_NEO4J=true`.
 - Los embeddings se calculan con el proveedor configurado (`openai`,
   `gemini` o `vertex`) y se guardan en ChromaDB.
 - No existe fallback a embeddings locales en memoria cuando falta
@@ -205,6 +206,5 @@ Plantillas listas para copiar:
 
 Este MVP es funcional end-to-end con vector store persistente en ChromaDB.
 El diseño de modulos permite evolucionar componentes opcionales como:
-- Neo4j para grafo (opcional habilitado por `USE_NEO4J=true`)
 - Redis + RQ para jobs asincronos (opcional con `USE_RQ=true`)
 - Proveedores LLM (OpenAI, Gemini, Vertex AI)

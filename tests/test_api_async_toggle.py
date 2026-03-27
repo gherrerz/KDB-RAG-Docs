@@ -54,13 +54,28 @@ def test_reset_clears_ingested_data() -> None:
     """Ensure reset removes indexed content and leaves clean retrieval state."""
     client = TestClient(server.app)
     original_neo4j = server.SETTINGS.use_neo4j
+    original_neo4j_uri = server.SETTINGS.neo4j_uri
+    original_neo4j_user = server.SETTINGS.neo4j_user
+    original_neo4j_password = server.SETTINGS.neo4j_password
     original_embed = index_chroma.embed_text
     original_provider = server.SETTINGS.llm_provider
     original_openai_key = server.SETTINGS.openai_api_key
-    server.SETTINGS.use_neo4j = False
+    original_replace_edges = server.SERVICE.graph_store.replace_edges
+    original_expand_paths = server.SERVICE.graph_store.expand_paths
+    original_clear_all_edges = server.SERVICE.graph_store.clear_all_edges
+
+    server.SETTINGS.use_neo4j = True
+    server.SETTINGS.neo4j_uri = "bolt://test-neo4j:7687"
+    server.SETTINGS.neo4j_user = "neo4j"
+    server.SETTINGS.neo4j_password = "password"
     server.SETTINGS.llm_provider = "openai"
     server.SETTINGS.openai_api_key = "test-key"
     index_chroma.embed_text = _fake_embed_text
+    server.SERVICE.graph_store.replace_edges = lambda source_id, edges: None
+    server.SERVICE.graph_store.expand_paths = (
+        lambda query, hops, max_paths: []
+    )
+    server.SERVICE.graph_store.clear_all_edges = lambda: 0
     try:
         payload = {
             "source": {
@@ -92,6 +107,12 @@ def test_reset_clears_ingested_data() -> None:
         assert len(after_reset.json().get("citations", [])) == 0
     finally:
         server.SETTINGS.use_neo4j = original_neo4j
+        server.SETTINGS.neo4j_uri = original_neo4j_uri
+        server.SETTINGS.neo4j_user = original_neo4j_user
+        server.SETTINGS.neo4j_password = original_neo4j_password
         server.SETTINGS.llm_provider = original_provider
         server.SETTINGS.openai_api_key = original_openai_key
         index_chroma.embed_text = original_embed
+        server.SERVICE.graph_store.replace_edges = original_replace_edges
+        server.SERVICE.graph_store.expand_paths = original_expand_paths
+        server.SERVICE.graph_store.clear_all_edges = original_clear_all_edges

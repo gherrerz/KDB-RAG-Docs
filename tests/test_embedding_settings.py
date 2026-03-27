@@ -53,3 +53,10 @@ def test_chroma_must_be_enabled_in_runtime() -> None:
     settings = Settings(use_chroma=False)
     with pytest.raises(RuntimeError):
         settings.require_chroma_enabled()
+
+
+def test_neo4j_must_be_enabled_in_runtime() -> None:
+    """Fail fast when graph runtime is not configured for Neo4j."""
+    settings = Settings(use_neo4j=False)
+    with pytest.raises(RuntimeError):
+        settings.require_neo4j_enabled()
