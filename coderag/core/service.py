@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 from time import perf_counter
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 
 from coderag.core.models import (
     Evidence,
@@ -81,24 +81,81 @@ class RagApplicationService:
             neo4j_edges_deleted=neo4j_edges_deleted,
         )
 
-    def ingest(self, request: IngestionRequest) -> Dict[str, object]:
+    def ingest(
+        self,
+        request: IngestionRequest,
+        progress_callback: Optional[
+            Callable[[Dict[str, object]], None]
+        ] = None,
+    ) -> Dict[str, object]:
         """Run full ingestion pipeline and persist generated artifacts."""
         job_id = uuid.uuid4().hex[:12]
         self.store.touch_job(job_id, "running", "Starting ingestion")
 
         started_at = perf_counter()
         steps: List[Dict[str, object]] = []
+        step_counter = 0
+
+        def _emit_progress(payload: Dict[str, object]) -> None:
+            """Push live progress snapshots when callback is provided."""
+            if progress_callback is None:
+                return
+            progress_callback(payload)
 
         def _add_step(
             name: str,
             details: Dict[str, object],
             status: str = "ok",
+            progress_pct: float | None = None,
         ) -> None:
-            steps.append(
+            nonlocal step_counter
+            step_counter += 1
+            elapsed_ms = round((perf_counter() - started_at) * 1000.0, 2)
+            step_payload: Dict[str, object] = {
+                "name": name,
+                "status": status,
+                "details": details,
+                "elapsed_ms": elapsed_ms,
+            }
+            if progress_pct is not None:
+                step_payload["progress_pct"] = round(progress_pct, 2)
+            steps.append(step_payload)
+            details_with_progress = dict(details)
+            if progress_pct is not None:
+                details_with_progress["progress_pct"] = round(progress_pct, 2)
+            self.store.append_job_event(
+                job_id=job_id,
+                ordinal=step_counter,
+                name=name,
+                status=status,
+                elapsed_ms=elapsed_ms,
+                details=details_with_progress,
+            )
+
+            if status == "failed":
+                self.store.touch_job(job_id, "failed", f"FAILED | {name}")
+            elif name != "ingestion_completed":
+                pct = progress_pct if progress_pct is not None else 0.0
+                self.store.touch_job(
+                    job_id,
+                    "running",
+                    f"{int(round(pct))}% | {name}",
+                )
+
+            _emit_progress(
                 {
-                    "name": name,
-                    "status": status,
-                    "details": details,
+                    "job_id": job_id,
+                    "status": (
+                        "failed"
+                        if status == "failed"
+                        else (
+                            "completed"
+                            if name == "ingestion_completed"
+                            else "running"
+                        )
+                    ),
+                    "step": step_payload,
+                    "steps": steps,
                 }
             )
 
@@ -106,13 +163,18 @@ class RagApplicationService:
             event: str,
             payload: Dict[str, object],
         ) -> None:
-            _add_step(event, payload)
+            progress_pct = 10.0
+            total = payload.get("total_files")
+            processed = payload.get("processed_files")
+            if isinstance(total, int) and total > 0 and isinstance(processed, int):
+                progress_pct = 10.0 + (processed / total) * 20.0
+            _add_step(event, payload, progress_pct=progress_pct)
 
         documents, load_stats = load_documents(
             request.source,
             progress_callback=_loader_progress,
         )
-        _add_step("load_documents", load_stats)
+        _add_step("load_documents", load_stats, progress_pct=30.0)
         if not documents:
             local_path = request.source.local_path or "<not-set>"
             failure_message = (
@@ -129,21 +191,43 @@ class RagApplicationService:
                 "ingestion_failed",
                 {"reason": failure_message},
                 status="failed",
+                progress_pct=100.0,
             )
             return {
                 "job_id": job_id,
                 "status": "failed",
                 "message": failure_message,
                 "steps": steps,
+                "progress_pct": 100.0,
             }
 
         source_id = documents[0].source_id
         chunks = []
         total_characters = 0
-        for doc in documents:
-            self.store.upsert_document(doc)
+        total_documents = len(documents)
+        for index, doc in enumerate(documents, start=1):
             total_characters += len(doc.content)
             chunks.extend(build_chunks(doc))
+            if index == 1 or index % 10 == 0 or index == total_documents:
+                _add_step(
+                    "chunk_progress",
+                    {
+                        "processed_documents": index,
+                        "total_documents": total_documents,
+                        "generated_chunks": len(chunks),
+                    },
+                    progress_pct=30.0 + (index / total_documents) * 20.0,
+                )
+
+        persisted_documents = self.store.upsert_documents(documents)
+        _add_step(
+            "persist_documents",
+            {
+                "documents": persisted_documents,
+                "source_id": source_id,
+            },
+            progress_pct=52.0,
+        )
 
         _add_step(
             "chunk_documents",
@@ -152,6 +236,7 @@ class RagApplicationService:
                 "chunks": len(chunks),
                 "total_characters": total_characters,
             },
+            progress_pct=55.0,
         )
 
         self.store.replace_chunks(source_id=source_id, chunks=chunks)
@@ -161,6 +246,7 @@ class RagApplicationService:
                 "source_id": source_id,
                 "chunks": len(chunks),
             },
+            progress_pct=65.0,
         )
 
         edges = build_graph_edges(source_id=source_id, chunks=chunks)
@@ -169,16 +255,25 @@ class RagApplicationService:
             {
                 "edges": len(edges),
             },
+            progress_pct=75.0,
         )
 
         self.store.replace_graph_edges(source_id=source_id, edges=edges)
-        self.graph_store.replace_edges(source_id=source_id, edges=edges)
+        graph_metrics = self.graph_store.replace_edges(
+            source_id=source_id,
+            edges=edges,
+        )
+        persist_graph_details: Dict[str, object] = {
+            "edges": len(edges),
+            "neo4j_enabled": self.graph_store.is_enabled(),
+        }
+        if isinstance(graph_metrics, dict):
+            for key, value in graph_metrics.items():
+                persist_graph_details[f"neo4j_{key}"] = value
         _add_step(
             "persist_graph",
-            {
-                "edges": len(edges),
-                "neo4j_enabled": self.graph_store.is_enabled(),
-            },
+            persist_graph_details,
+            progress_pct=85.0,
         )
 
         self.rebuild_indexes(source_id=source_id)
@@ -187,6 +282,7 @@ class RagApplicationService:
             {
                 "source_id": source_id,
             },
+            progress_pct=95.0,
         )
 
         elapsed_ms = round((perf_counter() - started_at) * 1000.0, 2)
@@ -195,6 +291,7 @@ class RagApplicationService:
             {
                 "elapsed_ms": elapsed_ms,
             },
+            progress_pct=100.0,
         )
 
         self.store.touch_job(
@@ -209,6 +306,7 @@ class RagApplicationService:
             "documents": str(len(documents)),
             "chunks": str(len(chunks)),
             "steps": steps,
+            "progress_pct": 100.0,
             "metrics": {
                 "elapsed_ms": elapsed_ms,
                 "discovered_files": load_stats.get("discovered_files", 0),
@@ -217,17 +315,30 @@ class RagApplicationService:
             },
         }
 
-    def get_job(self, job_id: str) -> Optional[Dict[str, str]]:
+    def get_job(self, job_id: str) -> Optional[Dict[str, object]]:
         """Retrieve job status by id."""
         job = self.store.get_job(job_id)
         if job is None:
             return None
+        events = self.store.list_job_events(job_id)
+        progress_pct = 0.0
+        if events:
+            last_details = events[-1].get("details", {})
+            if isinstance(last_details, dict):
+                pct = last_details.get("progress_pct")
+                if isinstance(pct, (int, float)):
+                    progress_pct = float(pct)
+        if job.status == "completed":
+            progress_pct = 100.0
+
         return {
             "job_id": job.job_id,
             "status": job.status,
             "message": job.message,
             "created_at": job.created_at.isoformat(),
             "updated_at": job.updated_at.isoformat(),
+            "progress_pct": round(progress_pct, 2),
+            "steps": events,
         }
 
     def query(self, request: QueryRequest) -> QueryResponse:

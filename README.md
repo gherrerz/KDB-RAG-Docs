@@ -22,9 +22,11 @@ Aplicacion Python para ingesta documental y consulta con RAG hibrido
 - UI de ingesta con polling de jobs async y fallback sync para cargas largas
 - API REST para integracion externa
 - Ingesta asincrona opcional con Redis + RQ
-- Trazabilidad de ingesta en UI con pasos y metricas de la API
+- Trazabilidad de ingesta en UI con timeline en vivo, pasos y metricas
 - Boton `BORRAR TODO` en Ingestion para reset completo de BM25, vector,
   grafo y jobs antes de una nueva primera ingesta
+- Persistencia de eventos por job para diagnosticar cuellos de botella
+- Optimización de ingesta: embeddings en paralelo y upsert vectorial por lotes
 
 ## Arquitectura
 
@@ -191,9 +193,17 @@ Variables relevantes de entorno:
 - `LLM_PROVIDER`: provider para consulta y embeddings (`openai`, `gemini`,
   `vertex`)
 - `LLM_EMBEDDING`: override global opcional para modelo de embedding
+- `INGEST_EMBED_WORKERS`: workers para generar embeddings en paralelo
+- `CHROMA_UPSERT_BATCH_SIZE`: tamano de lote por escritura en Chroma
 - `USE_CHROMA`: debe estar en `true` para habilitar vector store runtime
 - `CHROMA_PERSIST_DIR`: carpeta local de persistencia de Chroma
 - `CHROMA_COLLECTION`: nombre de coleccion activa de vectores
+- `NEO4J_INGEST_BATCH_SIZE`: tamano de bloque para `UNWIND` en persistencia
+  de grafo
+  recomendado inicial: `500` para priorizar tiempo total end-to-end
+- `NEO4J_INGEST_MAX_RETRIES`: reintentos por bloque Neo4j ante fallas
+  transitorias
+- `NEO4J_INGEST_RETRY_DELAY_MS`: espera base en milisegundos para reintentos
 - `OPENAI_EMBEDDING_MODEL`, `GEMINI_EMBEDDING_MODEL`,
   `VERTEX_EMBEDDING_MODEL`: modelos por provider
 
@@ -208,3 +218,12 @@ Este MVP es funcional end-to-end con vector store persistente en ChromaDB.
 El diseño de modulos permite evolucionar componentes opcionales como:
 - Redis + RQ para jobs asincronos (opcional con `USE_RQ=true`)
 - Proveedores LLM (OpenAI, Gemini, Vertex AI)
+
+## Observabilidad de ingesta
+
+- Durante la ingesta, la UI muestra progreso (`progress_pct`) y timeline de
+  pasos con `elapsed_ms` por paso.
+- `GET /jobs/{id}` devuelve `steps` persistidos por job para diagnostico,
+  incluso en ejecuciones asincronas.
+- El resumen visual de progreso permite detectar rapidamente etapas lentas
+  (parseo, chunking, grafo o indexacion).

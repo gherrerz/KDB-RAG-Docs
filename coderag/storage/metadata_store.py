@@ -22,6 +22,8 @@ class MetadataStore:
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("PRAGMA synchronous=NORMAL;")
         return conn
 
     def _init_schema(self) -> None:
@@ -68,6 +70,30 @@ class MetadataStore:
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
+
+                CREATE TABLE IF NOT EXISTS job_events (
+                    event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    job_id TEXT NOT NULL,
+                    ordinal INTEGER NOT NULL,
+                    name TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    elapsed_ms REAL NOT NULL,
+                    details_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    UNIQUE(job_id, ordinal)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_documents_source
+                ON documents(source_id);
+
+                CREATE INDEX IF NOT EXISTS idx_chunks_source
+                ON chunks(source_id);
+
+                CREATE INDEX IF NOT EXISTS idx_graph_edges_source
+                ON graph_edges(source_id);
+
+                CREATE INDEX IF NOT EXISTS idx_job_events_job
+                ON job_events(job_id, ordinal);
                 """
             )
             conn.commit()
@@ -105,6 +131,48 @@ class MetadataStore:
                 ),
             )
             conn.commit()
+        finally:
+            conn.close()
+
+    def upsert_documents(self, docs: Iterable[DocumentRecord]) -> int:
+        """Insert or update many document rows in a single transaction."""
+        rows = [
+            (
+                doc.document_id,
+                doc.source_id,
+                doc.title,
+                doc.content,
+                doc.path_or_url,
+                doc.content_type,
+                doc.updated_at.isoformat(),
+                json.dumps(doc.metadata),
+            )
+            for doc in docs
+        ]
+        if not rows:
+            return 0
+
+        conn = self._connect()
+        try:
+            conn.executemany(
+                """
+                INSERT INTO documents (
+                    document_id, source_id, title, content, path_or_url,
+                    content_type, updated_at, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(document_id) DO UPDATE SET
+                    source_id = excluded.source_id,
+                    title = excluded.title,
+                    content = excluded.content,
+                    path_or_url = excluded.path_or_url,
+                    content_type = excluded.content_type,
+                    updated_at = excluded.updated_at,
+                    metadata_json = excluded.metadata_json;
+                """,
+                rows,
+            )
+            conn.commit()
+            return len(rows)
         finally:
             conn.close()
 
@@ -291,6 +359,81 @@ class MetadataStore:
         self.upsert_job(job)
         return job
 
+    def append_job_event(
+        self,
+        job_id: str,
+        ordinal: int,
+        name: str,
+        status: str,
+        elapsed_ms: float,
+        details: Dict[str, Any],
+    ) -> None:
+        """Persist one ingestion timeline event for live progress polling."""
+        conn = self._connect()
+        try:
+            conn.execute(
+                """
+                INSERT INTO job_events (
+                    job_id, ordinal, name, status, elapsed_ms,
+                    details_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(job_id, ordinal) DO UPDATE SET
+                    name = excluded.name,
+                    status = excluded.status,
+                    elapsed_ms = excluded.elapsed_ms,
+                    details_json = excluded.details_json,
+                    created_at = excluded.created_at;
+                """,
+                (
+                    job_id,
+                    ordinal,
+                    name,
+                    status,
+                    float(elapsed_ms),
+                    json.dumps(details, ensure_ascii=True),
+                    datetime.now(UTC).isoformat(),
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def list_job_events(self, job_id: str) -> List[Dict[str, Any]]:
+        """Return ordered ingestion timeline events for one job."""
+        conn = self._connect()
+        try:
+            rows = conn.execute(
+                """
+                SELECT ordinal, name, status, elapsed_ms, details_json, created_at
+                FROM job_events
+                WHERE job_id = ?
+                ORDER BY ordinal ASC
+                """,
+                (job_id,),
+            ).fetchall()
+            events: List[Dict[str, Any]] = []
+            for row in rows:
+                raw_details = row["details_json"]
+                try:
+                    details = json.loads(raw_details)
+                except json.JSONDecodeError:
+                    details = {}
+                if not isinstance(details, dict):
+                    details = {}
+                events.append(
+                    {
+                        "ordinal": int(row["ordinal"]),
+                        "name": str(row["name"]),
+                        "status": str(row["status"]),
+                        "elapsed_ms": float(row["elapsed_ms"]),
+                        "details": details,
+                        "created_at": str(row["created_at"]),
+                    }
+                )
+            return events
+        finally:
+            conn.close()
+
     def get_document_map(
         self,
         source_id: Optional[str] = None,
@@ -334,6 +477,7 @@ class MetadataStore:
             deleted_jobs = conn.execute(
                 "DELETE FROM jobs"
             ).rowcount
+            conn.execute("DELETE FROM job_events")
             conn.commit()
             return {
                 "deleted_documents": max(0, int(deleted_documents)),

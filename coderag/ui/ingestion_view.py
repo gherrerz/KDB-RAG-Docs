@@ -25,7 +25,7 @@ class IngestionView(QWidget):
 
     def __init__(
         self,
-        on_ingest: Callable[[dict], dict],
+        on_ingest: Callable[[dict, Callable[[dict], None] | None], dict],
         on_reset_all: Callable[[], dict],
     ) -> None:
         super().__init__()
@@ -76,9 +76,15 @@ class IngestionView(QWidget):
         }
         self.output.setPlainText("Ingestion running...\n")
         QApplication.processEvents()
-        result = self._on_ingest(payload)
+        result = self._on_ingest(payload, self._handle_live_update)
         rendered = self._format_ingestion_result(result)
         self.output.setPlainText(rendered)
+
+    def _handle_live_update(self, result: dict) -> None:
+        """Render incremental updates while ingestion is running."""
+        rendered = self._format_ingestion_result(result)
+        self.output.setPlainText(rendered)
+        QApplication.processEvents()
 
     def _run_reset_all(self) -> None:
         """Run destructive reset after explicit user confirmation."""
@@ -87,7 +93,7 @@ class IngestionView(QWidget):
             "Confirmar borrado total",
             (
                 "Esta accion borrara TODO: documentos, chunks, BM25, "
-                "grafo local, Neo4j y jobs historicos.\n\n"
+                "ChromaDB embebido, Neo4j y jobs historicos.\n\n"
                 "Deseas continuar?"
             ),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
@@ -111,6 +117,10 @@ class IngestionView(QWidget):
         status = str(result.get("status", "unknown"))
         lines.append(f"Status: {status}")
 
+        progress_pct = result.get("progress_pct")
+        if isinstance(progress_pct, (int, float)):
+            lines.append(f"Progress: {round(float(progress_pct), 2)}%")
+
         message = result.get("message")
         if isinstance(message, str) and message.strip():
             lines.append(f"Message: {message}")
@@ -132,17 +142,38 @@ class IngestionView(QWidget):
 
         steps = result.get("steps")
         if isinstance(steps, list) and steps:
-            lines.append("\nIngestion Trace:")
+            lines.append("\nIngestion Timeline:")
             for index, step in enumerate(steps, start=1):
                 if not isinstance(step, dict):
                     continue
+                ordinal = step.get("ordinal")
+                display_index = int(ordinal) if isinstance(ordinal, int) else index
                 name = str(step.get("name", "step"))
                 step_status = str(step.get("status", "ok"))
-                lines.append(f"{index}. [{step_status}] {name}")
+                elapsed_ms = step.get("elapsed_ms")
+                elapsed_hint = ""
+                if isinstance(elapsed_ms, (int, float)):
+                    elapsed_hint = f" ({round(float(elapsed_ms), 2)} ms)"
+                lines.append(
+                    f"{display_index}. [{step_status}] {name}{elapsed_hint}"
+                )
                 details = step.get("details", {})
                 if isinstance(details, dict):
                     for key, value in details.items():
+                        if key == "progress_pct":
+                            continue
                         lines.append(f"   - {key}: {value}")
+
+            durations = [
+                float(step.get("elapsed_ms"))
+                for step in steps
+                if isinstance(step, dict)
+                and isinstance(step.get("elapsed_ms"), (int, float))
+            ]
+            if durations:
+                lines.append("\nProgress Summary:")
+                lines.append(f"- total_elapsed_ms: {round(max(durations), 2)}")
+                lines.append(f"- recorded_steps: {len(durations)}")
 
         lines.append("\nRaw JSON:")
         lines.append(json.dumps(result, indent=2, ensure_ascii=False))

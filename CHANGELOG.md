@@ -7,6 +7,15 @@
 	vectorial de chunks.
 - Configuracion dedicada de Chroma por entorno: `USE_CHROMA`,
 	`CHROMA_PERSIST_DIR`, `CHROMA_COLLECTION`.
+- Timeline de ingesta persistido por job (`job_events`) con pasos,
+	progreso y tiempos acumulados.
+- UI de ingesta con visualizacion en vivo del progreso (`progress_pct`) y
+	resumen temporal por etapa.
+- Nuevos parametros de performance de ingesta:
+	`INGEST_EMBED_WORKERS`, `CHROMA_UPSERT_BATCH_SIZE`.
+- Parametros de tuning Neo4j para ingesta:
+	`NEO4J_INGEST_BATCH_SIZE`, `NEO4J_INGEST_MAX_RETRIES`,
+	`NEO4J_INGEST_RETRY_DELAY_MS`.
 
 ### Changed
 - Pipeline de embeddings migrado a proveedores reales (OpenAI, Gemini,
@@ -15,6 +24,15 @@
 	de retrieval vectorial.
 - Documentacion (`README`, `CONFIGURATION`, `API_REFERENCE`,
 	`ARCHITECTURE`) alineada con el nuevo runtime vectorial.
+- Persistencia de documentos en lote en SQLite para reducir commits por
+	documento.
+- Escritura de aristas a Neo4j optimizada con `UNWIND` en lote.
+- Indexacion vectorial optimizada con embeddings en paralelo y upsert por
+	lotes.
+- Persistencia Neo4j ahora usa transacciones por bloque con reintentos
+	acotados para fallas transitorias.
+- Default recomendado ajustado para `NEO4J_INGEST_BATCH_SIZE=500` en
+	optimizacion orientada a tiempo total de ingesta.
 
 ### Fixed
 - `reset_all` ahora limpia tambien la coleccion vectorial activa de Chroma.

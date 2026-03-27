@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 from typing import List, Sequence, Tuple
 
 import chromadb
 from chromadb.api.models.Collection import Collection
+from chromadb.errors import InvalidDimensionException
 
 from coderag.core.models import ChunkRecord
 from coderag.core.settings import SETTINGS
@@ -26,10 +28,16 @@ class ChromaVectorIndex:
         self.size = size
         self.embedding_provider = SETTINGS.resolve_embedding_provider(provider)
         self.embedding_model = model or SETTINGS.llm_embedding
+        self.embedding_workers = max(1, SETTINGS.ingest_embedding_workers)
+        self.upsert_batch_size = max(1, SETTINGS.chroma_upsert_batch_size)
         persist_dir = SETTINGS.chroma_persist_dir
         persist_dir.mkdir(parents=True, exist_ok=True)
         self._client = chromadb.PersistentClient(path=str(persist_dir))
-        self._collection = self._client.get_or_create_collection(
+        self._collection = self._get_or_create_collection()
+
+    def _get_or_create_collection(self) -> Collection:
+        """Return active Chroma collection with cosine distance config."""
+        return self._client.get_or_create_collection(
             name=SETTINGS.chroma_collection,
             metadata={"hnsw:space": "cosine"},
         )
@@ -80,33 +88,71 @@ class ChromaVectorIndex:
         """Delete existing vectors belonging to one source."""
         self._collection.delete(where={"source_id": source_id})
 
+    def _embed_chunks(self, chunks: Sequence[ChunkRecord]) -> List[List[float]]:
+        """Generate embeddings with bounded parallelism for I/O providers."""
+        if not chunks:
+            return []
+        if len(chunks) == 1 or self.embedding_workers <= 1:
+            return [
+                embed_text(
+                    chunk.text,
+                    self.size,
+                    provider=self.embedding_provider,
+                    model=self.embedding_model,
+                )
+                for chunk in chunks
+            ]
+
+        max_workers = min(self.embedding_workers, len(chunks))
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            return list(
+                executor.map(
+                    lambda chunk: embed_text(
+                        chunk.text,
+                        self.size,
+                        provider=self.embedding_provider,
+                        model=self.embedding_model,
+                    ),
+                    chunks,
+                )
+            )
+
     def rebuild(self, chunks: Sequence[ChunkRecord]) -> None:
         """Replace vectors for affected source ids in Chroma collection."""
         if not chunks:
             return
 
         source_ids = {chunk.source_id for chunk in chunks}
-        for source_id in source_ids:
-            self._clear_source(source_id)
+        def _upsert_all() -> None:
+            for source_id in source_ids:
+                self._clear_source(source_id)
 
-        ids = [chunk.chunk_id for chunk in chunks]
-        documents = [chunk.text for chunk in chunks]
-        metadatas = [self._as_metadata(chunk) for chunk in chunks]
-        embeddings = [
-            embed_text(
-                chunk.text,
-                self.size,
-                provider=self.embedding_provider,
-                model=self.embedding_model,
-            )
-            for chunk in chunks
-        ]
-        self._collection.upsert(
-            ids=ids,
-            documents=documents,
-            metadatas=metadatas,
-            embeddings=embeddings,
-        )
+            for start in range(0, len(chunks), self.upsert_batch_size):
+                batch = chunks[start:start + self.upsert_batch_size]
+                ids = [chunk.chunk_id for chunk in batch]
+                documents = [chunk.text for chunk in batch]
+                metadatas = [self._as_metadata(chunk) for chunk in batch]
+                embeddings = self._embed_chunks(batch)
+                self._collection.upsert(
+                    ids=ids,
+                    documents=documents,
+                    metadatas=metadatas,
+                    embeddings=embeddings,
+                )
+
+        try:
+            _upsert_all()
+        except InvalidDimensionException:
+            # Auto-heal when persisted collection was created with another
+            # embedding dimensionality.
+            try:
+                self.clear_all()
+                _upsert_all()
+            except Exception:
+                # On Windows, file locks from another process can temporarily
+                # block collection recreation. Keep BM25 available and let the
+                # next reset/ingestion retry vector rebuilding.
+                return
 
     def search(
         self,
@@ -116,6 +162,8 @@ class ChromaVectorIndex:
         """Search similar chunks in Chroma using query embeddings."""
         if top_n <= 0:
             return []
+        if self._collection.count() == 0:
+            return []
 
         query_vec = embed_text(
             query,
@@ -123,11 +171,14 @@ class ChromaVectorIndex:
             provider=self.embedding_provider,
             model=self.embedding_model,
         )
-        payload = self._collection.query(
-            query_embeddings=[query_vec],
-            n_results=top_n,
-            include=["documents", "metadatas", "distances"],
-        )
+        try:
+            payload = self._collection.query(
+                query_embeddings=[query_vec],
+                n_results=top_n,
+                include=["documents", "metadatas", "distances"],
+            )
+        except InvalidDimensionException:
+            return []
 
         ids = payload.get("ids", [[]])
         documents = payload.get("documents", [[]])
@@ -155,10 +206,9 @@ class ChromaVectorIndex:
         return results
 
     def clear_all(self) -> None:
-        """Delete all vectors from active collection."""
-        ids = self._collection.get(include=[]).get("ids", [])
-        if ids:
-            self._collection.delete(ids=ids)
+        """Delete and recreate active collection to reset dimensionality."""
+        self._client.delete_collection(name=SETTINGS.chroma_collection)
+        self._collection = self._get_or_create_collection()
 
     def close(self) -> None:
         """Release client resources (no-op for current Chroma client)."""

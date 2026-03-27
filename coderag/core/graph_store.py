@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import time
 from typing import Iterable, List, Optional, Tuple
 
 from coderag.core.models import GraphPath
@@ -65,11 +66,54 @@ class GraphStore:
             ) from exc
         return self._driver
 
+    @staticmethod
+    def _chunk_rows(rows: List[dict[str, str]], size: int) -> Iterable[List[dict[str, str]]]:
+        """Yield rows in bounded chunks for transaction-sized writes."""
+        batch_size = max(1, size)
+        for start in range(0, len(rows), batch_size):
+            yield rows[start:start + batch_size]
+
+    @staticmethod
+    def _write_batch(tx_or_session, rows: List[dict[str, str]]) -> None:
+        """Write one relationship batch using the active Neo4j context."""
+        tx_or_session.run(
+            """
+            UNWIND $rows AS row
+            MERGE (a:Entity {name: row.src})
+            MERGE (b:Entity {name: row.tgt})
+            MERGE (a)-[:RELATES_TO {source_id: row.source_id}]->(b)
+            """,
+            rows=rows,
+        )
+
+    def _write_batch_with_retries(
+        self,
+        session,
+        rows: List[dict[str, str]],
+    ) -> int:
+        """Write one batch with bounded retries for transient failures."""
+        retries_done = 0
+        max_retries = max(0, SETTINGS.neo4j_ingest_max_retries)
+        base_delay_ms = max(1, SETTINGS.neo4j_ingest_retry_delay_ms)
+
+        while True:
+            try:
+                if hasattr(session, "execute_write"):
+                    session.execute_write(self._write_batch, rows)
+                else:
+                    self._write_batch(session, rows)
+                return retries_done
+            except Exception:
+                if retries_done >= max_retries:
+                    raise
+                retries_done += 1
+                time.sleep((base_delay_ms * retries_done) / 1000.0)
+
     def replace_edges(
         self,
         source_id: str,
         edges: Iterable[Tuple[str, str, str, str, str]],
-    ) -> None:
+    ) -> dict[str, int]:
         """Replace edge set for one source in Neo4j."""
         driver = self._get_driver()
 
@@ -79,20 +123,36 @@ class GraphStore:
                 "MATCH ()-[r:RELATES_TO {source_id: $source_id}]-() DELETE r",
                 source_id=source_id,
             )
-            for _edge_id, src, relation, tgt, src_id in edge_rows:
-                rel_type = relation if relation else "RELATES_TO"
-                if rel_type != "RELATES_TO":
-                    rel_type = "RELATES_TO"
-                session.run(
-                    """
-                    MERGE (a:Entity {name: $src})
-                    MERGE (b:Entity {name: $tgt})
-                    MERGE (a)-[r:RELATES_TO {source_id: $source_id}]->(b)
-                    """,
-                    src=src,
-                    tgt=tgt,
-                    source_id=src_id,
+
+            metrics = {
+                "batch_size": max(1, SETTINGS.neo4j_ingest_batch_size),
+                "batches_written": 0,
+                "rows_written": 0,
+                "retries": 0,
+            }
+            if not edge_rows:
+                return metrics
+
+            normalized_rows = [
+                {
+                    "src": src,
+                    "tgt": tgt,
+                    "source_id": src_id,
+                }
+                for _edge_id, src, _relation, tgt, src_id in edge_rows
+            ]
+
+            for batch_rows in self._chunk_rows(
+                normalized_rows,
+                SETTINGS.neo4j_ingest_batch_size,
+            ):
+                metrics["retries"] += self._write_batch_with_retries(
+                    session,
+                    batch_rows,
                 )
+                metrics["batches_written"] += 1
+                metrics["rows_written"] += len(batch_rows)
+            return metrics
 
     def clear_all_edges(self) -> int:
         """Delete all RELATES_TO edges from Neo4j and return count."""

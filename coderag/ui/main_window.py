@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sys
 import time
-from typing import Any, Dict
+from typing import Any, Callable, Dict, Optional
 
 import requests
 from requests import Response
@@ -28,21 +28,34 @@ class MainWindow(QMainWindow):
         tabs.addTab(QueryView(self.query), "Query")
         self.setCentralWidget(tabs)
 
-    def ingest(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+    def ingest(
+        self,
+        payload: Dict[str, Any],
+        on_update: Optional[Callable[[Dict[str, Any]], None]] = None,
+    ) -> Dict[str, Any]:
         """Run ingestion using async job polling when available."""
         async_response = self._post_json(
             "/sources/ingest/async", payload, timeout=15
         )
+        if on_update is not None:
+            on_update(async_response)
 
         if self._is_async_disabled(async_response):
             # Fallback keeps compatibility when USE_RQ is disabled.
-            return self._post_json("/sources/ingest", payload, timeout=3600)
+            sync_response = self._post_json("/sources/ingest", payload, timeout=3600)
+            if on_update is not None:
+                on_update(sync_response)
+            return sync_response
 
         job_id = async_response.get("job_id")
         if not isinstance(job_id, str) or not job_id:
             return async_response
 
-        poll_result = self._poll_job(job_id, timeout_seconds=3600)
+        poll_result = self._poll_job(
+            job_id,
+            timeout_seconds=3600,
+            on_update=on_update,
+        )
         if isinstance(poll_result, dict):
             poll_result.setdefault("job_id", job_id)
         return poll_result
@@ -85,7 +98,12 @@ class MainWindow(QMainWindow):
         except requests.RequestException as exc:
             return self._format_request_exception(exc)
 
-    def _poll_job(self, job_id: str, timeout_seconds: int) -> Dict[str, Any]:
+    def _poll_job(
+        self,
+        job_id: str,
+        timeout_seconds: int,
+        on_update: Optional[Callable[[Dict[str, Any]], None]] = None,
+    ) -> Dict[str, Any]:
         """Poll async ingestion status until completion or timeout."""
         terminal_states = {"completed", "finished", "failed"}
         started = time.monotonic()
@@ -93,6 +111,8 @@ class MainWindow(QMainWindow):
         while time.monotonic() - started < timeout_seconds:
             result = self._get_json(f"/jobs/{job_id}", timeout=30)
             status = str(result.get("status", "")).strip().lower()
+            if on_update is not None:
+                on_update(result)
 
             if status in terminal_states:
                 if status == "finished":

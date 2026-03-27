@@ -11,12 +11,18 @@ La configuracion principal se define en `coderag/core/settings.py`.
 - `retrieval_top_n`: candidatos iniciales del retrieval hibrido
 - `rerank_top_k`: resultados finales para respuesta y evidencia
 - `embedding_size`: dimension esperada para compatibilidad de pipeline
+- `ingest_embed_workers`: concurrencia para embeddings durante ingesta
+- `chroma_upsert_batch_size`: lote de escritura para upserts en Chroma
 
 ## Vector store actual
 
 - `USE_CHROMA`: debe estar en `true` para habilitar runtime vectorial.
 - `CHROMA_PERSIST_DIR`: directorio de persistencia local de ChromaDB.
 - `CHROMA_COLLECTION`: coleccion activa donde se guardan chunks+embeddings.
+- `INGEST_EMBED_WORKERS`: numero de workers para generar embeddings en
+  paralelo durante `rebuild` de indice vectorial.
+- `CHROMA_UPSERT_BATCH_SIZE`: cantidad de chunks por lote en cada upsert a
+  Chroma.
 - Los chunks se persisten en SQLite y tambien se indexan en Chroma con
   embeddings reales durante ingesta.
 - Las consultas generan el embedding del query con el mismo provider/modelo
@@ -76,6 +82,13 @@ La aplicacion carga automaticamente variables desde `.env` en runtime.
 - `NEO4J_URI`
 - `NEO4J_USER`
 - `NEO4J_PASSWORD`
+- `NEO4J_INGEST_BATCH_SIZE`: tamano de bloque para escrituras `UNWIND`
+  durante persistencia de relaciones.
+  Valor recomendado inicial: `500` para optimizar tiempo total de ingesta
+  en cargas medianas/grandes.
+- `NEO4J_INGEST_MAX_RETRIES`: reintentos maximos por bloque cuando hay
+  fallas transitorias de red/lock.
+- `NEO4J_INGEST_RETRY_DELAY_MS`: espera base (ms) entre reintentos.
 - `USE_RQ`: habilita endpoint de ingesta asincrona
 - `REDIS_URL`: conexion para cola RQ
 
@@ -86,6 +99,9 @@ USE_NEO4J=true
 NEO4J_URI=bolt://127.0.0.1:7687
 NEO4J_USER=neo4j
 NEO4J_PASSWORD=password
+NEO4J_INGEST_BATCH_SIZE=500
+NEO4J_INGEST_MAX_RETRIES=2
+NEO4J_INGEST_RETRY_DELAY_MS=150
 ```
 
 ## Source payload

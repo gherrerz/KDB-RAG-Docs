@@ -18,7 +18,7 @@ def _load_rq_modules():
     return Redis, Queue, Job
 
 
-def ingest_task(payload: Dict[str, Any]) -> Dict[str, str]:
+def ingest_task(payload: Dict[str, Any]) -> Dict[str, Any]:
     """Background task entrypoint executed by RQ worker."""
     request = IngestionRequest.model_validate(payload)
     service = RagApplicationService()
@@ -34,7 +34,7 @@ def enqueue_ingest_job(payload: Dict[str, Any]) -> str:
     return job.id
 
 
-def get_rq_job_status(job_id: str) -> Optional[Dict[str, str]]:
+def get_rq_job_status(job_id: str) -> Optional[Dict[str, Any]]:
     """Return async job status from Redis RQ."""
     try:
         Redis, _queue, Job = _load_rq_modules()
@@ -46,7 +46,7 @@ def get_rq_job_status(job_id: str) -> Optional[Dict[str, str]]:
     status = job.get_status(refresh=True)
     result = job.result if isinstance(job.result, dict) else None
 
-    payload: Dict[str, str] = {
+    payload: Dict[str, Any] = {
         "job_id": job_id,
         "status": status,
         "message": "queued",

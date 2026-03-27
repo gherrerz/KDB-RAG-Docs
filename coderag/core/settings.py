@@ -62,6 +62,12 @@ class Settings(BaseModel):
     embedding_size: int = Field(
         default_factory=lambda: _env_int("EMBEDDING_SIZE", 256)
     )
+    ingest_embedding_workers: int = Field(
+        default_factory=lambda: _env_int("INGEST_EMBED_WORKERS", 4)
+    )
+    chroma_upsert_batch_size: int = Field(
+        default_factory=lambda: _env_int("CHROMA_UPSERT_BATCH_SIZE", 128)
+    )
     use_chroma: bool = Field(
         default_factory=lambda: _env_bool("USE_CHROMA", True)
     )
@@ -158,6 +164,15 @@ class Settings(BaseModel):
     )
     neo4j_password: Optional[str] = Field(
         default_factory=lambda: _env_str("NEO4J_PASSWORD", "password")
+    )
+    neo4j_ingest_batch_size: int = Field(
+        default_factory=lambda: _env_int("NEO4J_INGEST_BATCH_SIZE", 500)
+    )
+    neo4j_ingest_max_retries: int = Field(
+        default_factory=lambda: _env_int("NEO4J_INGEST_MAX_RETRIES", 2)
+    )
+    neo4j_ingest_retry_delay_ms: int = Field(
+        default_factory=lambda: _env_int("NEO4J_INGEST_RETRY_DELAY_MS", 150)
     )
 
     use_rq: bool = Field(default_factory=lambda: _env_bool("USE_RQ", False))

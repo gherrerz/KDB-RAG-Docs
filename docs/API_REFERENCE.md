@@ -36,10 +36,13 @@ Response:
   "source_id": "f0e1d2c3b4a5",
   "documents": "2",
   "chunks": "5",
+  "progress_pct": 100,
   "steps": [
     {
       "name": "folder_scan_completed",
       "status": "ok",
+      "elapsed_ms": 4.12,
+      "progress_pct": 12,
       "details": {
         "path": "sample_data",
         "discovered_files": 2
@@ -74,10 +77,30 @@ Response (sync/local):
   "job_id": "abc123",
   "status": "completed",
   "message": "Indexed 2 docs and 5 chunks",
+  "progress_pct": 100,
+  "steps": [
+    {
+      "ordinal": 1,
+      "name": "folder_scan_completed",
+      "status": "ok",
+      "elapsed_ms": 2.11,
+      "details": {
+        "path": "sample_data",
+        "discovered_files": 2,
+        "progress_pct": 10
+      },
+      "created_at": "2026-03-27T20:06:53.582744+00:00"
+    }
+  ],
   "created_at": "2026-03-27T20:06:53.082744+00:00",
   "updated_at": "2026-03-27T20:06:54.122108+00:00"
 }
 ```
+
+Notas:
+
+- Mientras el job esta en `running`, `steps` va creciendo durante el polling.
+- Cada paso contiene `elapsed_ms` acumulado para facilitar analisis temporal.
 
 Response (async/RQ completado):
 
@@ -88,7 +111,9 @@ Response (async/RQ completado):
   "message": "completed",
   "source_id": "f0e1d2c3b4a5",
   "documents": "2",
-  "chunks": "5"
+  "chunks": "5",
+  "progress_pct": 100,
+  "steps": []
 }
 ```
 
