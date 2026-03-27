@@ -6,14 +6,14 @@ Aplicacion Python para ingesta documental y consulta con RAG hibrido
 ## Features
 
 - Ingesta de documentos locales (`.md`, `.txt`, `.html`, `.htm`, `.pdf`, `.docx`,
-  `.doc`, `.pptx`, `.xlsx`)
+  `.doc`, `.pptx`, `.xlsx`) y Confluence (`source_type=confluence`)
 - Pipeline de chunking semantico por secciones
 - Recuperacion hibrida: vectorial + BM25
 - Expansion por grafo multi-hop
 - Respuesta con evidencia y trazabilidad
 - Soporte de proveedores LLM: OpenAI, Gemini y Vertex AI
 - Seleccion de provider por entorno (`LLM_PROVIDER`) con soporte para
-  `openai`, `gemini` y `vertex` (`vertex_ai` como alias)
+  `local`, `openai`, `gemini` y `vertex` (`vertex_ai` como alias)
 - Modelo de embedding configurable por provider y override global por
   `LLM_EMBEDDING`
 - ChromaDB activo en runtime para persistencia y busqueda vectorial
@@ -100,6 +100,19 @@ Ejemplo `POST /sources/ingest`:
   "source": {
     "source_type": "folder",
     "local_path": "sample_data"
+  }
+}
+```
+
+Ejemplo `POST /sources/ingest` para Confluence:
+
+```json
+{
+  "source": {
+    "source_type": "confluence",
+    "base_url": "https://your-domain.atlassian.net/wiki",
+    "token": "your-api-token",
+    "filters": {}
   }
 }
 ```
@@ -193,6 +206,8 @@ Opciones utiles:
 - `-SkipStart`: no vuelve a levantar servicios.
 - `-SkipUI`: levanta solo API.
 - `-ApiPort 8000`: puerto usado para validar `/health`.
+- Si `USE_RQ=true`, tambien inicia automaticamente un worker RQ para la cola
+  `ingestion`.
 
 ## Configuracion
 
@@ -203,8 +218,10 @@ Ver:
 - `docs/ARCHITECTURE.md`
 
 Variables relevantes de entorno:
-- `LLM_PROVIDER`: provider para consulta y embeddings (`openai`, `gemini`,
-  `vertex`)
+- `LLM_PROVIDER`: provider para consulta y embeddings (`local`, `openai`,
+  `gemini`, `vertex`)
+- Nota: para embeddings el runtime requiere provider externo
+  (`openai`/`gemini`/`vertex`); `local` aplica a respuesta extractiva.
 - `LLM_EMBEDDING`: override global opcional para modelo de embedding
 - `INGEST_EMBED_WORKERS`: workers para generar embeddings en paralelo
 - `CHROMA_UPSERT_BATCH_SIZE`: tamano de lote por escritura en Chroma
@@ -219,6 +236,8 @@ Variables relevantes de entorno:
 - `NEO4J_INGEST_RETRY_DELAY_MS`: espera base en milisegundos para reintentos
 - `OPENAI_EMBEDDING_MODEL`, `GEMINI_EMBEDDING_MODEL`,
   `VERTEX_EMBEDDING_MODEL`: modelos por provider
+- `RQ_INGEST_JOB_TIMEOUT_SEC`: timeout en segundos para ingestas async con
+  RQ (`USE_RQ=true`). Default: `900`.
 
 Plantillas listas para copiar:
 - `.env.openai.example`
@@ -235,8 +254,18 @@ El diseño de modulos permite evolucionar componentes opcionales como:
 ## Observabilidad de ingesta
 
 - Durante la ingesta, la UI muestra progreso (`progress_pct`) y timeline de
-  pasos con `elapsed_ms` por paso.
+  pasos con `elapsed_hhmmss` por paso (`hh:mm:ss`).
 - `GET /jobs/{id}` devuelve `steps` persistidos por job para diagnostico,
   incluso en ejecuciones asincronas.
+- Cuando una ingesta async (`USE_RQ=true`) termina en `completed`, el API
+  refresca retrieval en el siguiente `/query` automaticamente sin reiniciar
+  servicios (reconstruye BM25 en memoria y reutiliza vectores ya persistidos
+  en Chroma).
 - El resumen visual de progreso permite detectar rapidamente etapas lentas
   (parseo, chunking, grafo o indexacion).
+
+## Consistencia de consulta
+
+- `source_id` en `/query` aplica filtro real sobre retrieval BM25/vector.
+- Si `source_id` no existe, `citations` retorna vacio en lugar de mezclar
+  resultados de otras fuentes.

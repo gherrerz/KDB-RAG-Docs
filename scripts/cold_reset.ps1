@@ -30,7 +30,9 @@ function Resolve-PythonExe {
 function Stop-ActiveServices {
     $targets = Get-CimInstance Win32_Process | Where-Object {
         $_.Name -match '^python(\.exe)?$' -and
-        $_.CommandLine -match 'run_(api|ui)\.py'
+        $_.CommandLine -match (
+            'run_(api|ui)\.py|coderag\.jobs\.worker|rq\s+worker\s+ingestion'
+        )
     }
 
     if (-not $targets) {
@@ -51,6 +53,31 @@ function Stop-ActiveServices {
             )
         }
     }
+}
+
+function Resolve-UseRQ {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$PythonExe,
+        [Parameter(Mandatory = $true)]
+        [string]$RepoRoot
+    )
+
+    $srcDir = Join-Path $RepoRoot "src"
+    $code = @'
+import sys
+
+sys.path.insert(0, sys.argv[1])
+from coderag.core.settings import SETTINGS
+
+print(SETTINGS.use_rq)
+'@
+
+    $result = & $PythonExe -c $code $srcDir
+    if (-not $result) {
+        throw "No se pudo resolver USE_RQ desde runtime settings."
+    }
+    return (($result | Select-Object -Last 1).Trim().ToLower() -eq "true")
 }
 
 function Invoke-ColdReset {
@@ -78,7 +105,8 @@ function Start-Services {
         [string]$RepoRoot,
         [Parameter(Mandatory = $true)]
         [int]$Port,
-        [switch]$StartUI
+        [switch]$StartUI,
+        [switch]$StartRQWorker
     )
 
     $api = Start-Process -FilePath $PythonExe -ArgumentList @("run_api.py") -WorkingDirectory $RepoRoot -PassThru
@@ -103,6 +131,13 @@ with urllib.request.urlopen(url, timeout=8) as response:
         Write-Warning "No se pudo validar /health inmediatamente."
     }
 
+    if ($StartRQWorker) {
+        $srcDir = Join-Path $RepoRoot "src"
+        $workerCode = "import sys; sys.path.insert(0, sys.argv[1]); from coderag.jobs.worker import run_worker; run_worker()"
+        $worker = Start-Process -FilePath $PythonExe -ArgumentList @("-c", "`"$workerCode`"", "`"$srcDir`"") -WorkingDirectory $RepoRoot -PassThru
+        Write-Host ("RQ worker iniciado. PID={0}" -f $worker.Id)
+    }
+
     if ($StartUI) {
         $ui = Start-Process -FilePath $PythonExe -ArgumentList @("run_ui.py") -WorkingDirectory $RepoRoot -PassThru
         Write-Host ("UI iniciada. PID={0}" -f $ui.Id)
@@ -111,6 +146,7 @@ with urllib.request.urlopen(url, timeout=8) as response:
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $pythonExe = Resolve-PythonExe -RepoRoot $repoRoot
+$useRQ = Resolve-UseRQ -PythonExe $pythonExe -RepoRoot $repoRoot
 
 if (-not $Force) {
     $confirmation = Read-Host "Esto borrara datos locales (Chroma/metadata) y aristas Neo4j. Escriba YES para continuar"
@@ -124,7 +160,7 @@ Stop-ActiveServices
 Invoke-ColdReset -PythonExe $pythonExe -RepoRoot $repoRoot
 
 if (-not $SkipStart) {
-    Start-Services -PythonExe $pythonExe -RepoRoot $repoRoot -Port $ApiPort -StartUI:(-not $SkipUI)
+    Start-Services -PythonExe $pythonExe -RepoRoot $repoRoot -Port $ApiPort -StartUI:(-not $SkipUI) -StartRQWorker:$useRQ
 }
 
 Write-Host "Cold reset finalizado."

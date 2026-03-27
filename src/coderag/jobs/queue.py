@@ -26,9 +26,17 @@ def _load_rq_modules():
 
 def ingest_task(job_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     """Background task entrypoint executed by RQ worker."""
-    request = IngestionRequest.model_validate(payload)
-    service = RagApplicationService()
-    return service.ingest(request, job_id=job_id)
+    try:
+        request = IngestionRequest.model_validate(payload)
+        service = RagApplicationService()
+        return service.ingest(request, job_id=job_id)
+    except Exception as exc:  # pragma: no cover - worker boundary
+        RUNTIME.store.touch_job(
+            job_id,
+            "failed",
+            f"FAILED | rq worker: {exc}",
+        )
+        raise
 
 
 def _run_local_ingest_job(job_id: str, payload: Dict[str, Any]) -> None:
@@ -69,7 +77,13 @@ def enqueue_ingest_job(payload: Dict[str, Any]) -> str:
     redis_conn = Redis.from_url(SETTINGS.redis_url)
     queue = Queue("ingestion", connection=redis_conn)
     job_id = uuid.uuid4().hex[:12]
-    job = queue.enqueue(ingest_task, job_id, payload, job_id=job_id)
+    job = queue.enqueue(
+        ingest_task,
+        job_id,
+        payload,
+        job_id=job_id,
+        job_timeout=SETTINGS.rq_ingest_job_timeout_sec,
+    )
     RUNTIME.store.touch_job(job_id, "queued", "Ingestion job enqueued")
     return job.id
 

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from coderag.core.models import ChunkRecord
 from coderag.ingestion.index_bm25 import BM25Index, normalize_scores
@@ -16,10 +16,11 @@ def hybrid_search(
     vector_index: LocalVectorIndex,
     top_n: int,
     alpha: float = 0.55,
+    source_id: Optional[str] = None,
 ) -> List[Tuple[ChunkRecord, float, Dict[str, float]]]:
     """Combine BM25 and vector scores into a unified ranking."""
-    bm25_hits = bm25_index.search(query, top_n)
-    vector_hits = vector_index.search(query, top_n)
+    bm25_hits = bm25_index.search(query, top_n, source_id=source_id)
+    vector_hits = vector_index.search(query, top_n, source_id=source_id)
 
     bm25_norm = normalize_scores(bm25_hits)
     vector_norm = normalize_scores(vector_hits)

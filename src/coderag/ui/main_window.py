@@ -58,7 +58,7 @@ class MainWindow(QMainWindow):
 
     def query(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Call backend query endpoint."""
-        return self._post_json("/query", payload, timeout=60)
+        return self._post_json("/query", payload, timeout=180)
 
     def reset_all(self) -> Dict[str, Any]:
         """Call backend endpoint to clear all repositories and indexes."""

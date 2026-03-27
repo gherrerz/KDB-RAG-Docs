@@ -25,7 +25,8 @@ adicionales de produccion:
 - API FastAPI (`src/coderag/api/server.py`) como fachada de operaciones.
 - Orquestador de negocio (`src/coderag/core/service.py`) con flujo end-to-end.
 - Persistencia SQLite (`src/coderag/storage/metadata_store.py`) para documentos,
-  chunks, aristas, jobs y eventos de timeline por job (`job_events`).
+  chunks, aristas, jobs, eventos de timeline por job (`job_events`) y estado
+  de runtime (`runtime_state`).
 - Persistencia vectorial en Chroma (`src/coderag/ingestion/index_chroma.py`) para
   embeddings de chunks y busqueda de similitud.
 - Retrieval hibrido (`src/coderag/retrieval/*`) con ranking y expansion por grafo.
@@ -43,6 +44,8 @@ adicionales de produccion:
   reutilizados por UI/API para seguimiento en vivo.
 - Performante por lotes: documentos, Chroma y Neo4j se procesan con estrategias
   de batching para reducir latencia total en ingestas medianas/grandes.
+- Consistencia cross-process: en modo async con RQ, la API detecta cambios
+  de `index_version` en SQLite y refresca indices en query sin reinicio.
 
 ## Diagrama de infraestructura por capas
 
@@ -221,12 +224,18 @@ sequenceDiagram
 
     User->>API: POST /query
     API->>SVC: query(request)
-    SVC->>EMB: embed(question)
-    EMB-->>SVC: query vector
+    SVC->>DB: get_index_version()
+    alt Version cambio por ingesta async
+      SVC->>DB: list_chunks()
+      SVC->>BM25: rebuild(chunks)
+      Note over SVC,VEC: Chroma ya persistio vectores en worker; no hay re-embedding global en API
+    end
 
     SVC->>RET: hybrid_search(question)
     RET->>BM25: search(top_n)
     RET->>VEC: search(top_n)
+    VEC->>EMB: embed(question)
+    EMB-->>VEC: query vector
     RET-->>SVC: candidatos fusionados
 
     SVC->>RET: rerank_results(question, hits, top_k)
@@ -251,6 +260,18 @@ sequenceDiagram
 - Docker Compose incluye servicios `redis` y `neo4j`; la capa vectorial usa
   Chroma embebido en disco dentro de la API (`CHROMA_PERSIST_DIR`).
 
+## Consistencia post-ingesta async
+
+- El worker de ingesta (RQ) persiste chunks en SQLite y vectores en Chroma,
+  luego incrementa `index_version` en `runtime_state`.
+- La API mantiene un `loaded_index_version` en memoria por proceso.
+- En el siguiente `/query`, si detecta mismatch de version:
+  - reconstruye BM25 desde SQLite,
+  - reutiliza vectores ya persistidos en Chroma,
+  - actualiza su version cargada y continua el retrieval.
+- Este enfoque evita reinicio manual de API y reduce el riesgo de timeout en
+  la primera consulta posterior a ingesta async.
+
 ## Optimizaciones recientes de ingesta
 
 - Persistencia de documentos en SQLite en lote (`upsert_documents`) para
@@ -260,7 +281,7 @@ sequenceDiagram
 - Generacion de embeddings de chunks con concurrencia configurable y escritura
   a Chroma por lotes para mejorar throughput.
 - Timeline de ingesta persistido en `job_events` con progreso (`progress_pct`)
-  y `elapsed_ms` acumulado para visualizacion en UI y polling de jobs.
+  y `elapsed_hhmmss` acumulado para visualizacion en UI y polling de jobs.
 
 Parametros de tuning relevantes:
 

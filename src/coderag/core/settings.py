@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from dotenv import load_dotenv
 
 
@@ -182,6 +182,17 @@ class Settings(BaseModel):
             or "redis://localhost:6379/0"
         )
     )
+    rq_ingest_job_timeout_sec: int = Field(
+        default_factory=lambda: _env_int("RQ_INGEST_JOB_TIMEOUT_SEC", 900)
+    )
+
+    @field_validator("rq_ingest_job_timeout_sec")
+    @classmethod
+    def validate_rq_ingest_job_timeout_sec(cls, value: int) -> int:
+        """Ensure RQ ingest timeout is a positive integer."""
+        if value <= 0:
+            raise ValueError("RQ_INGEST_JOB_TIMEOUT_SEC must be > 0")
+        return value
 
     @staticmethod
     def _normalize_provider_name(provider: str) -> str:

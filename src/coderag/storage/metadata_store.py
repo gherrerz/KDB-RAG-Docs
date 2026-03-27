@@ -83,6 +83,12 @@ class MetadataStore:
                     UNIQUE(job_id, ordinal)
                 );
 
+                CREATE TABLE IF NOT EXISTS runtime_state (
+                    state_key TEXT PRIMARY KEY,
+                    state_value TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_documents_source
                 ON documents(source_id);
 
@@ -485,5 +491,81 @@ class MetadataStore:
                 "deleted_graph_edges": max(0, int(deleted_graph_edges)),
                 "deleted_jobs": max(0, int(deleted_jobs)),
             }
+        finally:
+            conn.close()
+
+    def get_runtime_state(self, key: str) -> Optional[str]:
+        """Return persisted runtime state value by key."""
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                "SELECT state_value FROM runtime_state WHERE state_key = ?",
+                (key,),
+            ).fetchone()
+            if row is None:
+                return None
+            return str(row["state_value"])
+        finally:
+            conn.close()
+
+    def set_runtime_state(self, key: str, value: str) -> None:
+        """Persist runtime state value by key."""
+        conn = self._connect()
+        try:
+            conn.execute(
+                """
+                INSERT INTO runtime_state (state_key, state_value, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(state_key) DO UPDATE SET
+                    state_value = excluded.state_value,
+                    updated_at = excluded.updated_at;
+                """,
+                (key, value, datetime.now(UTC).isoformat()),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def get_index_version(self) -> int:
+        """Return monotonic index version shared across processes."""
+        raw_value = self.get_runtime_state("index_version")
+        if raw_value is None:
+            return 0
+        try:
+            return int(raw_value)
+        except ValueError:
+            return 0
+
+    def bump_index_version(self) -> int:
+        """Atomically increment and return index version."""
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                "SELECT state_value FROM runtime_state WHERE state_key = ?",
+                ("index_version",),
+            ).fetchone()
+            current = 0
+            if row is not None:
+                try:
+                    current = int(str(row["state_value"]))
+                except ValueError:
+                    current = 0
+            next_value = current + 1
+            conn.execute(
+                """
+                INSERT INTO runtime_state (state_key, state_value, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(state_key) DO UPDATE SET
+                    state_value = excluded.state_value,
+                    updated_at = excluded.updated_at;
+                """,
+                (
+                    "index_version",
+                    str(next_value),
+                    datetime.now(UTC).isoformat(),
+                ),
+            )
+            conn.commit()
+            return next_value
         finally:
             conn.close()

@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import json
 from concurrent.futures import ThreadPoolExecutor
-from typing import List, Sequence, Tuple
+from typing import List, Optional, Sequence, Tuple
 
 import chromadb
 from chromadb.api.models.Collection import Collection
-from chromadb.errors import InvalidDimensionException
+from chromadb.errors import InvalidCollectionException, InvalidDimensionException
 
 from coderag.core.models import ChunkRecord
 from coderag.core.settings import SETTINGS
@@ -86,7 +86,12 @@ class ChromaVectorIndex:
 
     def _clear_source(self, source_id: str) -> None:
         """Delete existing vectors belonging to one source."""
-        self._collection.delete(where={"source_id": source_id})
+        try:
+            self._collection.delete(where={"source_id": source_id})
+        except InvalidCollectionException:
+            # Another process may recreate the collection (e.g. reset).
+            self._collection = self._get_or_create_collection()
+            self._collection.delete(where={"source_id": source_id})
 
     def _embed_chunks(self, chunks: Sequence[ChunkRecord]) -> List[List[float]]:
         """Generate embeddings with bounded parallelism for I/O providers."""
@@ -142,9 +147,10 @@ class ChromaVectorIndex:
 
         try:
             _upsert_all()
-        except InvalidDimensionException:
+        except (InvalidDimensionException, InvalidCollectionException):
             # Auto-heal when persisted collection was created with another
-            # embedding dimensionality.
+            # embedding dimensionality or when a stale collection handle was
+            # invalidated by another process.
             try:
                 self.clear_all()
                 _upsert_all()
@@ -158,12 +164,18 @@ class ChromaVectorIndex:
         self,
         query: str,
         top_n: int,
+        source_id: Optional[str] = None,
     ) -> List[Tuple[ChunkRecord, float]]:
         """Search similar chunks in Chroma using query embeddings."""
         if top_n <= 0:
             return []
-        if self._collection.count() == 0:
-            return []
+        try:
+            if self._collection.count() == 0:
+                return []
+        except InvalidCollectionException:
+            self._collection = self._get_or_create_collection()
+            if self._collection.count() == 0:
+                return []
 
         query_vec = embed_text(
             query,
@@ -172,12 +184,15 @@ class ChromaVectorIndex:
             model=self.embedding_model,
         )
         try:
-            payload = self._collection.query(
-                query_embeddings=[query_vec],
-                n_results=top_n,
-                include=["documents", "metadatas", "distances"],
-            )
-        except InvalidDimensionException:
+            params = {
+                "query_embeddings": [query_vec],
+                "n_results": top_n,
+                "include": ["documents", "metadatas", "distances"],
+            }
+            if source_id:
+                params["where"] = {"source_id": source_id}
+            payload = self._collection.query(**params)
+        except (InvalidDimensionException, InvalidCollectionException):
             return []
 
         ids = payload.get("ids", [[]])

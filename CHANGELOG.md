@@ -36,11 +36,30 @@
 	acotados para fallas transitorias.
 - Default recomendado ajustado para `NEO4J_INGEST_BATCH_SIZE=500` en
 	optimizacion orientada a tiempo total de ingesta.
+- **BREAKING**: payload publico de ingesta/jobs reemplaza `elapsed_ms` por
+	`elapsed_hhmmss` (`hh:mm:ss`) en `steps` y `metrics`.
 
 ### Fixed
 - `reset_all` ahora limpia tambien la coleccion vectorial activa de Chroma.
 - Ingestion UI ahora muestra progreso y timeline en vivo tambien con
 	`USE_RQ=false` usando worker async local (sin fallback bloqueante sync).
+- Worker RQ compatible con Windows (`SimpleWorker` + `TimerDeathPenalty`)
+	para evitar fallas por `SIGALRM`.
+- Timeout de ingesta RQ ahora configurable via
+	`RQ_INGEST_JOB_TIMEOUT_SEC` (default `900`) para evitar fallas por
+	limite default de `180s` en cargas largas.
+- La primera consulta tras ingesta async ya no reindexa vectores completos en
+	el proceso API: el refresh por version reconstruye solo BM25 para reducir
+	latencia y evitar timeouts iniciales.
+- Timeout de consulta desde UI aumentado de 60s a 180s para reducir errores
+	transitorios en primer query posterior a ingestas grandes.
+- Jobs RQ ahora se marcan como `failed` en metadata local si el worker lanza
+	excepcion, evitando estados `queued` permanentes.
+- Consistencia de consulta tras ingesta async: `/query` ahora detecta cambios
+	en indices persistidos y refresca retrieval automaticamente en el proceso
+	API sin requerir reinicio.
+- `source_id` en `/query` ahora filtra retrieval BM25/vector de forma real,
+	evitando resultados mezclados de otras fuentes.
 
 ## [0.1.1] - 2026-03-27
 

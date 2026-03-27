@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Dict, List, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 from rank_bm25 import BM25Okapi
 
@@ -26,6 +26,7 @@ class BM25Index:
         self,
         query: str,
         top_n: int,
+        source_id: Optional[str] = None,
     ) -> List[Tuple[ChunkRecord, float]]:
         """Return BM25 results sorted by score."""
         if self._bm25 is None:
@@ -38,7 +39,12 @@ class BM25Index:
         )
         results: List[Tuple[ChunkRecord, float]] = []
         for idx, score in ranked[:top_n]:
-            results.append((self._chunks[idx], float(score)))
+            chunk = self._chunks[idx]
+            if source_id and chunk.source_id != source_id:
+                continue
+            results.append((chunk, float(score)))
+            if len(results) >= top_n:
+                break
         return results
 
 

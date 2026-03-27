@@ -32,7 +32,7 @@ La configuracion principal se define en `src/coderag/core/settings.py`.
 
 ## LLM providers
 
-- `LLM_PROVIDER`: `openai`, `gemini`, `vertex`
+- `LLM_PROVIDER`: `local`, `openai`, `gemini`, `vertex`
   - Compatibilidad: `vertex_ai` tambien es aceptado como alias.
 - `OPENAI_API_KEY`
 - `OPENAI_BASE_URL` (default `https://api.openai.com/v1`)
@@ -74,6 +74,14 @@ Precedencia:
 3. Sin fallback local: si no hay credenciales/provider valido, la operacion
   falla con error explicito.
 
+### Fallback de respuesta LLM
+
+- Para la fase de embeddings: no existe fallback local; si falla el provider,
+  la operacion falla con error explicito.
+- Para la fase de respuesta final: existe fallback extractivo local en
+  `ProviderLlmClient` cuando el provider remoto falla o cuando
+  `force_fallback=true`.
+
 ## Graph and async integration
 
 La aplicacion carga automaticamente variables desde `.env` en runtime.
@@ -91,6 +99,9 @@ La aplicacion carga automaticamente variables desde `.env` en runtime.
 - `NEO4J_INGEST_RETRY_DELAY_MS`: espera base (ms) entre reintentos.
 - `USE_RQ`: habilita endpoint de ingesta asincrona
 - `REDIS_URL`: conexion para cola RQ
+- `RQ_INGEST_JOB_TIMEOUT_SEC`: timeout (segundos) para jobs de ingesta en
+  RQ. Default `900`. Aumentar en ingestas largas para evitar errores por
+  timeout de worker.
 
 Ejemplo rapido Neo4j local:
 
@@ -106,6 +117,8 @@ NEO4J_INGEST_RETRY_DELAY_MS=150
 
 ## Source payload
 
+Ejemplo `folder`:
+
 ```json
 {
   "source": {
@@ -113,6 +126,19 @@ NEO4J_INGEST_RETRY_DELAY_MS=150
     "local_path": "sample_data",
     "base_url": null,
     "token": null,
+    "filters": {}
+  }
+}
+```
+
+Ejemplo `confluence`:
+
+```json
+{
+  "source": {
+    "source_type": "confluence",
+    "base_url": "https://your-domain.atlassian.net/wiki",
+    "token": "your-api-token",
     "filters": {}
   }
 }

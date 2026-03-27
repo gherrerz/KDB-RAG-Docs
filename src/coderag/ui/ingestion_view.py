@@ -223,6 +223,8 @@ class IngestionView(QWidget):
         steps = result.get("steps")
         if isinstance(steps, list) and steps:
             lines.append("\nIngestion Timeline:")
+            timed_steps = 0
+            total_elapsed = ""
             for index, step in enumerate(steps, start=1):
                 if not isinstance(step, dict):
                     continue
@@ -230,10 +232,12 @@ class IngestionView(QWidget):
                 display_index = int(ordinal) if isinstance(ordinal, int) else index
                 name = str(step.get("name", "step"))
                 step_status = str(step.get("status", "ok"))
-                elapsed_ms = step.get("elapsed_ms")
+                elapsed_hhmmss = step.get("elapsed_hhmmss")
                 elapsed_hint = ""
-                if isinstance(elapsed_ms, (int, float)):
-                    elapsed_hint = f" ({round(float(elapsed_ms), 2)} ms)"
+                if isinstance(elapsed_hhmmss, str) and elapsed_hhmmss:
+                    elapsed_hint = f" ({elapsed_hhmmss})"
+                    timed_steps += 1
+                    total_elapsed = elapsed_hhmmss
                 lines.append(
                     f"{display_index}. [{step_status}] {name}{elapsed_hint}"
                 )
@@ -244,16 +248,10 @@ class IngestionView(QWidget):
                             continue
                         lines.append(f"   - {key}: {value}")
 
-            durations = [
-                float(step.get("elapsed_ms"))
-                for step in steps
-                if isinstance(step, dict)
-                and isinstance(step.get("elapsed_ms"), (int, float))
-            ]
-            if durations:
+            if timed_steps > 0:
                 lines.append("\nProgress Summary:")
-                lines.append(f"- total_elapsed_ms: {round(max(durations), 2)}")
-                lines.append(f"- recorded_steps: {len(durations)}")
+                lines.append(f"- total_elapsed_hhmmss: {total_elapsed}")
+                lines.append(f"- recorded_steps: {timed_steps}")
 
         lines.append("\nRaw JSON:")
         lines.append(json.dumps(result, indent=2, ensure_ascii=False))

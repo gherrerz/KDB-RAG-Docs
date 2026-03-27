@@ -11,6 +11,16 @@ from coderag.api import server
 from coderag.ingestion import index_chroma
 
 
+def _looks_like_hhmmss(value: object) -> bool:
+    """Validate expected HH:MM:SS format used in public time payloads."""
+    if not isinstance(value, str):
+        return False
+    parts = value.split(":")
+    if len(parts) != 3:
+        return False
+    return all(part.isdigit() and len(part) == 2 for part in parts)
+
+
 def _fake_embed_text(
     text: str,
     size: int = 256,
@@ -86,6 +96,13 @@ def test_async_ingest_uses_local_worker_when_rq_disabled() -> None:
 
         assert seen_progress
         assert final_status == "completed"
+        steps = job_payload.get("steps", [])
+        assert isinstance(steps, list)
+        if steps:
+            first_step = steps[0]
+            assert isinstance(first_step, dict)
+            assert "elapsed_ms" not in first_step
+            assert _looks_like_hhmmss(first_step.get("elapsed_hhmmss"))
     finally:
         server.SETTINGS.use_rq = original
         server.SETTINGS.use_neo4j = original_neo4j

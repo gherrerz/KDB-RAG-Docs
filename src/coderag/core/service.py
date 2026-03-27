@@ -29,6 +29,38 @@ from coderag.retrieval.hybrid_search import hybrid_search
 from coderag.retrieval.reranker import rerank_results
 
 
+def _format_elapsed_hhmmss(elapsed_ms: float) -> str:
+    """Convert elapsed milliseconds to HH:MM:SS for public payloads."""
+    safe_ms = max(0.0, float(elapsed_ms))
+    total_seconds = int(safe_ms // 1000)
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+
+def _as_public_timed_payload(payload: Dict[str, object]) -> Dict[str, object]:
+    """Replace elapsed_ms fields with elapsed_hhmmss in outward payloads."""
+    public_payload = dict(payload)
+
+    raw_elapsed = public_payload.pop("elapsed_ms", None)
+    if isinstance(raw_elapsed, (int, float)):
+        public_payload["elapsed_hhmmss"] = _format_elapsed_hhmmss(
+            float(raw_elapsed)
+        )
+
+    details = public_payload.get("details")
+    if isinstance(details, dict):
+        details_public = dict(details)
+        details_elapsed = details_public.pop("elapsed_ms", None)
+        if isinstance(details_elapsed, (int, float)):
+            details_public["elapsed_hhmmss"] = _format_elapsed_hhmmss(
+                float(details_elapsed)
+            )
+        public_payload["details"] = details_public
+
+    return public_payload
+
+
 class RagApplicationService:
     """Coordinates indexing and retrieval pipeline for API and UI."""
 
@@ -44,6 +76,7 @@ class RagApplicationService:
         )
         self.llm = ProviderLlmClient()
         self.graph_store = GraphStore()
+        self._loaded_index_version = -1
         self.rebuild_indexes()
 
     def rebuild_indexes(self, source_id: Optional[str] = None) -> None:
@@ -51,6 +84,26 @@ class RagApplicationService:
         chunks = self.store.list_chunks(source_id=source_id)
         self.bm25_index.rebuild(chunks)
         self.vector_index.rebuild(chunks)
+        self._loaded_index_version = self.store.get_index_version()
+
+    def _refresh_indexes_after_external_update(self) -> None:
+        """Refresh in-memory retrieval state after external ingestion.
+
+        The async worker already persists vector updates into Chroma. During
+        API-side refresh we only need to rebuild BM25 from SQLite chunks and
+        update the loaded version marker. This avoids re-embedding all chunks
+        on the first query after async ingestion.
+        """
+        chunks = self.store.list_chunks()
+        self.bm25_index.rebuild(chunks)
+        self._loaded_index_version = self.store.get_index_version()
+
+    def _ensure_fresh_indexes(self) -> None:
+        """Refresh indexes when a different process updated persisted state."""
+        current_version = self.store.get_index_version()
+        if current_version == self._loaded_index_version:
+            return
+        self._refresh_indexes_after_external_update()
 
     def close(self) -> None:
         """Release external resources held by the service."""
@@ -64,6 +117,8 @@ class RagApplicationService:
 
         neo4j_enabled = True
         neo4j_edges_deleted = self.graph_store.clear_all_edges()
+
+        self.store.bump_index_version()
 
         # Rebuild both retrieval indexes from now-empty metadata tables.
         self.rebuild_indexes()
@@ -117,7 +172,7 @@ class RagApplicationService:
                 "name": name,
                 "status": status,
                 "details": details,
-                "elapsed_ms": elapsed_ms,
+                "elapsed_hhmmss": _format_elapsed_hhmmss(elapsed_ms),
             }
             if progress_pct is not None:
                 step_payload["progress_pct"] = round(progress_pct, 2)
@@ -291,7 +346,7 @@ class RagApplicationService:
         _add_step(
             "ingestion_completed",
             {
-                "elapsed_ms": elapsed_ms,
+                "elapsed_hhmmss": _format_elapsed_hhmmss(elapsed_ms),
             },
             progress_pct=100.0,
         )
@@ -301,6 +356,7 @@ class RagApplicationService:
             "completed",
             f"Indexed {len(documents)} docs and {len(chunks)} chunks",
         )
+        self.store.bump_index_version()
         return {
             "job_id": job_id,
             "status": "completed",
@@ -310,7 +366,7 @@ class RagApplicationService:
             "steps": steps,
             "progress_pct": 100.0,
             "metrics": {
-                "elapsed_ms": elapsed_ms,
+                "elapsed_hhmmss": _format_elapsed_hhmmss(elapsed_ms),
                 "discovered_files": load_stats.get("discovered_files", 0),
                 "parsed_documents": load_stats.get("parsed_documents", 0),
                 "skipped_empty": load_stats.get("skipped_empty", 0),
@@ -333,6 +389,8 @@ class RagApplicationService:
         if job.status == "completed":
             progress_pct = 100.0
 
+        public_events = [_as_public_timed_payload(event) for event in events]
+
         return {
             "job_id": job.job_id,
             "status": job.status,
@@ -340,11 +398,18 @@ class RagApplicationService:
             "created_at": job.created_at.isoformat(),
             "updated_at": job.updated_at.isoformat(),
             "progress_pct": round(progress_pct, 2),
-            "steps": events,
+            "steps": public_events,
         }
 
     def query(self, request: QueryRequest) -> QueryResponse:
         """Run hybrid retrieval + graph expansion + grounded answering."""
+        try:
+            self._ensure_fresh_indexes()
+        except Exception as exc:
+            raise RuntimeError(
+                "Failed to refresh retrieval indexes after async ingestion."
+            ) from exc
+
         top_n = SETTINGS.retrieval_top_n
         top_k = SETTINGS.rerank_top_k
         hops = (
@@ -358,6 +423,7 @@ class RagApplicationService:
             bm25_index=self.bm25_index,
             vector_index=self.vector_index,
             top_n=top_n,
+            source_id=request.source_id,
         )
         reranked = rerank_results(request.question, hits, top_k=top_k)
         chunks = [item[0] for item in reranked]

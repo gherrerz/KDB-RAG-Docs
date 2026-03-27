@@ -26,12 +26,13 @@ Habilita primero en entorno:
 ```bash
 set USE_RQ=true
 set REDIS_URL=redis://localhost:6379/0
+set RQ_INGEST_JOB_TIMEOUT_SEC=900
 ```
 
 Luego ejecuta:
 
 ```bash
-python -c "from coderag.jobs.worker import run_worker; run_worker()"
+python -c "import sys; from pathlib import Path; sys.path.insert(0, str(Path('src').resolve())); from coderag.jobs.worker import run_worker; run_worker()"
 ```
 
 ## Run desktop UI

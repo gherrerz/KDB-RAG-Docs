@@ -41,7 +41,7 @@ Response:
     {
       "name": "folder_scan_completed",
       "status": "ok",
-      "elapsed_ms": 4.12,
+      "elapsed_hhmmss": "00:00:00",
       "progress_pct": 12,
       "details": {
         "path": "sample_data",
@@ -50,7 +50,7 @@ Response:
     }
   ],
   "metrics": {
-    "elapsed_ms": 34.72,
+    "elapsed_hhmmss": "00:00:34",
     "discovered_files": 2,
     "parsed_documents": 2,
     "skipped_empty": 0
@@ -83,7 +83,7 @@ Response (sync/local):
       "ordinal": 1,
       "name": "folder_scan_completed",
       "status": "ok",
-      "elapsed_ms": 2.11,
+      "elapsed_hhmmss": "00:00:00",
       "details": {
         "path": "sample_data",
         "discovered_files": 2,
@@ -100,7 +100,11 @@ Response (sync/local):
 Notas:
 
 - Mientras el job esta en `running`, `steps` va creciendo durante el polling.
-- Cada paso contiene `elapsed_ms` acumulado para facilitar analisis temporal.
+- Cada paso contiene `elapsed_hhmmss` acumulado en formato `hh:mm:ss`.
+- Tras `status=completed`, el siguiente `/query` refresca retrieval en API
+  automaticamente (sin restart) cuando la ingesta corrio en worker RQ.
+  El refresh recompone BM25 en memoria y reutiliza vectores persistidos en
+  Chroma (sin reindexacion vectorial global en el proceso API).
 
 Response (async/RQ completado):
 
@@ -186,6 +190,13 @@ Request:
 }
 ```
 
+Notas:
+
+- `llm_provider` acepta `local`, `openai`, `gemini` o `vertex`
+  (`vertex_ai` tambien es valido como alias).
+- Si falla el provider remoto de respuesta, el sistema puede devolver
+  respuesta extractiva local como fallback.
+
 Error estricto de runtime:
 
 - Retorna `503` cuando Chroma no esta disponible o cuando falla la generacion
@@ -208,6 +219,11 @@ Campos relevantes en `diagnostics`:
 - `embedding_model`
 - `llm_fallback_forced`
 - `timestamp`
+
+Notas:
+
+- `source_id` filtra retrieval BM25/vector a la fuente indicada.
+- Si `source_id` no existe, `citations` puede ser vacio.
 
 ## POST /query/retrieval
 
