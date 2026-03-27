@@ -14,7 +14,11 @@ from coderag.core.models import (
 )
 from coderag.core.service import SERVICE
 from coderag.core.settings import SETTINGS
-from coderag.jobs.queue import enqueue_ingest_job, get_rq_job_status
+from coderag.jobs.queue import (
+    enqueue_ingest_job,
+    enqueue_local_ingest_job,
+    get_rq_job_status,
+)
 
 
 @asynccontextmanager
@@ -63,17 +67,17 @@ def reset_sources(request: ResetAllRequest) -> dict[str, Any]:
 @app.post("/sources/ingest/async")
 def ingest_source_async(request: IngestionRequest) -> dict[str, str]:
     """Enqueue ingestion job in Redis RQ when enabled."""
-    if not SETTINGS.use_rq:
-        raise HTTPException(
-            status_code=400,
-            detail="Async ingestion disabled. Set USE_RQ=true.",
-        )
     try:
-        job_id = enqueue_ingest_job(request.model_dump())
+        if SETTINGS.use_rq:
+            job_id = enqueue_ingest_job(request.model_dump())
+            message = "Ingestion job enqueued"
+        else:
+            job_id = enqueue_local_ingest_job(request.model_dump())
+            message = "Ingestion job started (local async worker)"
         return {
             "job_id": job_id,
             "status": "queued",
-            "message": "Ingestion job enqueued",
+            "message": message,
         }
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc

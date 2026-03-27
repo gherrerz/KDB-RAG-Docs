@@ -33,26 +33,12 @@ class MainWindow(QMainWindow):
         payload: Dict[str, Any],
         on_update: Optional[Callable[[Dict[str, Any]], None]] = None,
     ) -> Dict[str, Any]:
-        """Run ingestion using async job polling when available."""
+        """Run ingestion through async endpoint and poll live progress."""
         async_response = self._post_json(
             "/sources/ingest/async", payload, timeout=15
         )
-        if self._is_async_disabled(async_response):
-            # Fallback keeps compatibility when USE_RQ is disabled.
-            if on_update is not None:
-                on_update(
-                    {
-                        "status": "running",
-                        "message": (
-                            "Async ingestion disabled (USE_RQ=false). "
-                            "Running synchronous ingestion."
-                        ),
-                    }
-                )
-            sync_response = self._post_json("/sources/ingest", payload, timeout=3600)
-            if on_update is not None:
-                on_update(sync_response)
-            return sync_response
+        if "error" in async_response or "detail" in async_response:
+            return async_response
 
         if on_update is not None:
             on_update(async_response)
@@ -138,20 +124,6 @@ class MainWindow(QMainWindow):
             "status": "failed",
             "message": "Ingestion job polling timed out.",
         }
-
-    @staticmethod
-    def _is_async_disabled(response: Dict[str, Any]) -> bool:
-        """Detect whether backend rejected async ingestion by configuration."""
-        detail = response.get("detail")
-        if isinstance(detail, str) and (
-            "async ingestion disabled" in detail.strip().lower()
-        ):
-            return True
-
-        error = response.get("error")
-        if not isinstance(error, str):
-            return False
-        return "async ingestion disabled" in error.strip().lower()
 
     @staticmethod
     def _format_request_exception(exc: requests.RequestException) -> Dict[str, Any]:

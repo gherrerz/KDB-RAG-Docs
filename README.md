@@ -19,9 +19,10 @@ Aplicacion Python para ingesta documental y consulta con RAG hibrido
 - ChromaDB activo en runtime para persistencia y busqueda vectorial
 - Embeddings reales por proveedor durante ingesta y consulta
 - UI para operacion de ingesta y consultas
-- UI de ingesta con polling de jobs async y fallback sync para cargas largas
+- UI de ingesta con polling async en vivo (RQ o worker local sin Redis)
 - API REST para integracion externa
 - Ingesta asincrona opcional con Redis + RQ
+- Ingesta asincrona local sin Redis cuando `USE_RQ=false`
 - Trazabilidad de ingesta en UI con timeline en vivo, pasos y metricas
 - Boton `BORRAR TODO` en Ingestion para reset completo de BM25, vector,
   grafo y jobs antes de una nueva primera ingesta

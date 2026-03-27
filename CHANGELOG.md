@@ -39,6 +39,8 @@
 
 ### Fixed
 - `reset_all` ahora limpia tambien la coleccion vectorial activa de Chroma.
+- Ingestion UI ahora muestra progreso y timeline en vivo tambien con
+	`USE_RQ=false` usando worker async local (sin fallback bloqueante sync).
 
 ## [0.1.1] - 2026-03-27
 

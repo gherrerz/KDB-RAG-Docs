@@ -87,9 +87,11 @@ class RagApplicationService:
         progress_callback: Optional[
             Callable[[Dict[str, object]], None]
         ] = None,
+        job_id: Optional[str] = None,
     ) -> Dict[str, object]:
         """Run full ingestion pipeline and persist generated artifacts."""
-        job_id = uuid.uuid4().hex[:12]
+        if not job_id:
+            job_id = uuid.uuid4().hex[:12]
         self.store.touch_job(job_id, "running", "Starting ingestion")
 
         started_at = perf_counter()

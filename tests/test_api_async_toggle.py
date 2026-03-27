@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import time
 
 from fastapi.testclient import TestClient
 
@@ -25,11 +26,35 @@ def _fake_embed_text(
     return buckets
 
 
-def test_async_ingest_disabled_returns_400() -> None:
-    """Ensure async endpoint is guarded when USE_RQ is disabled."""
+def test_async_ingest_uses_local_worker_when_rq_disabled() -> None:
+    """Ensure async endpoint works via local worker when USE_RQ is disabled."""
     client = TestClient(server.app)
     original = server.SETTINGS.use_rq
+    original_embed = index_chroma.embed_text
+    original_provider = server.SETTINGS.llm_provider
+    original_openai_key = server.SETTINGS.openai_api_key
+    original_replace_edges = server.SERVICE.graph_store.replace_edges
+    original_expand_paths = server.SERVICE.graph_store.expand_paths
+    original_clear_all_edges = server.SERVICE.graph_store.clear_all_edges
+    original_neo4j = server.SETTINGS.use_neo4j
+    original_neo4j_uri = server.SETTINGS.neo4j_uri
+    original_neo4j_user = server.SETTINGS.neo4j_user
+    original_neo4j_password = server.SETTINGS.neo4j_password
+
     server.SETTINGS.use_rq = False
+    server.SETTINGS.use_neo4j = True
+    server.SETTINGS.neo4j_uri = "bolt://test-neo4j:7687"
+    server.SETTINGS.neo4j_user = "neo4j"
+    server.SETTINGS.neo4j_password = "password"
+    server.SETTINGS.llm_provider = "openai"
+    server.SETTINGS.openai_api_key = "test-key"
+    index_chroma.embed_text = _fake_embed_text
+    server.SERVICE.graph_store.replace_edges = lambda source_id, edges: None
+    server.SERVICE.graph_store.expand_paths = (
+        lambda query, hops, max_paths: []
+    )
+    server.SERVICE.graph_store.clear_all_edges = lambda: 0
+
     try:
         payload = {
             "source": {
@@ -38,9 +63,41 @@ def test_async_ingest_disabled_returns_400() -> None:
             }
         }
         response = client.post("/sources/ingest/async", json=payload)
-        assert response.status_code == 400
+        assert response.status_code == 200
+        body = response.json()
+        assert body["status"] == "queued"
+        job_id = body["job_id"]
+        assert isinstance(job_id, str) and job_id
+
+        deadline = time.monotonic() + 20.0
+        seen_progress = False
+        final_status = ""
+        while time.monotonic() < deadline:
+            job_response = client.get(f"/jobs/{job_id}")
+            assert job_response.status_code == 200
+            job_payload = job_response.json()
+            final_status = str(job_payload.get("status", ""))
+            if isinstance(job_payload.get("progress_pct"), (int, float)):
+                if float(job_payload["progress_pct"]) > 0.0:
+                    seen_progress = True
+            if final_status in {"completed", "failed"}:
+                break
+            time.sleep(0.2)
+
+        assert seen_progress
+        assert final_status == "completed"
     finally:
         server.SETTINGS.use_rq = original
+        server.SETTINGS.use_neo4j = original_neo4j
+        server.SETTINGS.neo4j_uri = original_neo4j_uri
+        server.SETTINGS.neo4j_user = original_neo4j_user
+        server.SETTINGS.neo4j_password = original_neo4j_password
+        server.SETTINGS.llm_provider = original_provider
+        server.SETTINGS.openai_api_key = original_openai_key
+        index_chroma.embed_text = original_embed
+        server.SERVICE.graph_store.replace_edges = original_replace_edges
+        server.SERVICE.graph_store.expand_paths = original_expand_paths
+        server.SERVICE.graph_store.clear_all_edges = original_clear_all_edges
 
 
 def test_reset_requires_confirmation() -> None:

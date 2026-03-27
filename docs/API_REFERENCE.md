@@ -119,19 +119,20 @@ Response (async/RQ completado):
 
 ## POST /sources/ingest/async
 
-Encola una ingesta en Redis + RQ cuando `USE_RQ=true`.
+Encola una ingesta asincrona y retorna `job_id` para polling.
+
+- Si `USE_RQ=true`: usa Redis + RQ.
+- Si `USE_RQ=false`: usa worker local en background dentro del API.
 
 Response:
 
 ```json
 {
-  "job_id": "rq-job-id",
+  "job_id": "job-id",
   "status": "queued",
   "message": "Ingestion job enqueued"
 }
 ```
-
-Si `USE_RQ=false`, retorna `400` con `detail: "Async ingestion disabled. Set USE_RQ=true."`.
 
 ## POST /sources/reset
 
