@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.1] - 2026-03-27
+
+### Added
+- Documento tecnico de arquitectura con resumen, descripcion general y
+	diagramas Mermaid de capas, componentes y secuencias para ingesta y consulta.
+
+### Changed
+- `README.md` actualizado con endpoint `POST /sources/reset`, soporte `.htm`
+	y referencia a `docs/ARCHITECTURE.md`.
+- `docs/API_REFERENCE.md` actualizado con ejemplos de respuesta real para
+	ingesta, jobs y diagnosticos de consulta.
+
 ## [0.1.0] - 2026-03-26
 
 ### Added

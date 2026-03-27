@@ -5,7 +5,7 @@ Aplicacion Python para ingesta documental y consulta con RAG hibrido
 
 ## Features
 
-- Ingesta de documentos locales (`.md`, `.txt`, `.html`, `.pdf`, `.docx`,
+- Ingesta de documentos locales (`.md`, `.txt`, `.html`, `.htm`, `.pdf`, `.docx`,
   `.doc`, `.pptx`, `.xlsx`)
 - Pipeline de chunking semantico por secciones
 - Recuperacion hibrida: vectorial + BM25
@@ -73,6 +73,7 @@ python run_ui.py
 
 - `GET /health`
 - `POST /sources/ingest`
+- `POST /sources/reset`
 - `POST /sources/ingest/async`
 - `GET /jobs/{id}`
 - `POST /query`
@@ -121,6 +122,29 @@ Respuesta:
 }
 ```
 
+Ejemplo `POST /sources/reset`:
+
+```json
+{
+  "confirm": true
+}
+```
+
+Respuesta:
+
+```json
+{
+  "status": "completed",
+  "message": "All repositories were cleared and indexes were reset.",
+  "deleted_documents": 19,
+  "deleted_chunks": 961,
+  "deleted_graph_edges": 204,
+  "deleted_jobs": 10,
+  "neo4j_enabled": true,
+  "neo4j_edges_deleted": 204
+}
+```
+
 ## Testing
 
 En Windows (recomendado en este repo):
@@ -150,6 +174,7 @@ Ver:
 - `docs/INSTALLATION.md`
 - `docs/CONFIGURATION.md`
 - `docs/API_REFERENCE.md`
+- `docs/ARCHITECTURE.md`
 
 Variables relevantes de entorno:
 - `LLM_PROVIDER`: provider para consulta y embeddings (`openai`, `gemini`,

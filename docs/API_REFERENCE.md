@@ -35,13 +35,57 @@ Response:
   "status": "completed",
   "source_id": "f0e1d2c3b4a5",
   "documents": "2",
-  "chunks": "5"
+  "chunks": "5",
+  "steps": [
+    {
+      "name": "folder_scan_completed",
+      "status": "ok",
+      "details": {
+        "path": "sample_data",
+        "discovered_files": 2
+      }
+    }
+  ],
+  "metrics": {
+    "elapsed_ms": 34.72,
+    "discovered_files": 2,
+    "parsed_documents": 2,
+    "skipped_empty": 0
+  }
 }
 ```
+
+Nota: si no se encuentran documentos soportados, retorna `status=failed` con
+detalle en `message` y trazas en `steps`.
 
 ## GET /jobs/{id}
 
 Consulta el estado de un job de ingesta.
+
+Response (sync/local):
+
+```json
+{
+  "job_id": "abc123",
+  "status": "completed",
+  "message": "Indexed 2 docs and 5 chunks",
+  "created_at": "2026-03-27T20:06:53.082744+00:00",
+  "updated_at": "2026-03-27T20:06:54.122108+00:00"
+}
+```
+
+Response (async/RQ completado):
+
+```json
+{
+  "job_id": "rq-job-id",
+  "status": "finished",
+  "message": "completed",
+  "source_id": "f0e1d2c3b4a5",
+  "documents": "2",
+  "chunks": "5"
+}
+```
 
 ## POST /sources/ingest/async
 
@@ -56,6 +100,8 @@ Response:
   "message": "Ingestion job enqueued"
 }
 ```
+
+Si `USE_RQ=false`, retorna `400` con `detail: "Async ingestion disabled. Set USE_RQ=true."`.
 
 ## POST /sources/reset
 
@@ -115,6 +161,17 @@ Response keys:
 - `citations`
 - `graph_paths`
 - `diagnostics`
+
+Campos relevantes en `diagnostics`:
+
+- `retrieval_candidates`
+- `reranked`
+- `graph_paths`
+- `llm_provider`
+- `embedding_provider`
+- `embedding_model`
+- `llm_fallback_forced`
+- `timestamp`
 
 ## POST /query/retrieval
 
