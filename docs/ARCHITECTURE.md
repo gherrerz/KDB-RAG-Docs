@@ -153,7 +153,7 @@ sequenceDiagram
     participant API as FastAPI
     participant SVC as RagApplicationService
     participant DL as DocumentLoader
-    participant PAR as Parsers
+  participant PRS as Parsers
     participant DB as SQLite MetadataStore
     participant GS as GraphStore (Neo4j opcional)
     participant IDX as BM25 + LocalVectorIndex
@@ -163,8 +163,8 @@ sequenceDiagram
     SVC->>DB: touch_job(running)
 
     SVC->>DL: load_documents(source)
-    DL->>PAR: parse_by_extension(...)
-    PAR-->>DL: texto normalizado
+    DL->>PRS: parse_by_extension(...)
+    PRS-->>DL: texto normalizado
     DL-->>SVC: documentos + estadisticas
 
     alt Sin documentos soportados
