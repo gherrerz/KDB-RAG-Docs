@@ -62,6 +62,21 @@ class Settings(BaseModel):
     embedding_size: int = Field(
         default_factory=lambda: _env_int("EMBEDDING_SIZE", 256)
     )
+    use_chroma: bool = Field(
+        default_factory=lambda: _env_bool("USE_CHROMA", True)
+    )
+    chroma_persist_dir: Path = Field(
+        default_factory=lambda: Path(
+            _env_str("CHROMA_PERSIST_DIR", "storage/chromadb")
+            or "storage/chromadb"
+        )
+    )
+    chroma_collection: str = Field(
+        default_factory=lambda: (
+            _env_str("CHROMA_COLLECTION", "coderag_chunks")
+            or "coderag_chunks"
+        )
+    )
 
     llm_provider: str = Field(
         default_factory=lambda: _env_str("LLM_PROVIDER", "local") or "local"
@@ -192,7 +207,10 @@ class Settings(BaseModel):
             return self.gemini_embedding_model
         if provider_name == "vertex":
             return self.vertex_embedding_model
-        return "local-hash-v1"
+        raise ValueError(
+            "Embedding provider must be openai, gemini or vertex. "
+            f"Received: {provider_name}"
+        )
 
     def is_provider_configured(self, provider: str) -> bool:
         """Check whether provider credentials are available."""
@@ -203,7 +221,33 @@ class Settings(BaseModel):
             return bool(self.gemini_api_key)
         if provider_name == "vertex":
             return bool(self.vertex_ai_api_key and self.vertex_project_id)
-        return True
+        return False
+
+    def require_chroma_enabled(self) -> None:
+        """Fail fast when runtime is not configured for Chroma vector store."""
+        if not self.use_chroma:
+            raise RuntimeError(
+                "USE_CHROMA must be true. This runtime requires ChromaDB "
+                "for vector storage and search."
+            )
+
+    def require_embedding_provider_configured(
+        self,
+        provider: Optional[str] = None,
+    ) -> str:
+        """Validate embedding provider and credentials in strict mode."""
+        provider_name = self.resolve_embedding_provider(provider)
+        if provider_name not in {"openai", "gemini", "vertex"}:
+            raise RuntimeError(
+                "Unsupported embedding provider. Configure LLM_PROVIDER "
+                "as openai, gemini or vertex."
+            )
+        if not self.is_provider_configured(provider_name):
+            raise RuntimeError(
+                "Embedding provider credentials are missing for "
+                f"'{provider_name}'."
+            )
+        return provider_name
 
 
 SETTINGS = Settings()

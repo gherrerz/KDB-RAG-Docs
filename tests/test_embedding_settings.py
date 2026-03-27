@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import pytest
+
 from coderag.core.settings import Settings
-from coderag.ingestion.embedding import embed_text
 
 
 def test_vertex_alias_is_normalized() -> None:
@@ -33,18 +34,22 @@ def test_embedding_model_uses_provider_default() -> None:
     assert settings.resolve_embedding_model() == "text-embedding-3-large"
 
 
-def test_embedding_vectors_change_with_model_selection() -> None:
-    """Model selection should affect deterministic embedding output."""
-    vec_a = embed_text(
-        "Project Atlas dependency graph",
-        size=64,
-        provider="openai",
-        model="text-embedding-3-small",
-    )
-    vec_b = embed_text(
-        "Project Atlas dependency graph",
-        size=64,
-        provider="openai",
-        model="text-embedding-3-large",
-    )
-    assert vec_a != vec_b
+def test_embedding_provider_must_be_external_under_strict_mode() -> None:
+    """Reject local provider when embeddings must come from API providers."""
+    settings = Settings(llm_provider="local")
+    with pytest.raises(RuntimeError):
+        settings.require_embedding_provider_configured()
+
+
+def test_embedding_provider_requires_credentials() -> None:
+    """Fail validation when selected provider has no credentials."""
+    settings = Settings(llm_provider="openai", openai_api_key=None)
+    with pytest.raises(RuntimeError):
+        settings.require_embedding_provider_configured()
+
+
+def test_chroma_must_be_enabled_in_runtime() -> None:
+    """Fail fast when vector runtime is not configured for Chroma."""
+    settings = Settings(use_chroma=False)
+    with pytest.raises(RuntimeError):
+        settings.require_chroma_enabled()

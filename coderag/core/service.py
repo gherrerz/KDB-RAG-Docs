@@ -34,6 +34,7 @@ class RagApplicationService:
     """Coordinates indexing and retrieval pipeline for API and UI."""
 
     def __init__(self) -> None:
+        SETTINGS.require_chroma_enabled()
         self.store = RUNTIME.store
         self.bm25_index = BM25Index()
         self.vector_index = LocalVectorIndex(
@@ -46,7 +47,7 @@ class RagApplicationService:
         self.rebuild_indexes()
 
     def rebuild_indexes(self, source_id: Optional[str] = None) -> None:
-        """Rebuild in-memory indexes from persisted chunks."""
+        """Rebuild retrieval indexes from persisted chunks."""
         chunks = self.store.list_chunks(source_id=source_id)
         self.bm25_index.rebuild(chunks)
         self.vector_index.rebuild(chunks)
@@ -54,10 +55,12 @@ class RagApplicationService:
     def close(self) -> None:
         """Release external resources held by the service."""
         self.graph_store.close()
+        self.vector_index.close()
 
     def reset_all(self) -> ResetAllResponse:
-        """Reset all persisted and in-memory indexing artifacts."""
+        """Reset all persisted indexing artifacts across storage layers."""
         deleted = self.store.clear_all_data()
+        self.vector_index.clear_all()
 
         neo4j_enabled = self.graph_store.is_enabled()
         neo4j_edges_deleted = 0

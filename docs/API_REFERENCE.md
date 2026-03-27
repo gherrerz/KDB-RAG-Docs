@@ -58,6 +58,11 @@ Response:
 Nota: si no se encuentran documentos soportados, retorna `status=failed` con
 detalle en `message` y trazas en `steps`.
 
+Error estricto de runtime:
+
+- Retorna `503` cuando `USE_CHROMA=false`, faltan credenciales del provider
+  de embedding o falla la llamada al proveedor.
+
 ## GET /jobs/{id}
 
 Consulta el estado de un job de ingesta.
@@ -150,10 +155,15 @@ Request:
   "question": "Who works on Project Atlas?",
   "source_id": null,
   "hops": 2,
-  "llm_provider": "local",
+  "llm_provider": "openai",
   "force_fallback": false
 }
 ```
+
+Error estricto de runtime:
+
+- Retorna `503` cuando Chroma no esta disponible o cuando falla la generacion
+  de embeddings con el proveedor configurado.
 
 Response keys:
 

@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.2.0] - 2026-03-27
+
+### Added
+- Integracion activa de ChromaDB en runtime para persistencia y busqueda
+	vectorial de chunks.
+- Configuracion dedicada de Chroma por entorno: `USE_CHROMA`,
+	`CHROMA_PERSIST_DIR`, `CHROMA_COLLECTION`.
+
+### Changed
+- Pipeline de embeddings migrado a proveedores reales (OpenAI, Gemini,
+	Vertex) para ingesta y consulta.
+- Eliminado fallback operativo a embeddings locales en memoria para el flujo
+	de retrieval vectorial.
+- Documentacion (`README`, `CONFIGURATION`, `API_REFERENCE`,
+	`ARCHITECTURE`) alineada con el nuevo runtime vectorial.
+
+### Fixed
+- `reset_all` ahora limpia tambien la coleccion vectorial activa de Chroma.
+
 ## [0.1.1] - 2026-03-27
 
 ### Added

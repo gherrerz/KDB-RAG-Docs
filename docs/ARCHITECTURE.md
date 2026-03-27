@@ -10,13 +10,12 @@ servicios para resolver dos capacidades principales:
 - Consulta con RAG hibrido (vector + BM25 + grafo) con trazabilidad de
   evidencia.
 
-El sistema esta disenado para funcionar en modo local por defecto (sin
-infraestructura externa obligatoria) y habilitar componentes opcionales en
-produccion:
+El sistema esta disenado para operar con ChromaDB activo en runtime para la
+capa vectorial y habilitar componentes opcionales adicionales en produccion:
 
 - Redis + RQ para ingesta asincrona.
 - Neo4j para expansion de paths multi-hop.
-- Proveedores LLM externos (OpenAI, Gemini, Vertex AI).
+- Proveedores de embedding/answer externos (OpenAI, Gemini, Vertex AI).
 
 ## Descripcion general
 
@@ -27,13 +26,14 @@ produccion:
 - Orquestador de negocio (`coderag/core/service.py`) con flujo end-to-end.
 - Persistencia SQLite (`coderag/storage/metadata_store.py`) para documentos,
   chunks, aristas y jobs.
+- Persistencia vectorial en Chroma (`coderag/ingestion/index_chroma.py`) para
+  embeddings de chunks y busqueda de similitud.
 - Retrieval hibrido (`coderag/retrieval/*`) con ranking y expansion por grafo.
-- Integracion de LLM (`coderag/llm/providerlmm_client.py`) con fallback local
-  extractivo para ejecucion offline.
+- Integracion de LLM (`coderag/llm/providerlmm_client.py`) para respuesta.
 
 ### Principios de diseno actuales
 
-- Local-first: el MVP funciona sin depender de servicios externos.
+- Chroma-first: la capa vectorial requiere Chroma (`USE_CHROMA=true`).
 - Evolutivo: interfaces internas permiten reemplazar componentes por equivalentes
   gestionados sin romper contratos API/UI.
 - Explicable: cada respuesta expone evidencias (`citations`) y rutas de grafo
@@ -67,6 +67,7 @@ flowchart TB
 
     subgraph L1[CAPA 1 - Datos]
         SQLite[(SQLite metadata.db)]
+      Chroma[(Chroma vector store)]
         Neo4j[(Neo4j opcional)]
         Redis[(Redis opcional)]
     end
@@ -80,6 +81,7 @@ flowchart TB
     Service --> GraphExpand
     Service --> LLM
     Service --> SQLite
+    Service --> Chroma
     Service --> Neo4j
     Jobs --> Redis
     FastAPI --> Jobs
@@ -108,7 +110,8 @@ graph LR
     Chunker[ingestion/chunker.py]
     GraphBuilder[ingestion/graph_builder.py]
     BM25[ingestion/index_bm25.py]
-    Vector[ingestion/index_chroma.py\nLocalVectorIndex]
+    Vector[ingestion/index_chroma.py\nChromaVectorIndex]
+    Embedding[ingestion/embedding.py\nProvider Embeddings API]
 
     Retrieval[retrieval/hybrid_search.py]
     Reranker[retrieval/reranker.py]
@@ -132,6 +135,7 @@ graph LR
 
     Service --> BM25
     Service --> Vector
+    Vector --> Embedding
     Service --> Retrieval
     Service --> Reranker
 
@@ -153,10 +157,11 @@ sequenceDiagram
     participant API as FastAPI
     participant SVC as RagApplicationService
     participant DL as DocumentLoader
-  participant PRS as Parsers
+    participant PRS as Parsers
     participant DB as SQLite MetadataStore
+    participant EMB as Embedding Provider API
     participant GS as GraphStore (Neo4j opcional)
-    participant IDX as BM25 + LocalVectorIndex
+    participant IDX as BM25 + ChromaVectorIndex
 
     User->>API: POST /sources/ingest o /sources/ingest/async
     API->>SVC: ingest(request)
@@ -176,10 +181,12 @@ sequenceDiagram
             SVC->>DB: upsert_document(doc)
         end
         SVC->>DB: replace_chunks(source_id, chunks)
+        SVC->>EMB: embed(chunk.text) por chunk
+        EMB-->>SVC: vectors
         SVC->>SVC: build_graph_edges(chunks)
         SVC->>DB: replace_graph_edges(source_id, edges)
         SVC->>GS: replace_edges(source_id, edges)
-        SVC->>IDX: rebuild(chunks del source)
+        SVC->>IDX: upsert/rebuild en Chroma
         SVC->>DB: touch_job(completed)
         SVC-->>API: status=completed + metrics + steps
     end
@@ -196,7 +203,8 @@ sequenceDiagram
     participant API as FastAPI
     participant SVC as RagApplicationService
     participant BM25 as BM25Index
-    participant VEC as LocalVectorIndex
+    participant VEC as ChromaVectorIndex
+    participant EMB as Embedding Provider API
     participant RET as hybrid_search + reranker
     participant GS as GraphStore (Neo4j opcional)
     participant GL as graph_expand (networkx fallback)
@@ -205,6 +213,8 @@ sequenceDiagram
 
     User->>API: POST /query
     API->>SVC: query(request)
+    SVC->>EMB: embed(question)
+    EMB-->>SVC: query vector
 
     SVC->>RET: hybrid_search(question)
     RET->>BM25: search(top_n)
@@ -224,7 +234,7 @@ sequenceDiagram
     end
 
     SVC->>LLM: answer(question, chunks, provider)
-    LLM-->>SVC: respuesta (remota o fallback local)
+    LLM-->>SVC: respuesta
 
     SVC->>DB: get_document_map(source_id)
     SVC->>SVC: construir citations + diagnostics
@@ -234,8 +244,8 @@ sequenceDiagram
 
 ## Consideraciones de despliegue
 
-- Modo local (default): API + UI + SQLite, sin Redis ni Neo4j.
+- Modo local (default): API + UI + SQLite + Chroma persistente.
 - Modo expandido: activar `USE_RQ=true` y `USE_NEO4J=true` para procesamiento
   asincrono y expansion de grafo remota.
-- Docker Compose incluye servicios `redis`, `neo4j` y `chroma`; actualmente el
-  runtime usa `LocalVectorIndex` y deja Chroma como capacidad evolutiva.
+- Docker Compose incluye servicios `redis` y `neo4j`; la capa vectorial usa
+  Chroma embebido en disco dentro de la API (`CHROMA_PERSIST_DIR`).

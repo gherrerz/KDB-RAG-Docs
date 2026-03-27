@@ -8,13 +8,15 @@ services:
       - ./:/app
     environment:
       - PYTHONUNBUFFERED=1
+      - USE_CHROMA=true
+      - CHROMA_PERSIST_DIR=storage/chromadb
+      - CHROMA_COLLECTION=coderag_chunks
       - USE_RQ=true
       - REDIS_URL=redis://redis:6379/0
       - NEO4J_URI=bolt://neo4j:7687
     depends_on:
       - redis
       - neo4j
-      - chroma
 
   worker:
     build: .
@@ -24,6 +26,9 @@ services:
       - ./:/app
     environment:
       - PYTHONUNBUFFERED=1
+      - USE_CHROMA=true
+      - CHROMA_PERSIST_DIR=storage/chromadb
+      - CHROMA_COLLECTION=coderag_chunks
       - USE_RQ=true
       - REDIS_URL=redis://redis:6379/0
       - NEO4J_URI=bolt://neo4j:7687
@@ -44,9 +49,3 @@ services:
       - "7687:7687"
     environment:
       - NEO4J_AUTH=neo4j/password
-
-  chroma:
-    image: chromadb/chroma:latest
-    container_name: kdb-rag-docs-chroma
-    ports:
-      - "8001:8000"

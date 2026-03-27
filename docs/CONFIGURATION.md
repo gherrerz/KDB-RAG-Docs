@@ -10,7 +10,19 @@ La configuracion principal se define en `coderag/core/settings.py`.
 - `graph_hops`: cantidad de saltos para expansion en grafo
 - `retrieval_top_n`: candidatos iniciales del retrieval hibrido
 - `rerank_top_k`: resultados finales para respuesta y evidencia
-- `embedding_size`: tamano del embedding local deterministico
+- `embedding_size`: dimension esperada para compatibilidad de pipeline
+
+## Vector store actual
+
+- `USE_CHROMA`: debe estar en `true` para habilitar runtime vectorial.
+- `CHROMA_PERSIST_DIR`: directorio de persistencia local de ChromaDB.
+- `CHROMA_COLLECTION`: coleccion activa donde se guardan chunks+embeddings.
+- Los chunks se persisten en SQLite y tambien se indexan en Chroma con
+  embeddings reales durante ingesta.
+- Las consultas generan el embedding del query con el mismo provider/modelo
+  configurado y buscan vecinos similares en Chroma.
+- No existe fallback a embeddings locales cuando faltan credenciales o falla
+  el proveedor de embedding.
 
 ## LLM providers
 
@@ -53,7 +65,8 @@ Precedencia:
 2. Modelo por proveedor segun `LLM_PROVIDER`
    (`OPENAI_EMBEDDING_MODEL`, `GEMINI_EMBEDDING_MODEL`,
    `VERTEX_EMBEDDING_MODEL`)
-3. Fallback interno `local-hash-v1`
+3. Sin fallback local: si no hay credenciales/provider valido, la operacion
+  falla con error explicito.
 
 ## Graph and async integration
 

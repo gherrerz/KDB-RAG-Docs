@@ -11,11 +11,13 @@ Aplicacion Python para ingesta documental y consulta con RAG hibrido
 - Recuperacion hibrida: vectorial + BM25
 - Expansion por grafo multi-hop
 - Respuesta con evidencia y trazabilidad
-- Soporte de proveedores LLM: local, OpenAI, Gemini y Vertex AI
+- Soporte de proveedores LLM: OpenAI, Gemini y Vertex AI
 - Seleccion de provider por entorno (`LLM_PROVIDER`) con soporte para
   `openai`, `gemini` y `vertex` (`vertex_ai` como alias)
 - Modelo de embedding configurable por provider y override global por
   `LLM_EMBEDDING`
+- ChromaDB activo en runtime para persistencia y busqueda vectorial
+- Embeddings reales por proveedor durante ingesta y consulta
 - UI para operacion de ingesta y consultas
 - UI de ingesta con polling de jobs async y fallback sync para cargas largas
 - API REST para integracion externa
@@ -28,10 +30,18 @@ Aplicacion Python para ingesta documental y consulta con RAG hibrido
 
 - UI: PySide6
 - API: FastAPI
-- Vector index: `LocalVectorIndex` (compatible con evolucion a ChromaDB)
+- Vector index: `ChromaVectorIndex` persistente en `CHROMA_PERSIST_DIR`
 - BM25: `rank-bm25`
 - Grafo: `networkx` (compatible con evolucion a Neo4j)
 - Storage metadata: SQLite en `storage/metadata.db`
+
+### Estado del vector store
+
+- El runtime requiere `USE_CHROMA=true`.
+- Los embeddings se calculan con el proveedor configurado (`openai`,
+  `gemini` o `vertex`) y se guardan en ChromaDB.
+- No existe fallback a embeddings locales en memoria cuando falta
+  configuracion/credenciales.
 
 ## Requisitos
 
@@ -96,7 +106,7 @@ Ejemplo `POST /query`:
 {
   "question": "Who works on Project Atlas?",
   "hops": 2,
-  "llm_provider": "local",
+  "llm_provider": "openai",
   "force_fallback": false
 }
 ```
@@ -180,6 +190,9 @@ Variables relevantes de entorno:
 - `LLM_PROVIDER`: provider para consulta y embeddings (`openai`, `gemini`,
   `vertex`)
 - `LLM_EMBEDDING`: override global opcional para modelo de embedding
+- `USE_CHROMA`: debe estar en `true` para habilitar vector store runtime
+- `CHROMA_PERSIST_DIR`: carpeta local de persistencia de Chroma
+- `CHROMA_COLLECTION`: nombre de coleccion activa de vectores
 - `OPENAI_EMBEDDING_MODEL`, `GEMINI_EMBEDDING_MODEL`,
   `VERTEX_EMBEDDING_MODEL`: modelos por provider
 
@@ -190,9 +203,8 @@ Plantillas listas para copiar:
 
 ## Estado y roadmap
 
-Este MVP es funcional end-to-end sin dependencias externas obligatorias.
-El diseño de modulos permite reemplazar componentes locales por:
-- ChromaDB para vectores
+Este MVP es funcional end-to-end con vector store persistente en ChromaDB.
+El diseño de modulos permite evolucionar componentes opcionales como:
 - Neo4j para grafo (opcional habilitado por `USE_NEO4J=true`)
 - Redis + RQ para jobs asincronos (opcional con `USE_RQ=true`)
 - Proveedores LLM (OpenAI, Gemini, Vertex AI)

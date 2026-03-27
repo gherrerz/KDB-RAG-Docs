@@ -1,47 +1,98 @@
-"""Deterministic local embedding generator."""
+"""Embedding generation using configured external provider APIs."""
 
 from __future__ import annotations
 
-import hashlib
-import math
 from typing import List
+
+import requests
 
 from coderag.core.settings import SETTINGS
 
-
-def _normalize_vector(values: List[float]) -> List[float]:
-    """Normalize vector to unit norm when possible."""
-    norm = math.sqrt(sum(v * v for v in values))
-    if norm == 0:
-        return values
-    return [v / norm for v in values]
-
-
-def _fit_vector_size(values: List[float], size: int) -> List[float]:
-    """Fit vector length to requested size using truncate/pad strategy."""
-    if len(values) > size:
-        fitted = values[:size]
-    elif len(values) < size:
-        fitted = values + [0.0] * (size - len(values))
-    else:
-        fitted = values
-    return _normalize_vector(fitted)
-
-
-def _embed_text_local(
+def _embed_text_openai(
     text: str,
-    size: int,
-    provider: str,
     model: str,
 ) -> List[float]:
-    """Generate deterministic pseudo-embedding keyed by provider/model."""
-    buckets = [0.0] * size
-    prefix = f"{provider}:{model}".encode("utf-8")
-    for token in text.lower().split():
-        digest = hashlib.sha256(prefix + b"::" + token.encode("utf-8")).digest()
-        idx = digest[0] % size
-        buckets[idx] += 1.0
-    return _normalize_vector(buckets)
+    """Generate embeddings using OpenAI embeddings API."""
+    if not SETTINGS.openai_api_key:
+        raise RuntimeError("OPENAI_API_KEY is required for embeddings.")
+
+    url = f"{SETTINGS.openai_base_url.rstrip('/')}/embeddings"
+    headers = {
+        "Authorization": f"Bearer {SETTINGS.openai_api_key}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": model,
+        "input": text,
+    }
+    response = requests.post(url, headers=headers, json=payload, timeout=45)
+    response.raise_for_status()
+    data = response.json()
+    items = data.get("data", [])
+    if not items:
+        raise RuntimeError("OpenAI embeddings response did not include data.")
+    values = items[0].get("embedding")
+    if not isinstance(values, list) or not values:
+        raise RuntimeError("OpenAI embeddings response is missing embedding vector.")
+    return [float(v) for v in values]
+
+
+def _embed_text_gemini(text: str, model: str) -> List[float]:
+    """Generate embeddings using Gemini embedContent API."""
+    if not SETTINGS.gemini_api_key:
+        raise RuntimeError("GEMINI_API_KEY is required for embeddings.")
+
+    model_name = model if model.startswith("models/") else f"models/{model}"
+    url = (
+        "https://generativelanguage.googleapis.com/v1beta/"
+        f"{model_name}:embedContent"
+        f"?key={SETTINGS.gemini_api_key}"
+    )
+    payload = {
+        "model": model_name,
+        "content": {
+            "parts": [{"text": text}],
+        },
+    }
+    response = requests.post(url, json=payload, timeout=45)
+    response.raise_for_status()
+    data = response.json()
+    values = data.get("embedding", {}).get("values")
+    if not isinstance(values, list) or not values:
+        raise RuntimeError("Gemini embeddings response is missing vector values.")
+    return [float(v) for v in values]
+
+
+def _embed_text_vertex(text: str, model: str) -> List[float]:
+    """Generate embeddings using Vertex AI publisher model endpoint."""
+    if not SETTINGS.vertex_ai_api_key or not SETTINGS.vertex_project_id:
+        raise RuntimeError(
+            "VERTEX_AI_API_KEY and VERTEX_PROJECT_ID are required for embeddings."
+        )
+
+    location = SETTINGS.vertex_location
+    url = (
+        f"https://{location}-aiplatform.googleapis.com/v1/projects/"
+        f"{SETTINGS.vertex_project_id}/locations/{location}/publishers/google/"
+        f"models/{model}:predict?key={SETTINGS.vertex_ai_api_key}"
+    )
+    payload = {
+        "instances": [{"content": text}],
+    }
+    response = requests.post(url, json=payload, timeout=45)
+    response.raise_for_status()
+    data = response.json()
+    predictions = data.get("predictions", [])
+    if not predictions:
+        raise RuntimeError("Vertex embeddings response did not include predictions.")
+
+    first = predictions[0]
+    values = first.get("embeddings", {}).get("values")
+    if values is None:
+        values = first.get("values")
+    if not isinstance(values, list) or not values:
+        raise RuntimeError("Vertex embeddings response is missing vector values.")
+    return [float(v) for v in values]
 
 
 def embed_text(
@@ -50,19 +101,28 @@ def embed_text(
     provider: str | None = None,
     model: str | None = None,
 ) -> List[float]:
-    """Embed text with configured provider/model and local deterministic fallback."""
-    effective_provider = SETTINGS.resolve_embedding_provider(provider)
+    """Embed text through configured provider and model without local fallback."""
+    _ = size
+    effective_provider = SETTINGS.require_embedding_provider_configured(provider)
     effective_model = SETTINGS.resolve_embedding_model(
         provider_override=effective_provider,
         model_override=model,
     )
 
-    # In this MVP we keep deterministic local vectors and key them by
-    # provider/model so environment-selected embedding settings are applied.
-    vector = _embed_text_local(
-        text=text,
-        size=size,
-        provider=effective_provider,
-        model=effective_model,
+    try:
+        if effective_provider == "openai":
+            return _embed_text_openai(text, effective_model)
+        if effective_provider == "gemini":
+            return _embed_text_gemini(text, effective_model)
+        if effective_provider == "vertex":
+            return _embed_text_vertex(text, effective_model)
+    except requests.RequestException as exc:
+        raise RuntimeError(
+            "Embedding provider request failed for "
+            f"'{effective_provider}' using model '{effective_model}': {exc}"
+        ) from exc
+
+    raise RuntimeError(
+        "Unsupported embedding provider configured. "
+        f"Received: {effective_provider}"
     )
-    return _fit_vector_size(vector, size)

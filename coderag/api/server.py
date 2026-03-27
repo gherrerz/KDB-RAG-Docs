@@ -42,7 +42,10 @@ def health() -> dict[str, str]:
 @app.post("/sources/ingest")
 def ingest_source(request: IngestionRequest) -> dict[str, Any]:
     """Trigger source ingestion and indexing."""
-    return SERVICE.ingest(request)
+    try:
+        return SERVICE.ingest(request)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @app.post("/sources/reset")
@@ -90,12 +93,18 @@ def get_job(job_id: str) -> dict[str, Any]:
 @app.post("/query")
 def query(request: QueryRequest) -> dict:
     """Run full RAG response pipeline."""
-    response = SERVICE.query(request)
-    return response.model_dump()
+    try:
+        response = SERVICE.query(request)
+        return response.model_dump()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @app.post("/query/retrieval")
 def retrieval_only(request: QueryRequest) -> dict:
     """Alias endpoint returning same payload for diagnostics compatibility."""
-    response = SERVICE.query(request)
-    return response.model_dump()
+    try:
+        response = SERVICE.query(request)
+        return response.model_dump()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
