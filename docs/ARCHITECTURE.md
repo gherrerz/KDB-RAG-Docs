@@ -217,8 +217,8 @@ sequenceDiagram
     participant BM25 as BM25Index
     participant VEC as ChromaVectorIndex
     participant EMB as Embedding Provider API
-    participant RET as hybrid_search + reranker
-    participant GS as GraphStore (Neo4j obligatorio)
+    participant RET as hybrid_search_reranker
+    participant GS as GraphStore Neo4j obligatorio
     participant DB as SQLite MetadataStore
     participant LLM as ProviderLlmClient
 
@@ -226,9 +226,10 @@ sequenceDiagram
     API->>SVC: query(request)
     SVC->>DB: get_index_version()
     alt Version cambio por ingesta async
-      SVC->>DB: list_chunks()
-      SVC->>BM25: rebuild(chunks)
-      Note over SVC,VEC: Chroma ya persistio vectores en worker; no hay re-embedding global en API
+        SVC->>DB: list_chunks()
+        SVC->>BM25: rebuild(chunks)
+        Note over SVC,VEC: Chroma ya persistio vectores en worker
+        Note over SVC,VEC: API evita reindexacion vectorial global
     end
 
     SVC->>RET: hybrid_search(question)
@@ -248,9 +249,9 @@ sequenceDiagram
     LLM-->>SVC: respuesta
 
     SVC->>DB: get_document_map(source_id)
-    SVC->>SVC: construir citations + diagnostics
+    SVC->>SVC: construir citations y diagnostics
     SVC-->>API: QueryResponse
-    API-->>User: answer + citations + graph_paths + diagnostics
+    API-->>User: answer y citations y graph_paths y diagnostics
 ```
 
 ## Consideraciones de despliegue
