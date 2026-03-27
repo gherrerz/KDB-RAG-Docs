@@ -186,7 +186,8 @@ Request:
   "source_id": null,
   "hops": 2,
   "llm_provider": "openai",
-  "force_fallback": false
+  "force_fallback": false,
+  "include_llm_answer": true
 }
 ```
 
@@ -194,8 +195,11 @@ Notas:
 
 - `llm_provider` acepta `local`, `openai`, `gemini` o `vertex`
   (`vertex_ai` tambien es valido como alias).
-- Si falla el provider remoto de respuesta, el sistema puede devolver
-  respuesta extractiva local como fallback.
+- `include_llm_answer=true` ejecuta retrieval+grafo y luego respuesta LLM.
+- `include_llm_answer=false` ejecuta retrieval+grafo sin invocar LLM y retorna
+  `answer=""`.
+- En modo estricto (`include_llm_answer=true` y `force_fallback=false`), si
+  falla el provider remoto de respuesta, el endpoint retorna `503`.
 
 Error estricto de runtime:
 
@@ -215,6 +219,12 @@ Campos relevantes en `diagnostics`:
 - `reranked`
 - `graph_paths`
 - `llm_provider`
+- `requested_mode`
+- `effective_mode`
+- `llm_invoked`
+- `llm_provider_effective`
+- `llm_model_effective`
+- `llm_error`
 - `embedding_provider`
 - `embedding_model`
 - `llm_fallback_forced`

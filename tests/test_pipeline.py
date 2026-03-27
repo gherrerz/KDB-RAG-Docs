@@ -83,10 +83,15 @@ def test_ingest_and_query_roundtrip() -> None:
         assert _looks_like_hhmmss(first_step.get("elapsed_hhmmss"))
 
         response = service.query(
-            QueryRequest(question="Who works on Project Atlas?")
+            QueryRequest(
+                question="Who works on Project Atlas?",
+                include_llm_answer=False,
+            )
         )
-        assert response.answer
+        assert response.answer == ""
         assert len(response.citations) > 0
+        assert response.diagnostics.get("requested_mode") == "retrieval_only"
+        assert response.diagnostics.get("llm_invoked") is False
     finally:
         service.close()
         index_chroma.embed_text = original_embed

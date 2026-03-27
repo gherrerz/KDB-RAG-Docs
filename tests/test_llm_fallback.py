@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import pytest
+
 from coderag.core.models import ChunkRecord
+from coderag.core.settings import SETTINGS
 from coderag.llm.providerlmm_client import ProviderLlmClient
 
 
@@ -37,6 +40,7 @@ def test_local_fallback_with_chunks() -> None:
         provider="gemini",
         force_fallback=True,
     )
+    assert "## Resumen" in answer
     assert "Basado en la evidencia recuperada" in answer
 
 
@@ -60,3 +64,31 @@ def test_vertex_alias_uses_local_fallback() -> None:
         force_fallback=True,
     )
     assert "Basado en la evidencia recuperada" in answer
+
+
+def test_strict_mode_fails_without_provider_credentials() -> None:
+    """Raise RuntimeError when strict mode cannot call selected provider."""
+    original_openai_api_key = SETTINGS.openai_api_key
+    SETTINGS.openai_api_key = None
+
+    client = ProviderLlmClient()
+    chunk = ChunkRecord(
+        chunk_id="c3",
+        document_id="d3",
+        source_id="s3",
+        section_name="General",
+        text="ISO 27001 defines requirements for ISMS.",
+        start_ref=0,
+        end_ref=42,
+        metadata={},
+    )
+    try:
+        with pytest.raises(RuntimeError):
+            client.answer(
+                question="What is ISO 27001?",
+                chunks=[chunk],
+                provider="openai",
+                strict=True,
+            )
+    finally:
+        SETTINGS.openai_api_key = original_openai_api_key

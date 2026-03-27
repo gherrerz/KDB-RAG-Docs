@@ -19,6 +19,10 @@
 - Parametros de tuning Neo4j para ingesta:
 	`NEO4J_INGEST_BATCH_SIZE`, `NEO4J_INGEST_MAX_RETRIES`,
 	`NEO4J_INGEST_RETRY_DELAY_MS`.
+- Parametro de consulta `include_llm_answer` para seleccionar entre
+	`retrieval_only` (hybrid+grafo sin LLM) y `with_llm` (hybrid+grafo+LLM).
+- Selector en UI de consulta para enviar el modo de respuesta al endpoint
+	`/query`.
 
 ### Changed
 - Pipeline de embeddings migrado a proveedores reales (OpenAI, Gemini,
@@ -38,6 +42,9 @@
 	optimizacion orientada a tiempo total de ingesta.
 - **BREAKING**: payload publico de ingesta/jobs reemplaza `elapsed_ms` por
 	`elapsed_hhmmss` (`hh:mm:ss`) en `steps` y `metrics`.
+- `/query` ahora expone diagnosticos operativos de modo y LLM:
+	`requested_mode`, `effective_mode`, `llm_invoked`,
+	`llm_provider_effective`, `llm_model_effective`, `llm_error`.
 
 ### Fixed
 - `reset_all` ahora limpia tambien la coleccion vectorial activa de Chroma.
@@ -60,6 +67,9 @@
 	API sin requerir reinicio.
 - `source_id` en `/query` ahora filtra retrieval BM25/vector de forma real,
 	evitando resultados mezclados de otras fuentes.
+- Modo LLM estricto en consulta (`include_llm_answer=true` y
+	`force_fallback=false`): si falla el provider remoto, se evita fallback
+	silencioso y se retorna error explicito.
 
 ## [0.1.1] - 2026-03-27
 

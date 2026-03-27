@@ -6,6 +6,7 @@ import json
 from typing import Callable
 
 from PySide6.QtWidgets import (
+    QCheckBox,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -34,10 +35,13 @@ class QueryView(QWidget):
         self.question = QLineEdit()
         self.source_id = QLineEdit()
         self.hops = QLineEdit("2")
+        self.include_llm_answer = QCheckBox("Include LLM answer")
+        self.include_llm_answer.setChecked(True)
 
         form.addRow("Question", self.question)
         form.addRow("Source ID (optional)", self.source_id)
         form.addRow("Graph Hops", self.hops)
+        form.addRow("Response Mode", self.include_llm_answer)
 
         actions = QHBoxLayout()
         self.query_button = QPushButton("Query")
@@ -59,6 +63,7 @@ class QueryView(QWidget):
             "question": self.question.text().strip(),
             "source_id": self.source_id.text().strip() or None,
             "hops": self._safe_int(self.hops.text().strip()),
+            "include_llm_answer": self.include_llm_answer.isChecked(),
         }
         result = self._on_query(payload)
         if "answer" in result:

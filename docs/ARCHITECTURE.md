@@ -245,8 +245,12 @@ sequenceDiagram
     SVC->>GS: expand_paths(question, hops)
     GS-->>SVC: graph_paths
 
-    SVC->>LLM: answer(question, chunks, provider)
-    LLM-->>SVC: respuesta
+    alt include_llm_answer=true
+      SVC->>LLM: answer(question, context, provider)
+      LLM-->>SVC: respuesta markdown
+    else include_llm_answer=false
+      Note over SVC: omite llamada LLM y retorna answer vacio
+    end
 
     SVC->>DB: get_document_map(source_id)
     SVC->>SVC: construir citations y diagnostics

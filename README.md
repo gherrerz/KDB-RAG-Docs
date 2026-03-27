@@ -124,7 +124,18 @@ Ejemplo `POST /query`:
   "question": "Who works on Project Atlas?",
   "hops": 2,
   "llm_provider": "openai",
-  "force_fallback": false
+  "force_fallback": false,
+  "include_llm_answer": true
+}
+```
+
+Para modo retrieval-only (sin invocar LLM):
+
+```json
+{
+  "question": "Who works on Project Atlas?",
+  "hops": 2,
+  "include_llm_answer": false
 }
 ```
 
@@ -269,3 +280,9 @@ El diseño de modulos permite evolucionar componentes opcionales como:
 - `source_id` en `/query` aplica filtro real sobre retrieval BM25/vector.
 - Si `source_id` no existe, `citations` retorna vacio en lugar de mezclar
   resultados de otras fuentes.
+- `/query` soporta dos modos via `include_llm_answer`:
+  - `true`: retrieval+grafo+respuesta LLM (markdown estructurado)
+  - `false`: retrieval+grafo sin LLM (`answer=""` para consumo por otros
+    agentes)
+- En modo LLM estricto (`include_llm_answer=true` y `force_fallback=false`),
+  fallas de provider remoto retornan error en lugar de fallback silencioso.

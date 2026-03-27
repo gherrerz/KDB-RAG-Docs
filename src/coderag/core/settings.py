@@ -238,6 +238,25 @@ class Settings(BaseModel):
             f"Received: {provider_name}"
         )
 
+    def resolve_answer_model(
+        self,
+        provider_override: Optional[str] = None,
+    ) -> Optional[str]:
+        """Resolve answer model configured for the selected provider."""
+        provider_name = self.resolve_llm_provider(provider_override)
+        if provider_name == "local":
+            return None
+        if provider_name == "openai":
+            return self.openai_answer_model
+        if provider_name == "gemini":
+            return self.gemini_answer_model
+        if provider_name == "vertex":
+            return self.vertex_answer_model
+        raise ValueError(
+            "Answer provider must be local, openai, gemini or vertex. "
+            f"Received: {provider_name}"
+        )
+
     def is_provider_configured(self, provider: str) -> bool:
         """Check whether provider credentials are available."""
         provider_name = self._normalize_provider_name(provider)

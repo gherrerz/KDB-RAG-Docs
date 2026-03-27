@@ -434,19 +434,49 @@ class RagApplicationService:
             max_paths=6,
         )
 
-        _context = assemble_context(
+        context = assemble_context(
             chunks=chunks,
             graph_paths=graph_paths,
             max_chars=SETTINGS.max_context_chars,
         )
 
-        provider = SETTINGS.resolve_llm_provider(request.llm_provider)
-        answer = self.llm.answer(
-            request.question,
-            chunks,
-            provider=provider,
-            force_fallback=request.force_fallback,
+        requested_mode = (
+            "with_llm"
+            if request.include_llm_answer
+            else "retrieval_only"
         )
+        effective_mode = requested_mode
+
+        provider = SETTINGS.resolve_llm_provider(request.llm_provider)
+        answer = ""
+        llm_invoked = False
+        llm_provider_effective: str | None = None
+        llm_model_effective: str | None = None
+        llm_error: str | None = None
+
+        if request.include_llm_answer:
+            llm_invoked = True
+            llm_provider_effective = (
+                "local" if request.force_fallback else provider
+            )
+            if llm_provider_effective != "local":
+                llm_model_effective = SETTINGS.resolve_answer_model(
+                    llm_provider_effective
+                )
+            try:
+                answer = self.llm.answer(
+                    question=request.question,
+                    chunks=chunks,
+                    context=context,
+                    provider=provider,
+                    force_fallback=request.force_fallback,
+                    strict=not request.force_fallback,
+                )
+            except RuntimeError as exc:
+                llm_error = str(exc)
+                raise RuntimeError(llm_error) from exc
+        else:
+            effective_mode = "retrieval_only"
 
         doc_map = self.store.get_document_map(source_id=request.source_id)
         citations: List[Evidence] = []
@@ -469,7 +499,16 @@ class RagApplicationService:
             "retrieval_candidates": len(hits),
             "reranked": len(reranked),
             "graph_paths": len(graph_paths),
+            "requested_mode": requested_mode,
+            "effective_mode": effective_mode,
+            "llm_invoked": llm_invoked,
             "llm_provider": provider,
+            "llm_provider_effective": llm_provider_effective,
+            "llm_model_effective": llm_model_effective,
+            "llm_error": llm_error,
+            "llm_context_includes_graph": bool(
+                request.include_llm_answer and graph_paths
+            ),
             "embedding_provider": self.vector_index.embedding_provider,
             "embedding_model": self.vector_index.embedding_model,
             "llm_fallback_forced": request.force_fallback,

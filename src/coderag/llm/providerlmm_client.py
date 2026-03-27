@@ -9,6 +9,7 @@ import requests
 
 from coderag.core.models import ChunkRecord
 from coderag.core.settings import SETTINGS
+from coderag.llm.prompts import build_answer_prompt
 
 LOGGER = logging.getLogger(__name__)
 
@@ -24,30 +25,56 @@ class ProviderLlmClient:
         self,
         question: str,
         chunks: List[ChunkRecord],
+        context: str | None = None,
         provider: str = "local",
         force_fallback: bool = False,
+        strict: bool = False,
     ) -> str:
         """Generate answer grounded in retrieved chunks."""
         provider_name = provider.strip().lower()
+        context_block = context or self._context_from_chunks(chunks)
+
         if force_fallback:
-            return self._local_answer(question, chunks)
+            return self._local_answer(question, chunks, context_block)
+
+        if provider_name == "local":
+            return self._local_answer(question, chunks, context_block)
+
+        if not context_block.strip():
+            return "No se encontro informacion en las fuentes indexadas."
 
         if provider_name == "openai":
-            output = self._answer_openai(question, chunks)
+            output = self._answer_openai(question, context_block)
             if output:
                 return output
         elif provider_name == "gemini":
-            output = self._answer_gemini(question, chunks)
+            output = self._answer_gemini(question, context_block)
             if output:
                 return output
         elif provider_name in {"vertex", "vertex_ai"}:
-            output = self._answer_vertex(question, chunks)
+            output = self._answer_vertex(question, context_block)
             if output:
                 return output
+        elif strict:
+            raise RuntimeError(
+                "Unsupported LLM provider in strict mode: "
+                f"{provider_name}"
+            )
 
-        return self._local_answer(question, chunks)
+        if strict:
+            raise RuntimeError(
+                "LLM provider call failed in strict mode. "
+                f"provider={provider_name}"
+            )
 
-    def _local_answer(self, question: str, chunks: List[ChunkRecord]) -> str:
+        return self._local_answer(question, chunks, context_block)
+
+    def _local_answer(
+        self,
+        question: str,
+        chunks: List[ChunkRecord],
+        context: str | None = None,
+    ) -> str:
         """Return extractive local answer that always works offline."""
         _ = question
         if not chunks:
@@ -58,9 +85,35 @@ class ProviderLlmClient:
         if not snippet:
             return "No se encontro informacion en las fuentes indexadas."
 
+        evidence_lines = []
+        for index, chunk in enumerate(chunks[:3], start=1):
+            evidence_lines.append(
+                f"- {index}. [{chunk.chunk_id}] {chunk.text.strip()[:220]}"
+            )
+
+        graph_lines: list[str] = []
+        if context:
+            for line in context.splitlines():
+                if line.startswith("[GraphPath]"):
+                    graph_lines.append(f"- {line[12:].strip()}")
+                    if len(graph_lines) >= 3:
+                        break
+
+        graph_text = "\n".join(graph_lines) or "- Sin rutas de grafo relevantes."
+        evidence_text = "\n".join(evidence_lines)
+
         response = (
-            "Basado en la evidencia recuperada: "
-            f"{snippet[:500]}"
+            "## Resumen\n"
+            "Basado en la evidencia recuperada, esta es la mejor respuesta "
+            "disponible con el contexto indexado.\n\n"
+            "## Hallazgos clave\n"
+            f"- {snippet[:280]}\n\n"
+            "## Evidencia\n"
+            f"{evidence_text}\n\n"
+            "## Relacion de grafo\n"
+            f"{graph_text}\n\n"
+            "## Limitaciones\n"
+            "- Respuesta extractiva local generada sin proveedor remoto."
         )
         return response
 
@@ -76,13 +129,10 @@ class ProviderLlmClient:
     def _answer_openai(
         self,
         question: str,
-        chunks: List[ChunkRecord],
+        context: str,
     ) -> str | None:
         """Call OpenAI Responses API and return text output."""
         if not SETTINGS.openai_api_key:
-            return None
-        context = self._context_from_chunks(chunks)
-        if not context.strip():
             return None
 
         url = f"{SETTINGS.openai_base_url.rstrip('/')}/responses"
@@ -96,17 +146,13 @@ class ProviderLlmClient:
                 {
                     "role": "system",
                     "content": (
-                        "Responde solo con evidencia del contexto. "
-                        "Si no hay evidencia suficiente, responde: "
-                        "No se encontro informacion en las fuentes indexadas."
+                        "Asistente de RAG corporativo. "
+                        "Responde en markdown y solo con evidencia provista."
                     ),
                 },
                 {
                     "role": "user",
-                    "content": (
-                        f"Pregunta:\n{question}\n\n"
-                        f"Contexto:\n{context}"
-                    ),
+                    "content": build_answer_prompt(question, context),
                 },
             ],
         }
@@ -127,13 +173,10 @@ class ProviderLlmClient:
     def _answer_gemini(
         self,
         question: str,
-        chunks: List[ChunkRecord],
+        context: str,
     ) -> str | None:
         """Call Gemini generateContent API with API key."""
         if not SETTINGS.gemini_api_key:
-            return None
-        context = self._context_from_chunks(chunks)
-        if not context.strip():
             return None
 
         model = SETTINGS.gemini_answer_model
@@ -148,14 +191,7 @@ class ProviderLlmClient:
                     "role": "user",
                     "parts": [
                         {
-                            "text": (
-                                "Responde solo con evidencia del contexto. "
-                                "Si no hay evidencia suficiente, responde: "
-                                "No se encontro informacion en las fuentes "
-                                "indexadas.\n\n"
-                                f"Pregunta:\n{question}\n\n"
-                                f"Contexto:\n{context}"
-                            )
+                            "text": build_answer_prompt(question, context)
                         }
                     ],
                 }
@@ -179,16 +215,13 @@ class ProviderLlmClient:
     def _answer_vertex(
         self,
         question: str,
-        chunks: List[ChunkRecord],
+        context: str,
     ) -> str | None:
         """Call Vertex AI endpoint with API key when configured."""
         if (
             not SETTINGS.vertex_ai_api_key
             or not SETTINGS.vertex_project_id
         ):
-            return None
-        context = self._context_from_chunks(chunks)
-        if not context.strip():
             return None
 
         model = SETTINGS.vertex_answer_model
@@ -207,14 +240,7 @@ class ProviderLlmClient:
                     "role": "user",
                     "parts": [
                         {
-                            "text": (
-                                "Responde solo con evidencia del contexto. "
-                                "Si no hay evidencia suficiente, responde: "
-                                "No se encontro informacion en las fuentes "
-                                "indexadas.\n\n"
-                                f"Pregunta:\n{question}\n\n"
-                                f"Contexto:\n{context}"
-                            )
+                            "text": build_answer_prompt(question, context)
                         }
                     ],
                 }

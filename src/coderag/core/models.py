@@ -100,6 +100,7 @@ class QueryRequest(BaseModel):
     hops: Optional[int] = None
     llm_provider: Optional[str] = None
     force_fallback: bool = False
+    include_llm_answer: bool = True
 
 
 class QueryResponse(BaseModel):
