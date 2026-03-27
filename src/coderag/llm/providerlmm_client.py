@@ -118,6 +118,37 @@ class ProviderLlmClient:
         return response
 
     @staticmethod
+    def _extract_openai_text(payload: dict) -> str | None:
+        """Extract assistant text from OpenAI Responses API payload."""
+        direct = payload.get("output_text")
+        if isinstance(direct, str) and direct.strip():
+            return direct
+
+        output_items = payload.get("output", [])
+        if not isinstance(output_items, list):
+            return None
+
+        collected: list[str] = []
+        for item in output_items:
+            if not isinstance(item, dict):
+                continue
+            content_items = item.get("content", [])
+            if not isinstance(content_items, list):
+                continue
+            for content in content_items:
+                if not isinstance(content, dict):
+                    continue
+                if content.get("type") != "output_text":
+                    continue
+                text = content.get("text")
+                if isinstance(text, str) and text.strip():
+                    collected.append(text)
+
+        if not collected:
+            return None
+        return "\n".join(collected)
+
+    @staticmethod
     def _context_from_chunks(
         chunks: List[ChunkRecord],
         max_chars: int = 6000,
@@ -165,7 +196,7 @@ class ProviderLlmClient:
             )
             response.raise_for_status()
             data = response.json()
-            return data.get("output_text")
+            return self._extract_openai_text(data)
         except requests.RequestException:
             LOGGER.exception("OpenAI call failed")
             return None

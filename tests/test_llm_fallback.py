@@ -92,3 +92,62 @@ def test_strict_mode_fails_without_provider_credentials() -> None:
             )
     finally:
         SETTINGS.openai_api_key = original_openai_api_key
+
+
+def test_openai_parses_output_content_when_output_text_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Parse text from output[].content[] when output_text is not present."""
+    original_openai_api_key = SETTINGS.openai_api_key
+    SETTINGS.openai_api_key = "test-key"
+
+    class _FakeResponse:
+        def raise_for_status(self) -> None:
+            return
+
+        @staticmethod
+        def json() -> dict:
+            return {
+                "output": [
+                    {
+                        "type": "message",
+                        "content": [
+                            {
+                                "type": "output_text",
+                                "text": "Respuesta desde output.content",
+                            }
+                        ],
+                    }
+                ]
+            }
+
+    def _fake_post(*_args, **_kwargs):
+        return _FakeResponse()
+
+    monkeypatch.setattr(
+        "coderag.llm.providerlmm_client.requests.post",
+        _fake_post,
+    )
+
+    client = ProviderLlmClient()
+    chunk = ChunkRecord(
+        chunk_id="c4",
+        document_id="d4",
+        source_id="s4",
+        section_name="General",
+        text="Texto de prueba para OpenAI parser.",
+        start_ref=0,
+        end_ref=32,
+        metadata={},
+    )
+
+    try:
+        answer = client.answer(
+            question="Pregunta de prueba",
+            chunks=[chunk],
+            provider="openai",
+            strict=True,
+        )
+        assert answer == "Respuesta desde output.content"
+    finally:
+        SETTINGS.openai_api_key = original_openai_api_key
