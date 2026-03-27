@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import FastAPI, HTTPException
 
 from coderag.core.models import IngestionRequest, QueryRequest
@@ -19,7 +21,7 @@ def health() -> dict[str, str]:
 
 
 @app.post("/sources/ingest")
-def ingest_source(request: IngestionRequest) -> dict[str, str]:
+def ingest_source(request: IngestionRequest) -> dict[str, Any]:
     """Trigger source ingestion and indexing."""
     return SERVICE.ingest(request)
 
@@ -44,7 +46,7 @@ def ingest_source_async(request: IngestionRequest) -> dict[str, str]:
 
 
 @app.get("/jobs/{job_id}")
-def get_job(job_id: str) -> dict[str, str]:
+def get_job(job_id: str) -> dict[str, Any]:
     """Return ingestion job status."""
     job = SERVICE.get_job(job_id)
     if job is None and SETTINGS.use_rq:

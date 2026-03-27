@@ -19,7 +19,7 @@ Construir una aplicación llamada RAG Hybrid Response Validator con interfaz gr�
 
 ### Ingesta
 
-- Conectar con Confluence (Atlassian) y/o otras fuentes documentales.
+- Conectar con Confluence (Atlassian) y/o otras fuentes documentales en carpetas locales o remotas
 - Descargar y normalizar documentos y páginas.
 - Analizar contenido textual, tablas y metadatos.
 - Generar embeddings con modelo de OpenAI o Gemini de Google o Vertex AI de Google.

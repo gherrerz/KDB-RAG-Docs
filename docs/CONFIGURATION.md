@@ -27,12 +27,23 @@ La configuracion principal se define en `coderag/core/settings.py`.
 
 ## Graph and async integration
 
+La aplicacion carga automaticamente variables desde `.env` en runtime.
+
 - `USE_NEO4J`: habilita escritura/lectura de paths multi-hop en Neo4j
 - `NEO4J_URI`
 - `NEO4J_USER`
 - `NEO4J_PASSWORD`
 - `USE_RQ`: habilita endpoint de ingesta asincrona
 - `REDIS_URL`: conexion para cola RQ
+
+Ejemplo rapido Neo4j local:
+
+```dotenv
+USE_NEO4J=true
+NEO4J_URI=bolt://127.0.0.1:7687
+NEO4J_USER=neo4j
+NEO4J_PASSWORD=password
+```
 
 ## Source payload
 

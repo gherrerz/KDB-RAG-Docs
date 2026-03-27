@@ -6,6 +6,7 @@ import json
 from typing import Callable
 
 from PySide6.QtWidgets import (
+    QApplication,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -64,10 +65,56 @@ class IngestionView(QWidget):
                 "filters": self._safe_json(self.filters.text().strip()),
             }
         }
+        self.output.setPlainText("Ingestion running...\n")
+        QApplication.processEvents()
         result = self._on_ingest(payload)
-        self.output.setPlainText(
-            json.dumps(result, indent=2, ensure_ascii=False)
-        )
+        rendered = self._format_ingestion_result(result)
+        self.output.setPlainText(rendered)
+
+    @staticmethod
+    def _format_ingestion_result(result: dict) -> str:
+        """Return a readable ingestion trace for the UI text panel."""
+        lines: list[str] = []
+
+        status = str(result.get("status", "unknown"))
+        lines.append(f"Status: {status}")
+
+        message = result.get("message")
+        if isinstance(message, str) and message.strip():
+            lines.append(f"Message: {message}")
+
+        source_id = result.get("source_id")
+        if isinstance(source_id, str) and source_id:
+            lines.append(f"Source ID: {source_id}")
+
+        documents = result.get("documents")
+        chunks = result.get("chunks")
+        if documents is not None and chunks is not None:
+            lines.append(f"Documents: {documents} | Chunks: {chunks}")
+
+        metrics = result.get("metrics")
+        if isinstance(metrics, dict) and metrics:
+            lines.append("\nMetrics:")
+            for key, value in metrics.items():
+                lines.append(f"- {key}: {value}")
+
+        steps = result.get("steps")
+        if isinstance(steps, list) and steps:
+            lines.append("\nIngestion Trace:")
+            for index, step in enumerate(steps, start=1):
+                if not isinstance(step, dict):
+                    continue
+                name = str(step.get("name", "step"))
+                step_status = str(step.get("status", "ok"))
+                lines.append(f"{index}. [{step_status}] {name}")
+                details = step.get("details", {})
+                if isinstance(details, dict):
+                    for key, value in details.items():
+                        lines.append(f"   - {key}: {value}")
+
+        lines.append("\nRaw JSON:")
+        lines.append(json.dumps(result, indent=2, ensure_ascii=False))
+        return "\n".join(lines)
 
     @staticmethod
     def _safe_json(raw: str) -> dict:

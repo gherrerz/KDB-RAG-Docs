@@ -13,8 +13,10 @@ Aplicacion Python para ingesta documental y consulta con RAG hibrido
 - Respuesta con evidencia y trazabilidad
 - Soporte de proveedores LLM: local, OpenAI, Gemini y Vertex AI
 - UI para operacion de ingesta y consultas
+- UI de ingesta con polling de jobs async y fallback sync para cargas largas
 - API REST para integracion externa
 - Ingesta asincrona opcional con Redis + RQ
+- Trazabilidad de ingesta en UI con pasos y metricas de la API
 
 ## Arquitectura
 

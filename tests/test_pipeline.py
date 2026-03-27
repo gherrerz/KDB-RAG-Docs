@@ -18,6 +18,9 @@ def test_ingest_and_query_roundtrip() -> None:
         )
     )
     assert result["status"] == "completed"
+    assert isinstance(result.get("steps"), list)
+    assert len(result.get("steps", [])) > 0
+    assert isinstance(result.get("metrics"), dict)
 
     response = service.query(
         QueryRequest(question="Who works on Project Atlas?")

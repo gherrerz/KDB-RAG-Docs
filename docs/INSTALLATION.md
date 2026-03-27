@@ -52,6 +52,9 @@ python run_ui.py
   `.pptx`, `.xlsx`
 - Not supported in this version: `.ppt`, `.xls`
 
+Durante la ingesta desde UI, el panel muestra una traza detallada por pasos
+(scan, parse, chunking, indexado de grafo y metricas finales).
+
 ## Cleanup local artifacts
 
 En sesiones con politica que bloquea `Remove-Item`, usa:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
+from time import perf_counter
 from typing import Dict, List, Optional
 
 from coderag.core.models import (
@@ -45,37 +46,122 @@ class RagApplicationService:
         self.bm25_index.rebuild(chunks)
         self.vector_index.rebuild(chunks)
 
-    def ingest(self, request: IngestionRequest) -> Dict[str, str]:
+    def ingest(self, request: IngestionRequest) -> Dict[str, object]:
         """Run full ingestion pipeline and persist generated artifacts."""
         job_id = uuid.uuid4().hex[:12]
         self.store.touch_job(job_id, "running", "Starting ingestion")
 
-        documents = load_documents(request.source)
+        started_at = perf_counter()
+        steps: List[Dict[str, object]] = []
+
+        def _add_step(
+            name: str,
+            details: Dict[str, object],
+            status: str = "ok",
+        ) -> None:
+            steps.append(
+                {
+                    "name": name,
+                    "status": status,
+                    "details": details,
+                }
+            )
+
+        def _loader_progress(
+            event: str,
+            payload: Dict[str, object],
+        ) -> None:
+            _add_step(event, payload)
+
+        documents, load_stats = load_documents(
+            request.source,
+            progress_callback=_loader_progress,
+        )
+        _add_step("load_documents", load_stats)
         if not documents:
             local_path = request.source.local_path or "<not-set>"
+            failure_message = (
+                "No supported documents found in source path "
+                f"'{local_path}'. Supported: .md, .txt, .html, .htm, "
+                ".pdf, .docx, .doc, .pptx, .xlsx"
+            )
             self.store.touch_job(
                 job_id,
                 "failed",
-                (
-                    "No supported documents found in source path "
-                    f"'{local_path}'. Supported: .md, .txt, .html, .htm, "
-                    ".pdf, .docx, .doc, .pptx, .xlsx"
-                ),
+                failure_message,
             )
-            return {"job_id": job_id, "status": "failed"}
+            _add_step(
+                "ingestion_failed",
+                {"reason": failure_message},
+                status="failed",
+            )
+            return {
+                "job_id": job_id,
+                "status": "failed",
+                "message": failure_message,
+                "steps": steps,
+            }
 
         source_id = documents[0].source_id
         chunks = []
+        total_characters = 0
         for doc in documents:
             self.store.upsert_document(doc)
+            total_characters += len(doc.content)
             chunks.extend(build_chunks(doc))
 
+        _add_step(
+            "chunk_documents",
+            {
+                "documents": len(documents),
+                "chunks": len(chunks),
+                "total_characters": total_characters,
+            },
+        )
+
         self.store.replace_chunks(source_id=source_id, chunks=chunks)
+        _add_step(
+            "persist_chunks",
+            {
+                "source_id": source_id,
+                "chunks": len(chunks),
+            },
+        )
+
         edges = build_graph_edges(source_id=source_id, chunks=chunks)
+        _add_step(
+            "build_graph_edges",
+            {
+                "edges": len(edges),
+            },
+        )
+
         self.store.replace_graph_edges(source_id=source_id, edges=edges)
         self.graph_store.replace_edges(source_id=source_id, edges=edges)
+        _add_step(
+            "persist_graph",
+            {
+                "edges": len(edges),
+                "neo4j_enabled": self.graph_store.is_enabled(),
+            },
+        )
 
         self.rebuild_indexes(source_id=source_id)
+        _add_step(
+            "rebuild_indexes",
+            {
+                "source_id": source_id,
+            },
+        )
+
+        elapsed_ms = round((perf_counter() - started_at) * 1000.0, 2)
+        _add_step(
+            "ingestion_completed",
+            {
+                "elapsed_ms": elapsed_ms,
+            },
+        )
+
         self.store.touch_job(
             job_id,
             "completed",
@@ -87,6 +173,13 @@ class RagApplicationService:
             "source_id": source_id,
             "documents": str(len(documents)),
             "chunks": str(len(chunks)),
+            "steps": steps,
+            "metrics": {
+                "elapsed_ms": elapsed_ms,
+                "discovered_files": load_stats.get("discovered_files", 0),
+                "parsed_documents": load_stats.get("parsed_documents", 0),
+                "skipped_empty": load_stats.get("skipped_empty", 0),
+            },
         }
 
     def get_job(self, job_id: str) -> Optional[Dict[str, str]]:

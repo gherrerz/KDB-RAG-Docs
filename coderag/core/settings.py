@@ -7,6 +7,10 @@ from pathlib import Path
 from typing import Optional
 
 from pydantic import BaseModel, Field
+from dotenv import load_dotenv
+
+
+load_dotenv(override=False)
 
 
 def _env_str(name: str, default: Optional[str] = None) -> Optional[str]:
