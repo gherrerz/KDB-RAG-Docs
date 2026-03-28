@@ -234,11 +234,42 @@ class RagApplicationService:
         _add_step("load_documents", load_stats, progress_pct=30.0)
         if not documents:
             local_path = request.source.local_path or "<not-set>"
-            failure_message = (
-                "No supported documents found in source path "
-                f"'{local_path}'. Supported: .md, .txt, .html, .htm, "
-                ".pdf, .docx, .doc, .pptx, .xlsx"
-            )
+            failure_reason = str(load_stats.get("failure_reason", ""))
+            source_path = str(load_stats.get("source_path", local_path))
+            supported_ext = ".md, .txt, .html, .htm, .pdf, .docx, .doc, "
+            supported_ext += ".pptx, .xlsx"
+
+            if failure_reason == "path_not_set":
+                failure_message = (
+                    "Source path is empty. Configure a local folder path "
+                    "before ingestion."
+                )
+            elif failure_reason == "path_not_found":
+                suggestions = load_stats.get("suggested_paths", [])
+                suggestion_text = ""
+                if isinstance(suggestions, list) and suggestions:
+                    shown = "; ".join(str(item) for item in suggestions[:3])
+                    suggestion_text = f" Nearby folders: {shown}."
+                failure_message = (
+                    f"Source path does not exist: '{source_path}'."
+                    f"{suggestion_text}"
+                )
+            elif failure_reason == "path_not_directory":
+                failure_message = (
+                    f"Source path is not a directory: '{source_path}'."
+                )
+            else:
+                scanned = int(load_stats.get("total_files_seen", 0))
+                failure_message = (
+                    "No supported documents found in source path "
+                    f"'{source_path}'. Files scanned: {scanned}. "
+                    f"Supported: {supported_ext}"
+                )
+
+            scan_errors = load_stats.get("scan_error_examples", [])
+            if isinstance(scan_errors, list) and scan_errors:
+                failure_message += f" Scan warning: {scan_errors[0]}"
+
             self.store.touch_job(
                 job_id,
                 "failed",

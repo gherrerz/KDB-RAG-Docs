@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
@@ -20,91 +21,112 @@ class MetadataStore:
         self._init_schema()
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL;")
-        conn.execute("PRAGMA synchronous=NORMAL;")
-        return conn
+        # Runtime resets may remove the storage directory while processes are
+        # alive. Recreate the directory and retry opening the DB briefly.
+        for attempt in range(3):
+            db_exists = self.db_path.exists()
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                conn = sqlite3.connect(self.db_path)
+                conn.row_factory = sqlite3.Row
+                conn.execute("PRAGMA journal_mode=WAL;")
+                conn.execute("PRAGMA synchronous=NORMAL;")
+                if not db_exists:
+                    self._create_schema(conn)
+                return conn
+            except sqlite3.OperationalError as exc:
+                message = str(exc).lower()
+                if "unable to open database file" not in message:
+                    raise
+                if attempt == 2:
+                    raise
+                time.sleep(0.05)
+        raise RuntimeError("Failed to open SQLite connection")
 
     def _init_schema(self) -> None:
         conn = self._connect()
         try:
-            conn.executescript(
-                """
-                CREATE TABLE IF NOT EXISTS documents (
-                    document_id TEXT PRIMARY KEY,
-                    source_id TEXT NOT NULL,
-                    title TEXT NOT NULL,
-                    content TEXT NOT NULL,
-                    path_or_url TEXT NOT NULL,
-                    content_type TEXT NOT NULL,
-                    updated_at TEXT NOT NULL,
-                    metadata_json TEXT NOT NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS chunks (
-                    chunk_id TEXT PRIMARY KEY,
-                    document_id TEXT NOT NULL,
-                    source_id TEXT NOT NULL,
-                    section_name TEXT NOT NULL,
-                    text TEXT NOT NULL,
-                    start_ref INTEGER NOT NULL,
-                    end_ref INTEGER NOT NULL,
-                    entity_name TEXT,
-                    entity_type TEXT,
-                    metadata_json TEXT NOT NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS graph_edges (
-                    edge_id TEXT PRIMARY KEY,
-                    source_node TEXT NOT NULL,
-                    relation TEXT NOT NULL,
-                    target_node TEXT NOT NULL,
-                    source_id TEXT NOT NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS jobs (
-                    job_id TEXT PRIMARY KEY,
-                    status TEXT NOT NULL,
-                    message TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS job_events (
-                    event_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    job_id TEXT NOT NULL,
-                    ordinal INTEGER NOT NULL,
-                    name TEXT NOT NULL,
-                    status TEXT NOT NULL,
-                    elapsed_ms REAL NOT NULL,
-                    details_json TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    UNIQUE(job_id, ordinal)
-                );
-
-                CREATE TABLE IF NOT EXISTS runtime_state (
-                    state_key TEXT PRIMARY KEY,
-                    state_value TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
-                );
-
-                CREATE INDEX IF NOT EXISTS idx_documents_source
-                ON documents(source_id);
-
-                CREATE INDEX IF NOT EXISTS idx_chunks_source
-                ON chunks(source_id);
-
-                CREATE INDEX IF NOT EXISTS idx_graph_edges_source
-                ON graph_edges(source_id);
-
-                CREATE INDEX IF NOT EXISTS idx_job_events_job
-                ON job_events(job_id, ordinal);
-                """
-            )
-            conn.commit()
+            self._create_schema(conn)
         finally:
             conn.close()
+
+    @staticmethod
+    def _create_schema(conn: sqlite3.Connection) -> None:
+        """Create all tables and indexes required by the metadata store."""
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS documents (
+                document_id TEXT PRIMARY KEY,
+                source_id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                content TEXT NOT NULL,
+                path_or_url TEXT NOT NULL,
+                content_type TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                metadata_json TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS chunks (
+                chunk_id TEXT PRIMARY KEY,
+                document_id TEXT NOT NULL,
+                source_id TEXT NOT NULL,
+                section_name TEXT NOT NULL,
+                text TEXT NOT NULL,
+                start_ref INTEGER NOT NULL,
+                end_ref INTEGER NOT NULL,
+                entity_name TEXT,
+                entity_type TEXT,
+                metadata_json TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS graph_edges (
+                edge_id TEXT PRIMARY KEY,
+                source_node TEXT NOT NULL,
+                relation TEXT NOT NULL,
+                target_node TEXT NOT NULL,
+                source_id TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS jobs (
+                job_id TEXT PRIMARY KEY,
+                status TEXT NOT NULL,
+                message TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS job_events (
+                event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                job_id TEXT NOT NULL,
+                ordinal INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                status TEXT NOT NULL,
+                elapsed_ms REAL NOT NULL,
+                details_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                UNIQUE(job_id, ordinal)
+            );
+
+            CREATE TABLE IF NOT EXISTS runtime_state (
+                state_key TEXT PRIMARY KEY,
+                state_value TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_documents_source
+            ON documents(source_id);
+
+            CREATE INDEX IF NOT EXISTS idx_chunks_source
+            ON chunks(source_id);
+
+            CREATE INDEX IF NOT EXISTS idx_graph_edges_source
+            ON graph_edges(source_id);
+
+            CREATE INDEX IF NOT EXISTS idx_job_events_job
+            ON job_events(job_id, ordinal);
+            """
+        )
+        conn.commit()
 
     def upsert_document(self, doc: DocumentRecord) -> None:
         """Insert or update a document row."""

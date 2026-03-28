@@ -75,6 +75,12 @@
 	root del repositorio para evitar drift entre procesos API/UI.
 - `run_api.py` y `run_ui.py` fijan CWD al root del repositorio al iniciar,
 	reduciendo inconsistencias cuando se ejecutan desde otras carpetas.
+- Diagnostico de ingesta por carpeta reforzado: ahora diferencia entre ruta
+	no encontrada, ruta no directorio y carpeta sin extensiones soportadas,
+	incluyendo conteo real de archivos escaneados y sugerencias de rutas cercanas.
+- Expansion de paths de grafo reforzada para consultas en minusculas: cuando
+	no se detectan entidades por patron capitalizado, se resuelven semillas de
+	entidades en Neo4j a partir de tokens de la pregunta.
 
 ## [0.1.1] - 2026-03-27
 

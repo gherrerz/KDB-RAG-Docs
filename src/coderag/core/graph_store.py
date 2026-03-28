@@ -10,6 +10,29 @@ from coderag.core.models import GraphPath
 from coderag.core.settings import SETTINGS
 
 ENTITY_PATTERN = re.compile(r"\b[A-Z][a-zA-Z]{2,}\b")
+TOKEN_PATTERN = re.compile(r"\b[a-zA-Z][a-zA-Z0-9_]{2,}\b")
+TOKEN_STOPWORDS = {
+    "como",
+    "con",
+    "cual",
+    "cuales",
+    "cuando",
+    "de",
+    "del",
+    "el",
+    "en",
+    "es",
+    "la",
+    "las",
+    "los",
+    "para",
+    "por",
+    "que",
+    "se",
+    "una",
+    "uno",
+    "y",
+}
 
 
 class GraphStore:
@@ -174,6 +197,12 @@ class GraphStore:
 
         entities = list(dict.fromkeys(ENTITY_PATTERN.findall(query)))
         if not entities:
+            entities = self._resolve_entities_from_query_tokens(
+                driver=driver,
+                query=query,
+                max_entities=max_paths,
+            )
+        if not entities:
             return []
 
         hop_count = max(1, min(hops, 4))
@@ -205,3 +234,43 @@ class GraphStore:
                         )
                     )
         return paths
+
+    @staticmethod
+    def _query_tokens(query: str) -> List[str]:
+        """Extract normalized query tokens for entity seed fallback."""
+        tokens = [
+            token.lower()
+            for token in TOKEN_PATTERN.findall(query)
+            if token.lower() not in TOKEN_STOPWORDS
+        ]
+        return list(dict.fromkeys(tokens))
+
+    def _resolve_entities_from_query_tokens(
+        self,
+        driver,
+        query: str,
+        max_entities: int,
+    ) -> List[str]:
+        """Resolve likely entity names from lowercase query tokens."""
+        tokens = self._query_tokens(query)
+        if not tokens:
+            return []
+
+        cypher = (
+            "MATCH (e:Entity) "
+            "WHERE any(token IN $tokens WHERE "
+            "toLower(e.name) CONTAINS token) "
+            "RETURN DISTINCT e.name AS name "
+            "LIMIT $limit"
+        )
+        with driver.session() as session:
+            records = session.run(
+                cypher,
+                tokens=tokens,
+                limit=max(1, min(max_entities, 12)),
+            )
+            return [
+                str(record.get("name"))
+                for record in records
+                if record.get("name")
+            ]
