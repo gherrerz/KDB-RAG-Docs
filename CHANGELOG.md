@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.2.1] - 2026-03-30
+
+### Added
+- Checklist operativo de release UI en `docs/UI_RELEASE_CHECKLIST.md` con
+	validaciones de estilo, accesibilidad, atajos y regresion.
+- Nuevas pruebas UI para `EvidenceView` (orden por score, detalle de fila,
+	truncado de snippet y render de graph paths).
+
+### Changed
+- Pulido final de UX UI: microcopy unificado en espanol, mensajes de error
+	accionables y ajustes de densidad visual para mejor legibilidad.
+- Estados visuales de Query/Ingestion refinados para mostrar badge compacto
+	y mensajes operativos consistentes en runtime.
+
+### Fixed
+- Cobertura de regresion UI ampliada y alineada a textos localizados en
+	pruebas de Ingestion/Query.
+
 ## [0.2.0] - 2026-03-27
 
 ### Added

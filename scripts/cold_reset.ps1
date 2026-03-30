@@ -97,6 +97,15 @@ function Invoke-ColdReset {
     Write-Host $output
 }
 
+function Clear-OffscreenQtEnv {
+    # Remove offscreen Qt override so desktop UI can render a window.
+    $qtPlatform = [Environment]::GetEnvironmentVariable("QT_QPA_PLATFORM", "Process")
+    if ($qtPlatform -and $qtPlatform.Trim().ToLower() -eq "offscreen") {
+        Remove-Item Env:QT_QPA_PLATFORM -ErrorAction SilentlyContinue
+        Write-Host "Se limpio QT_QPA_PLATFORM=offscreen para permitir UI visible."
+    }
+}
+
 function Start-Services {
     param(
         [Parameter(Mandatory = $true)]
@@ -160,6 +169,7 @@ Stop-ActiveServices
 Invoke-ColdReset -PythonExe $pythonExe -RepoRoot $repoRoot
 
 if (-not $SkipStart) {
+    Clear-OffscreenQtEnv
     Start-Services -PythonExe $pythonExe -RepoRoot $repoRoot -Port $ApiPort -StartUI:(-not $SkipUI) -StartRQWorker:$useRQ
 }
 

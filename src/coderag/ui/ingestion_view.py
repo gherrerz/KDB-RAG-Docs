@@ -5,7 +5,8 @@ from __future__ import annotations
 import json
 from typing import Callable
 
-from PySide6.QtCore import QObject, QThread, Signal, Slot
+from PySide6.QtCore import QObject, QThread, Signal, Slot, Qt
+from PySide6.QtGui import QKeySequence, QRegularExpressionValidator, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
     QFormLayout,
@@ -15,10 +16,14 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QProgressBar,
+    QCheckBox,
+    QSplitter,
     QTextEdit,
     QVBoxLayout,
     QWidget,
 )
+from PySide6.QtCore import QRegularExpression
 
 
 class _IngestionWorker(QObject):
@@ -67,40 +72,131 @@ class IngestionView(QWidget):
         self._ingest_worker: _IngestionWorker | None = None
 
         layout = QVBoxLayout(self)
-        form_group = QGroupBox("Source Configuration")
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(10)
+
+        form_group = QGroupBox("Configuracion de fuente")
         form_layout = QFormLayout(form_group)
+        form_layout.setHorizontalSpacing(12)
+        form_layout.setVerticalSpacing(10)
 
         self.source_type = QLineEdit("folder")
+        self.source_type.setMinimumHeight(34)
         self.local_path = QLineEdit("sample_data")
+        self.local_path.setMinimumHeight(34)
+        self.local_path.setClearButtonEnabled(True)
         self.base_url = QLineEdit()
+        self.base_url.setMinimumHeight(34)
+        self.base_url.setClearButtonEnabled(True)
         self.token = QLineEdit()
+        self.token.setMinimumHeight(34)
         self.filters = QLineEdit("{}")
+        self.filters.setMinimumHeight(34)
 
-        form_layout.addRow("Source Type", self.source_type)
-        form_layout.addRow("Local Path", self.local_path)
-        form_layout.addRow("Base URL", self.base_url)
+        self.source_type.setPlaceholderText("folder | confluence")
+        self.source_type.setToolTip(
+            "Use 'folder' para archivos locales o 'confluence' para ingesta API."
+        )
+        self.local_path.setPlaceholderText("sample_data o C:/ruta/a/documentos")
+        self.local_path.setToolTip("Obligatorio para ingesta de tipo folder.")
+        self.base_url.setPlaceholderText("https://company.atlassian.net/wiki")
+        self.base_url.setToolTip("Obligatorio para ingesta de tipo confluence.")
+        self.token.setPlaceholderText("Token API de Confluence")
+        self.token.setToolTip("Dato sensible. Usa mostrar/ocultar segun tu entorno.")
+        self.token.setEchoMode(QLineEdit.EchoMode.Password)
+        self.filters.setPlaceholderText('{"space": "ENG", "labels": ["policy"]}')
+        self.filters.setToolTip("Objeto JSON opcional para filtros del origen.")
+
+        source_pattern = QRegularExpression("^[a-zA-Z_][a-zA-Z0-9_-]*$")
+        self.source_type.setValidator(QRegularExpressionValidator(source_pattern))
+
+        form_layout.addRow("Tipo de fuente", self.source_type)
+        form_layout.addRow("Ruta local", self.local_path)
+        form_layout.addRow("URL base", self.base_url)
         form_layout.addRow("Token", self.token)
-        form_layout.addRow("Filters (JSON)", self.filters)
+        form_layout.addRow("Filtros (JSON)", self.filters)
 
         actions = QHBoxLayout()
-        self.ingest_button = QPushButton("Ingest")
+        self.ingest_button = QPushButton("Ingerir")
+        self.ingest_button.setProperty("variant", "primary")
         self.ingest_button.clicked.connect(self._run_ingestion)
         self.reset_all_button = QPushButton("BORRAR TODO")
+        self.reset_all_button.setProperty("variant", "danger")
         self.reset_all_button.clicked.connect(self._run_reset_all)
         actions.addWidget(self.ingest_button)
         actions.addWidget(self.reset_all_button)
-        actions.addWidget(QLabel("Indexes chunks + graph + retrieval."))
+
+        self.status_badge = QLabel("idle")
+        self.status_badge.setProperty("role", "status")
+        self.status_badge.setProperty("state", "idle")
+        actions.addWidget(self.status_badge)
+
+        self.summary_label = QLabel("Listo para ingerir")
+        self.summary_label.setProperty("role", "hint")
+        actions.addStretch(1)
+        actions.addWidget(self.summary_label)
+
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 100)
+        self.progress.setValue(0)
+
+        self.summary = QTextEdit()
+        self.summary.setReadOnly(True)
+        self.summary.setFixedHeight(110)
+
+        self.show_raw = QCheckBox("Mostrar timeline tecnico y JSON crudo")
+        self.show_raw.setChecked(True)
+        self.show_raw.toggled.connect(self._toggle_raw_output)
 
         self.output = QTextEdit()
         self.output.setReadOnly(True)
 
         layout.addWidget(form_group)
         layout.addLayout(actions)
-        layout.addWidget(self.output)
+        layout.addWidget(self.progress)
+        layout.addWidget(self.show_raw)
+
+        self.feedback_splitter = QSplitter(Qt.Orientation.Vertical)
+        self.feedback_splitter.addWidget(self.summary)
+        self.feedback_splitter.addWidget(self.output)
+        self.feedback_splitter.setChildrenCollapsible(False)
+        self.feedback_splitter.setStretchFactor(0, 1)
+        self.feedback_splitter.setStretchFactor(1, 2)
+        self.feedback_splitter.setSizes([170, 330])
+        layout.addWidget(self.feedback_splitter)
+
+        self._ingest_shortcut = QShortcut(QKeySequence("Ctrl+I"), self)
+        self._ingest_shortcut.activated.connect(self._run_ingestion)
+        self._toggle_raw_shortcut = QShortcut(QKeySequence("Ctrl+T"), self)
+        self._toggle_raw_shortcut.activated.connect(self.show_raw.toggle)
+
+        QWidget.setTabOrder(self.source_type, self.local_path)
+        QWidget.setTabOrder(self.local_path, self.base_url)
+        QWidget.setTabOrder(self.base_url, self.token)
+        QWidget.setTabOrder(self.token, self.filters)
+        QWidget.setTabOrder(self.filters, self.ingest_button)
+        QWidget.setTabOrder(self.ingest_button, self.reset_all_button)
+
+        self._set_status("idle")
+        self.summary.setPlainText(
+            "Estado: inactivo\nEsperando configuracion de fuente."
+        )
 
     def _run_ingestion(self) -> None:
         if self._ingest_thread is not None and self._ingest_thread.isRunning():
-            self.output.setPlainText("Ingestion already running...\n")
+            self.summary.setPlainText(
+                "Estado: en curso\nYa existe una ingesta en ejecucion."
+            )
+            return
+
+        validation_error = self._validate_inputs()
+        if validation_error:
+            self._set_status("error")
+            self.summary.setPlainText(
+                "Estado: failed\n"
+                f"{validation_error}\n"
+                "Accion sugerida: corrige el formulario y vuelve a intentar."
+            )
             return
 
         payload = {
@@ -112,7 +208,11 @@ class IngestionView(QWidget):
                 "filters": self._safe_json(self.filters.text().strip()),
             }
         }
-        self.output.setPlainText("Ingestion running...\n")
+        self.summary.setPlainText(
+            "Estado: en curso\nEnviando job de ingesta..."
+        )
+        self.progress.setValue(0)
+        self._set_status("running")
         self.ingest_button.setEnabled(False)
         self.reset_all_button.setEnabled(False)
 
@@ -138,21 +238,33 @@ class IngestionView(QWidget):
 
     def _handle_live_update(self, result: dict) -> None:
         """Render incremental updates while ingestion is running."""
-        rendered = self._format_ingestion_result(result)
+        self._update_progress(result)
+        self._render_summary(result)
+        rendered = self._format_ingestion_result(result, include_raw=True)
         self.output.setPlainText(rendered)
         QApplication.processEvents()
 
     @Slot(dict)
     def _handle_ingestion_finished(self, result: dict) -> None:
         """Render final ingestion result and restore UI state."""
-        rendered = self._format_ingestion_result(result)
+        self._update_progress(result)
+        self._render_summary(result)
+        rendered = self._format_ingestion_result(result, include_raw=True)
         self.output.setPlainText(rendered)
+        final_state = self._status_to_badge(result.get("status"))
+        self._set_status(final_state)
         self.ingest_button.setEnabled(True)
         self.reset_all_button.setEnabled(True)
 
     @Slot(str)
     def _handle_ingestion_failed(self, error: str) -> None:
         """Render unexpected worker errors and restore UI state."""
+        self._set_status("error")
+        self.summary.setPlainText(
+            "Estado: failed\n"
+            f"Error inesperado en worker UI: {error}\n"
+            "Accion sugerida: revisar conectividad de API y logs del backend."
+        )
         self.output.setPlainText(
             "Status: failed\n"
             f"Message: Unexpected ingestion error in UI worker: {error}"
@@ -180,17 +292,25 @@ class IngestionView(QWidget):
             QMessageBox.StandardButton.No,
         )
         if decision != QMessageBox.StandardButton.Yes:
-            self.output.setPlainText("Operacion cancelada por el usuario.")
+            self._set_status("idle")
+            self.summary.setPlainText(
+                "Estado: inactivo\nReset cancelado por el usuario."
+            )
             return
 
-        self.output.setPlainText("Reset total en ejecucion...\n")
+        self._set_status("running")
+        self.summary.setPlainText("Estado: en curso\nReset en ejecucion...")
+        self.progress.setValue(0)
         QApplication.processEvents()
         result = self._on_reset_all()
-        rendered = self._format_ingestion_result(result)
+        self._update_progress(result)
+        self._render_summary(result)
+        rendered = self._format_ingestion_result(result, include_raw=True)
         self.output.setPlainText(rendered)
+        self._set_status(self._status_to_badge(result.get("status")))
 
     @staticmethod
-    def _format_ingestion_result(result: dict) -> str:
+    def _format_ingestion_result(result: dict, include_raw: bool) -> str:
         """Return a readable ingestion trace for the UI text panel."""
         lines: list[str] = []
 
@@ -253,9 +373,161 @@ class IngestionView(QWidget):
                 lines.append(f"- total_elapsed_hhmmss: {total_elapsed}")
                 lines.append(f"- recorded_steps: {timed_steps}")
 
-        lines.append("\nRaw JSON:")
-        lines.append(json.dumps(result, indent=2, ensure_ascii=False))
+        if include_raw:
+            lines.append("\nRaw JSON:")
+            lines.append(json.dumps(result, indent=2, ensure_ascii=False))
         return "\n".join(lines)
+
+    def _toggle_raw_output(self, checked: bool) -> None:
+        """Toggle technical output visibility without touching summary panel."""
+        self.output.setVisible(checked)
+
+    def _update_progress(self, result: dict) -> None:
+        """Update progress bar from backend progress percentage."""
+        progress_pct = result.get("progress_pct")
+        if isinstance(progress_pct, (int, float)):
+            bounded = max(0, min(100, int(round(float(progress_pct)))))
+            self.progress.setValue(bounded)
+            return
+        status = str(result.get("status", "")).strip().lower()
+        if status in {"completed", "finished"}:
+            self.progress.setValue(100)
+        elif status == "failed":
+            self.progress.setValue(0)
+
+    def _render_summary(self, result: dict) -> None:
+        """Render concise status summary separate from technical timeline."""
+        raw_status = str(result.get("status", "unknown"))
+        status = self._localize_status(raw_status)
+        message = str(result.get("message", "")).strip() or "No message provided."
+        documents = result.get("documents", "-")
+        chunks = result.get("chunks", "-")
+        elapsed = "-"
+
+        steps = result.get("steps")
+        if isinstance(steps, list) and steps:
+            for step in reversed(steps):
+                if not isinstance(step, dict):
+                    continue
+                elapsed_candidate = step.get("elapsed_hhmmss")
+                if isinstance(elapsed_candidate, str) and elapsed_candidate:
+                    elapsed = elapsed_candidate
+                    break
+
+        self.summary.setPlainText(
+            "\n".join(
+                [
+                    f"Estado: {status}",
+                    f"Mensaje: {message}",
+                    f"Documentos: {documents}",
+                    f"Chunks: {chunks}",
+                    f"Duracion: {elapsed}",
+                ]
+            )
+        )
+
+    def _set_status(self, state: str) -> None:
+        """Apply status style token for ingestion lifecycle."""
+        label_by_state = {
+            "idle": "inactivo",
+            "running": "en curso",
+            "success": "ok",
+            "error": "error",
+        }
+        self.status_badge.setProperty("state", state)
+        self.status_badge.setText(label_by_state.get(state, "inactivo"))
+        hints = {
+            "idle": "Listo para ingerir",
+            "running": "Procesando fuente",
+            "success": "Ingesta completada",
+            "error": "Revisar validacion o errores de backend",
+        }
+        self.summary_label.setText(hints.get(state, "Ready"))
+        self.status_badge.style().unpolish(self.status_badge)
+        self.status_badge.style().polish(self.status_badge)
+        self.status_badge.update()
+
+    @staticmethod
+    def _localize_status(status: str) -> str:
+        """Map backend status values to UI-friendly Spanish labels."""
+        normalized = status.strip().lower()
+        mapping = {
+            "queued": "en cola",
+            "running": "en curso",
+            "started": "en curso",
+            "completed": "completado",
+            "finished": "completado",
+            "failed": "fallido",
+            "idle": "inactivo",
+        }
+        return mapping.get(normalized, normalized or "desconocido")
+
+    @staticmethod
+    def _status_to_badge(status: object) -> str:
+        """Map backend status string to known badge tokens."""
+        normalized = str(status or "").strip().lower()
+        if normalized in {"completed", "finished"}:
+            return "success"
+        if normalized == "failed":
+            return "error"
+        if normalized in {"queued", "running", "started"}:
+            return "running"
+        return "idle"
+
+    def _validate_inputs(self) -> str | None:
+        """Validate source-specific fields before dispatching ingestion."""
+        source_type = (self.source_type.text() or "").strip().lower()
+        filters_raw = (self.filters.text() or "").strip()
+
+        if not source_type:
+            self.source_type.setProperty("invalid", True)
+            self._refresh_input_style(self.source_type)
+            return "El tipo de fuente es obligatorio."
+
+        self.source_type.setProperty("invalid", False)
+        self._refresh_input_style(self.source_type)
+
+        if source_type == "folder":
+            if not (self.local_path.text() or "").strip():
+                self.local_path.setProperty("invalid", True)
+                self._refresh_input_style(self.local_path)
+                return "La ruta local es obligatoria cuando el tipo es folder."
+            self.local_path.setProperty("invalid", False)
+            self._refresh_input_style(self.local_path)
+
+        if source_type == "confluence":
+            has_base_url = bool((self.base_url.text() or "").strip())
+            has_token = bool((self.token.text() or "").strip())
+            self.base_url.setProperty("invalid", not has_base_url)
+            self.token.setProperty("invalid", not has_token)
+            self._refresh_input_style(self.base_url)
+            self._refresh_input_style(self.token)
+            if not has_base_url or not has_token:
+                return "URL base y token son obligatorios para fuentes confluence."
+
+        self.base_url.setProperty("invalid", False)
+        self.token.setProperty("invalid", False)
+        self._refresh_input_style(self.base_url)
+        self._refresh_input_style(self.token)
+
+        if filters_raw:
+            parsed = self._safe_json(filters_raw)
+            is_invalid_json = parsed == {} and filters_raw not in {"{}", ""}
+            self.filters.setProperty("invalid", is_invalid_json)
+            self._refresh_input_style(self.filters)
+            if is_invalid_json:
+                return "Los filtros deben ser un objeto JSON valido."
+
+        self.filters.setProperty("invalid", False)
+        self._refresh_input_style(self.filters)
+        return None
+
+    @staticmethod
+    def _refresh_input_style(widget: QLineEdit) -> None:
+        """Re-apply stylesheet when dynamic input state changes."""
+        widget.style().unpolish(widget)
+        widget.style().polish(widget)
+        widget.update()
 
     @staticmethod
     def _safe_json(raw: str) -> dict:

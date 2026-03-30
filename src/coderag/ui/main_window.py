@@ -8,10 +8,11 @@ from typing import Any, Callable, Dict, Optional
 
 import requests
 from requests import Response
-from PySide6.QtWidgets import QApplication, QMainWindow, QTabWidget
+from PySide6.QtWidgets import QApplication, QMainWindow, QTabWidget, QWidget, QVBoxLayout
 
 from coderag.ui.ingestion_view import IngestionView
 from coderag.ui.query_view import QueryView
+from coderag.ui.theme import build_stylesheet
 
 
 class MainWindow(QMainWindow):
@@ -23,10 +24,17 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("RAG Hybrid Response Validator")
         self.resize(1100, 760)
 
+        self.setStyleSheet(build_stylesheet())
+
         tabs = QTabWidget()
         tabs.addTab(IngestionView(self.ingest, self.reset_all), "Ingestion")
         tabs.addTab(QueryView(self.query), "Query")
-        self.setCentralWidget(tabs)
+
+        shell = QWidget()
+        shell_layout = QVBoxLayout(shell)
+        shell_layout.setContentsMargins(14, 14, 14, 14)
+        shell_layout.addWidget(tabs)
+        self.setCentralWidget(shell)
 
     def ingest(
         self,
@@ -151,6 +159,7 @@ class MainWindow(QMainWindow):
 def launch_ui(api_base_url: str = "http://127.0.0.1:8000") -> None:
     """Start Qt application."""
     app = QApplication(sys.argv)
+    app.setApplicationName("RAG Hybrid Response Validator")
     window = MainWindow(api_base_url=api_base_url)
     window.show()
     app.exec()

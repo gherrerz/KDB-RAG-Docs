@@ -22,6 +22,8 @@ adicionales de produccion:
 ### Runtime principal
 
 - UI de escritorio en PySide6 (`src/coderag/ui/*`) para operar ingesta y consulta.
+- Capa UI con tema centralizado, validaciones en cliente y estados visuales de
+  operacion (progreso, resumen y diagnostico tecnico desacoplado).
 - API FastAPI (`src/coderag/api/server.py`) como fachada de operaciones.
 - Orquestador de negocio (`src/coderag/core/service.py`) con flujo end-to-end.
 - Persistencia SQLite (`src/coderag/storage/metadata_store.py`) para documentos,

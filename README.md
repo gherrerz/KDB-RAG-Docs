@@ -19,6 +19,12 @@ Aplicacion Python para ingesta documental y consulta con RAG hibrido
 - ChromaDB activo en runtime para persistencia y busqueda vectorial
 - Embeddings reales por proveedor durante ingesta y consulta
 - UI para operacion de ingesta y consultas
+- UI renovada con tema visual editorial-industrial y mejor jerarquia
+- Validacion anticipada de formularios en Ingestion/Query con ayudas contextuales
+- Seguimiento de ingesta con estado visual, barra de progreso y resumen ejecutivo
+- Vista de evidencia mejorada: tabla ordenable, detalle por fila y paths mas legibles
+- Paneles tecnicos colapsables (diagnostics/raw JSON) y atajos de teclado para operacion rapida
+- Microcopy unificado en espanol y errores accionables en Ingestion/Query
 - UI de ingesta con polling async en vivo (RQ o worker local sin Redis)
 - API REST para integracion externa
 - Ingesta asincrona opcional con Redis + RQ
@@ -227,6 +233,7 @@ Ver:
 - `docs/CONFIGURATION.md`
 - `docs/API_REFERENCE.md`
 - `docs/ARCHITECTURE.md`
+- `docs/UI_RELEASE_CHECKLIST.md`
 
 Variables relevantes de entorno:
 - `LLM_PROVIDER`: provider para consulta y embeddings (`local`, `openai`,

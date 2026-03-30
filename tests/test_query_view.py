@@ -68,3 +68,53 @@ def test_query_view_sends_include_llm_answer_false_when_unchecked() -> None:
 
     assert captured_payload["include_llm_answer"] is False
     assert captured_payload["hops"] == 2
+
+
+def test_query_view_requires_non_empty_question() -> None:
+    """Avoid backend call when question is empty."""
+    _ensure_app()
+    calls = 0
+
+    def _on_query(payload: dict[str, Any]) -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        return {
+            "answer": "ok",
+            "diagnostics": {},
+            "citations": [],
+            "graph_paths": [],
+        }
+
+    view = QueryView(_on_query)
+    view.question.setText("   ")
+    view.hops.setText("2")
+
+    view._run_query()
+
+    assert calls == 0
+    assert "Error de validacion" in view.answer.toPlainText()
+
+
+def test_query_view_requires_hops_between_1_and_6() -> None:
+    """Reject graph hops out of supported range before sending payload."""
+    _ensure_app()
+    calls = 0
+
+    def _on_query(payload: dict[str, Any]) -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        return {
+            "answer": "ok",
+            "diagnostics": {},
+            "citations": [],
+            "graph_paths": [],
+        }
+
+    view = QueryView(_on_query)
+    view.question.setText("What is ISO 27001?")
+    view.hops.setText("9")
+
+    view._run_query()
+
+    assert calls == 0
+    assert "Error de validacion" in view.answer.toPlainText()
