@@ -257,6 +257,11 @@ Variables relevantes de entorno:
 - `RQ_INGEST_JOB_TIMEOUT_SEC`: timeout en segundos para ingestas async con
   RQ (`USE_RQ=true`). Default: `900`.
 
+Para ingesta `folder`, la UI realiza staging automatico de la carpeta
+seleccionada hacia `storage/ingestion_staging` dentro del repositorio.
+Luego envia esa ruta al backend (`api`/`worker`) para que funcione igual
+en runtime local y en Docker/Rancher, sin configurar mapeos por carpeta.
+
 Plantillas listas para copiar:
 - `.env.openai.example`
 - `.env.gemini.example`

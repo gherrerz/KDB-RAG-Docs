@@ -112,6 +112,11 @@ La aplicacion carga automaticamente variables desde `.env` en runtime.
   RQ. Default `900`. Aumentar en ingestas largas para evitar errores por
   timeout de worker.
 
+Para ingesta `folder`, la UI hace staging automatico del directorio elegido
+por el usuario hacia `storage/ingestion_staging` dentro del repositorio.
+El backend consume esa ruta staged, visible tanto para `api` como `worker`
+en Docker Compose por el montaje del repo (`./:/app`).
+
 Ejemplo rapido Neo4j local:
 
 ```dotenv

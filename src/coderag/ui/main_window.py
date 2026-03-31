@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 import time
+from copy import deepcopy
 from typing import Any, Callable, Dict, Optional
 
 import requests
@@ -12,7 +13,49 @@ from PySide6.QtWidgets import QApplication, QMainWindow, QTabWidget, QWidget, QV
 
 from coderag.ui.ingestion_view import IngestionView
 from coderag.ui.query_view import QueryView
+from coderag.ui.staging import stage_folder_source
 from coderag.ui.theme import build_stylesheet
+
+
+def _prepare_ingestion_payload(
+    payload: Dict[str, Any],
+) -> tuple[Dict[str, Any], Dict[str, Any] | None]:
+    """Stage folder sources locally so backend always reads repo-mounted paths."""
+    candidate = deepcopy(payload)
+    source = candidate.get("source")
+    if not isinstance(source, dict):
+        return candidate, None
+
+    source_type = str(source.get("source_type", "")).strip().lower()
+    if source_type != "folder":
+        return candidate, None
+
+    local_path = source.get("local_path")
+    if not isinstance(local_path, str) or not local_path.strip():
+        raise ValueError("Folder ingestion requires a local folder path.")
+
+    staged_path, metadata = stage_folder_source(local_path)
+    source["local_path"] = staged_path
+
+    progress = {
+        "status": "running",
+        "message": "Folder source synced to local staging area.",
+        "progress_pct": 2.0,
+        "staging": metadata,
+        "step": {
+            "name": "local_staging_completed",
+            "status": "ok",
+            "details": metadata,
+        },
+        "steps": [
+            {
+                "name": "local_staging_completed",
+                "status": "ok",
+                "details": metadata,
+            }
+        ],
+    }
+    return candidate, progress
 
 
 class MainWindow(QMainWindow):
@@ -42,8 +85,27 @@ class MainWindow(QMainWindow):
         on_update: Optional[Callable[[Dict[str, Any]], None]] = None,
     ) -> Dict[str, Any]:
         """Run ingestion through async endpoint and poll live progress."""
+        try:
+            prepared_payload, preflight_update = _prepare_ingestion_payload(payload)
+        except (ValueError, FileNotFoundError, NotADirectoryError, OSError) as exc:
+            return {
+                "status": "failed",
+                "message": str(exc),
+                "progress_pct": 100.0,
+                "steps": [
+                    {
+                        "name": "local_staging_failed",
+                        "status": "failed",
+                        "details": {"error": str(exc)},
+                    }
+                ],
+            }
+
+        if on_update is not None and preflight_update is not None:
+            on_update(preflight_update)
+
         async_response = self._post_json(
-            "/sources/ingest/async", payload, timeout=15
+            "/sources/ingest/async", prepared_payload, timeout=15
         )
         if "error" in async_response or "detail" in async_response:
             return async_response

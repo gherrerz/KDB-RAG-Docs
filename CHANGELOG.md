@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.2.2] - 2026-03-31
+
+### Added
+- Staging automatico en UI para fuentes `folder`: la carpeta seleccionada
+	se copia a `storage/ingestion_staging` antes de enviar la ingesta.
+- Nueva utilidad de staging en `src/coderag/ui/staging.py` con limpieza de
+	directorios antiguos para controlar crecimiento en disco.
+
+### Changed
+- `MainWindow.ingest` ahora ejecuta un preflight de staging y envia al
+	backend una ruta relativa al repo, compatible con runtime local y Docker.
+- Documentacion (`README`, `docs/CONFIGURATION.md`) actualizada para reflejar
+	que no se requieren mapeos manuales por carpeta.
+
+### Fixed
+- Ingesta de rutas arbitrarias seleccionadas por usuario (incluyendo rutas
+	Windows fuera del repo) en despliegues Docker/Rancher sin configurar
+	volumenes nuevos por cada carpeta.
+
 ## [0.2.1] - 2026-03-30
 
 ### Added
