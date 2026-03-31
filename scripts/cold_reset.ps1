@@ -158,7 +158,7 @@ $pythonExe = Resolve-PythonExe -RepoRoot $repoRoot
 $useRQ = Resolve-UseRQ -PythonExe $pythonExe -RepoRoot $repoRoot
 
 if (-not $Force) {
-    $confirmation = Read-Host "Esto borrara datos locales (Chroma/metadata) y aristas Neo4j. Escriba YES para continuar"
+    $confirmation = Read-Host "Esto borrara datos locales (Chroma/metadata/staging espejo) y aristas Neo4j. Escriba YES para continuar"
     if ($confirmation -ne "YES") {
         Write-Host "Operacion cancelada."
         exit 0

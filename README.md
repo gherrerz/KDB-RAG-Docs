@@ -11,6 +11,9 @@ Aplicacion Python para ingesta documental y consulta con RAG hibrido
 - Recuperacion hibrida: vectorial + BM25
 - Expansion por grafo multi-hop
 - Respuesta con evidencia y trazabilidad
+- Citas textuales de respuesta LLM priorizan nombre de documento/archivo
+  con extension cuando esta disponible
+  (los `chunk_id` se mantienen en `citations` para trazabilidad tecnica)
 - Soporte de proveedores LLM: OpenAI, Gemini y Vertex AI
 - Seleccion de provider por entorno (`LLM_PROVIDER`) con soporte para
   `local`, `openai`, `gemini` y `vertex` (`vertex_ai` como alias)
@@ -179,7 +182,7 @@ Respuesta:
 ```json
 {
   "status": "completed",
-  "message": "All repositories were cleared and indexes were reset.",
+  "message": "All repositories were cleared, indexes were reset, and 3 staging mirror entries were removed.",
   "deleted_documents": 19,
   "deleted_chunks": 961,
   "deleted_graph_edges": 204,
@@ -213,7 +216,8 @@ Opcional para incluir caches dentro de `.venv`:
 ```
 
 Reset cold completo (detiene servicios, borra Chroma completo + metadata,
-limpia aristas Neo4j y vuelve a levantar API/UI):
+limpia staging espejo de ingesta, limpia aristas Neo4j y vuelve a levantar
+API/UI):
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\cold_reset.ps1 -Force

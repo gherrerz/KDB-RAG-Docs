@@ -285,7 +285,8 @@ class IngestionView(QWidget):
             "Confirmar borrado total",
             (
                 "Esta accion borrara TODO: documentos, chunks, BM25, "
-                "ChromaDB embebido, Neo4j y jobs historicos.\n\n"
+                "ChromaDB embebido, staging espejo local, Neo4j y jobs "
+                "historicos.\n\n"
                 "Deseas continuar?"
             ),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,

@@ -149,6 +149,7 @@ Alcance del borrado:
 - chunks indexados para retrieval BM25/vector
 - aristas de grafo en SQLite
 - historial de jobs
+- staging espejo local en `storage/ingestion_staging`
 - relaciones `RELATES_TO` en Neo4j
 
 Request:
@@ -164,7 +165,7 @@ Response:
 ```json
 {
   "status": "completed",
-  "message": "All repositories were cleared and indexes were reset.",
+  "message": "All repositories were cleared, indexes were reset, and 3 staging mirror entries were removed.",
   "deleted_documents": 19,
   "deleted_chunks": 961,
   "deleted_graph_edges": 204,
@@ -234,6 +235,9 @@ Notas:
 
 - `source_id` filtra retrieval BM25/vector a la fuente indicada.
 - Si `source_id` no existe, `citations` puede ser vacio.
+- En `answer`, las citas textuales deben referenciar documento/archivo
+  con extension cuando este disponible.
+  El identificador tecnico `chunk_id` permanece en `citations`.
 
 ## POST /query/retrieval
 

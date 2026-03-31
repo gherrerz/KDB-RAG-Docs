@@ -39,9 +39,17 @@ def test_local_fallback_with_chunks() -> None:
         chunks=[chunk],
         provider="gemini",
         force_fallback=True,
+        doc_map={
+            "d1": {
+                "title": "Governance-Plan.md",
+                "path_or_url": "sample_data/Governance-Plan.md",
+            }
+        },
     )
     assert "## Resumen" in answer
     assert "Basado en la evidencia recuperada" in answer
+    assert "[Governance-Plan.md]" in answer
+    assert "[c1]" not in answer
 
 
 def test_vertex_alias_uses_local_fallback() -> None:
@@ -62,8 +70,48 @@ def test_vertex_alias_uses_local_fallback() -> None:
         chunks=[chunk],
         provider="vertex",
         force_fallback=True,
+        doc_map={
+            "d2": {
+                "title": "Policy-FIN-001.md",
+                "path_or_url": "sample_data/Policy-FIN-001.md",
+            }
+        },
     )
     assert "Basado en la evidencia recuperada" in answer
+    assert "[Policy-FIN-001.md]" in answer
+    assert "[c2]" not in answer
+
+
+def test_local_fallback_prefers_filename_when_title_has_no_extension() -> None:
+    """Prefer filename with suffix when metadata title is extensionless."""
+    client = ProviderLlmClient()
+    chunk = ChunkRecord(
+        chunk_id="c5",
+        document_id="d5",
+        source_id="s5",
+        section_name="General",
+        text="El modelo de datos define estructura y relaciones de negocio.",
+        start_ref=0,
+        end_ref=56,
+        metadata={},
+    )
+
+    answer = client.answer(
+        question="Que define el modelo de datos?",
+        chunks=[chunk],
+        provider="local",
+        force_fallback=True,
+        doc_map={
+            "d5": {
+                "title": "DM_GobiernoDelDato",
+                "path_or_url": "storage/ingestion_staging/DM_GobiernoDelDato.pdf",
+            }
+        },
+    )
+
+    assert "[DM_GobiernoDelDato.pdf]" in answer
+    assert "[DM_GobiernoDelDato]" not in answer
+    assert "[c5]" not in answer
 
 
 def test_strict_mode_fails_without_provider_credentials() -> None:

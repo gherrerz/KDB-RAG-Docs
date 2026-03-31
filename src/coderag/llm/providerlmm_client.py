@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import logging
-from typing import List
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 import requests
 
@@ -29,16 +30,27 @@ class ProviderLlmClient:
         provider: str = "local",
         force_fallback: bool = False,
         strict: bool = False,
+        doc_map: Optional[Dict[str, Dict[str, Any]]] = None,
     ) -> str:
         """Generate answer grounded in retrieved chunks."""
         provider_name = provider.strip().lower()
         context_block = context or self._context_from_chunks(chunks)
 
         if force_fallback:
-            return self._local_answer(question, chunks, context_block)
+            return self._local_answer(
+                question,
+                chunks,
+                context_block,
+                doc_map=doc_map,
+            )
 
         if provider_name == "local":
-            return self._local_answer(question, chunks, context_block)
+            return self._local_answer(
+                question,
+                chunks,
+                context_block,
+                doc_map=doc_map,
+            )
 
         if not context_block.strip():
             return "No se encontro informacion en las fuentes indexadas."
@@ -67,13 +79,46 @@ class ProviderLlmClient:
                 f"provider={provider_name}"
             )
 
-        return self._local_answer(question, chunks, context_block)
+        return self._local_answer(
+            question,
+            chunks,
+            context_block,
+            doc_map=doc_map,
+        )
+
+    @staticmethod
+    def _resolve_document_name(
+        chunk: ChunkRecord,
+        doc_map: Optional[Dict[str, Dict[str, Any]]] = None,
+    ) -> str:
+        """Resolve a human-readable document name for citations."""
+        doc_map = doc_map or {}
+        meta = doc_map.get(chunk.document_id, {})
+        path_or_url = str(meta.get("path_or_url") or "").strip()
+        filename = ""
+        if path_or_url:
+            normalized = path_or_url.replace("\\", "/")
+            filename = normalized.rsplit("/", 1)[-1].strip()
+
+        title = str(meta.get("title") or "").strip()
+        if title:
+            if Path(title).suffix:
+                return title
+            if filename and Path(filename).suffix:
+                return filename
+            return title
+
+        if filename:
+            return filename
+
+        return chunk.document_id
 
     def _local_answer(
         self,
         question: str,
         chunks: List[ChunkRecord],
         context: str | None = None,
+        doc_map: Optional[Dict[str, Dict[str, Any]]] = None,
     ) -> str:
         """Return extractive local answer that always works offline."""
         _ = question
@@ -87,8 +132,9 @@ class ProviderLlmClient:
 
         evidence_lines = []
         for index, chunk in enumerate(chunks[:3], start=1):
+            document_name = self._resolve_document_name(chunk, doc_map)
             evidence_lines.append(
-                f"- {index}. [{chunk.chunk_id}] {chunk.text.strip()[:220]}"
+                f"- {index}. [{document_name}] {chunk.text.strip()[:220]}"
             )
 
         graph_lines: list[str] = []

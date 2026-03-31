@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import os
+import shutil
+import stat
 import uuid
 from datetime import UTC, datetime
+from pathlib import Path
 from time import perf_counter
 from typing import Callable, Dict, List, Optional
 
@@ -27,6 +31,38 @@ from coderag.llm.providerlmm_client import ProviderLlmClient
 from coderag.retrieval.context_assembler import assemble_context
 from coderag.retrieval.hybrid_search import hybrid_search
 from coderag.retrieval.reranker import rerank_results
+
+
+def _on_rmtree_error(func, path, _exc_info) -> None:
+    """Retry file removal after clearing read-only attributes on Windows."""
+    os.chmod(path, stat.S_IWRITE | stat.S_IREAD)
+    func(path)
+
+
+def _clear_local_staging_mirror(data_dir: Path) -> tuple[int, list[str]]:
+    """Delete staged ingestion mirror entries and keep the root folder."""
+    staging_dir = data_dir / "ingestion_staging"
+    warnings: list[str] = []
+    deleted_entries = 0
+    staging_dir.mkdir(parents=True, exist_ok=True)
+
+    for entry in list(staging_dir.iterdir()):
+        try:
+            if entry.is_dir():
+                shutil.rmtree(entry, onerror=_on_rmtree_error)
+            else:
+                entry.unlink()
+            deleted_entries += 1
+        except PermissionError as exc:
+            warnings.append(
+                f"Could not fully remove staging entry '{entry}': {exc}"
+            )
+        except OSError as exc:
+            warnings.append(
+                f"Could not remove staging entry '{entry}': {exc}"
+            )
+
+    return deleted_entries, warnings
 
 
 def _format_elapsed_hhmmss(elapsed_ms: float) -> str:
@@ -114,6 +150,9 @@ class RagApplicationService:
         """Reset all persisted indexing artifacts across storage layers."""
         deleted = self.store.clear_all_data()
         self.vector_index.clear_all()
+        deleted_staging_entries, staging_warnings = _clear_local_staging_mirror(
+            SETTINGS.data_dir
+        )
 
         neo4j_enabled = True
         neo4j_edges_deleted = self.graph_store.clear_all_edges()
@@ -126,7 +165,15 @@ class RagApplicationService:
         return ResetAllResponse(
             status="completed",
             message=(
-                "All repositories were cleared and indexes were reset."
+                "All repositories were cleared, indexes were reset, and "
+                f"{deleted_staging_entries} staging mirror entries were "
+                "removed."
+                + (
+                    " Some staging entries could not be removed due to file "
+                    "locks."
+                    if staging_warnings
+                    else ""
+                )
             ),
             deleted_documents=deleted["deleted_documents"],
             deleted_chunks=deleted["deleted_chunks"],
@@ -465,10 +512,13 @@ class RagApplicationService:
             max_paths=6,
         )
 
+        doc_map = self.store.get_document_map(source_id=request.source_id)
+
         context = assemble_context(
             chunks=chunks,
             graph_paths=graph_paths,
             max_chars=SETTINGS.max_context_chars,
+            document_map=doc_map,
         )
 
         requested_mode = (
@@ -502,6 +552,7 @@ class RagApplicationService:
                     provider=provider,
                     force_fallback=request.force_fallback,
                     strict=not request.force_fallback,
+                    doc_map=doc_map,
                 )
             except RuntimeError as exc:
                 llm_error = str(exc)
@@ -509,7 +560,6 @@ class RagApplicationService:
         else:
             effective_mode = "retrieval_only"
 
-        doc_map = self.store.get_document_map(source_id=request.source_id)
         citations: List[Evidence] = []
         for chunk, score, _parts in reranked:
             meta = doc_map.get(chunk.document_id, {})
