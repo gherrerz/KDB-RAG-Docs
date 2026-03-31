@@ -6,7 +6,7 @@ from __future__ import annotations
 def build_answer_prompt(question: str, context: str) -> str:
     """Build grounded answer prompt with anti-hallucination policy."""
     return (
-        "Responde solo con evidencia del contexto. "
+        "Responde solo con evidencia del contexto y cuando debas citar los fuentes realiza citas adecuadas de los nombres de archivos. "
         "No inventes datos ni supongas informacion ausente. "
         "Si no hay evidencia suficiente, responde exactamente: "
         "No se encontro informacion en las fuentes indexadas.\n\n"

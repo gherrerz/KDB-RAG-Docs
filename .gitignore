@@ -5,4 +5,5 @@ __pycache__/
 .vscode/
 storage/metadata.db
 storage/chromadb/
+storage/*
 .env
