@@ -85,7 +85,7 @@ python run_ui.py
 
 3. En la UI, pestaña Ingestion:
 - `Source Type`: `folder`
-- `Local Path`: `sample_data`
+- `Local Path`: [sample_data](sample_data/)
 - Click en `Ingest`
 
 4. En la pestaña Query, preguntar por ejemplo:
@@ -169,6 +169,9 @@ Respuesta:
 }
 ```
 
+Nota: si `USE_RQ=false`, el backend devuelve
+`"message": "Ingestion job started (local async worker)"`.
+
 Ejemplo `POST /sources/reset`:
 
 ```json
@@ -221,18 +224,18 @@ minimos en respuesta/evidencia):
 
 Nota: este perfil requiere tener previamente ingerido el corpus de Gobierno de
 Datos en la fuente activa. Si el `source_id` activo solo contiene
-`sample_data`, el gate fallara por `required_answer_terms_hit`.
+[sample_data](sample_data/), el gate fallara por `required_answer_terms_hit`.
 
 Artefactos de salida del benchmark:
-- `docs/benchmarks/complex_queries.json` (casos)
-- `docs/benchmarks/complex_queries_release_es.json` (casos de release + `thresholds_by_type`)
-- `docs/benchmarks/complex_queries_release_gobierno_datos_es.json` (release Gobierno de Datos + `required_answer_terms`)
-- `docs/benchmarks/last_run.json` (resultado estructurado)
-- `docs/benchmarks/last_run.md` (reporte legible)
-- `docs/benchmarks/last_run_release_es.json` (resultado release)
-- `docs/benchmarks/last_run_release_es.md` (reporte release por tipo)
-- `docs/benchmarks/last_run_release_gobierno_datos_es.json` (resultado release Gobierno de Datos)
-- `docs/benchmarks/last_run_release_gobierno_datos_es.md` (reporte release Gobierno de Datos)
+- [docs/benchmarks/complex_queries.json](docs/benchmarks/complex_queries.json) (casos)
+- [docs/benchmarks/complex_queries_release_es.json](docs/benchmarks/complex_queries_release_es.json) (casos de release + `thresholds_by_type`)
+- [docs/benchmarks/complex_queries_release_gobierno_datos_es.json](docs/benchmarks/complex_queries_release_gobierno_datos_es.json) (release Gobierno de Datos + `required_answer_terms`)
+- [docs/benchmarks/last_run.json](docs/benchmarks/last_run.json) (resultado estructurado)
+- [docs/benchmarks/last_run.md](docs/benchmarks/last_run.md) (reporte legible)
+- [docs/benchmarks/last_run_release_es.json](docs/benchmarks/last_run_release_es.json) (resultado release)
+- [docs/benchmarks/last_run_release_es.md](docs/benchmarks/last_run_release_es.md) (reporte release por tipo)
+- [docs/benchmarks/last_run_release_gobierno_datos_es.json](docs/benchmarks/last_run_release_gobierno_datos_es.json) (resultado release Gobierno de Datos)
+- [docs/benchmarks/last_run_release_gobierno_datos_es.md](docs/benchmarks/last_run_release_gobierno_datos_es.md) (reporte release Gobierno de Datos)
 
 ## Cleanup artifacts
 
@@ -267,11 +270,11 @@ Opciones utiles:
 ## Configuracion
 
 Ver:
-- `docs/INSTALLATION.md`
-- `docs/CONFIGURATION.md`
-- `docs/API_REFERENCE.md`
-- `docs/ARCHITECTURE.md`
-- `docs/UI_RELEASE_CHECKLIST.md`
+- [docs/INSTALLATION.md](docs/INSTALLATION.md)
+- [docs/CONFIGURATION.md](docs/CONFIGURATION.md)
+- [docs/API_REFERENCE.md](docs/API_REFERENCE.md)
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+- [docs/UI_RELEASE_CHECKLIST.md](docs/UI_RELEASE_CHECKLIST.md)
 
 Variables relevantes de entorno:
 - `LLM_PROVIDER`: provider para consulta y embeddings (`local`, `openai`,
@@ -296,14 +299,15 @@ Variables relevantes de entorno:
   RQ (`USE_RQ=true`). Default: `900`.
 
 Para ingesta `folder`, la UI realiza staging automatico de la carpeta
-seleccionada hacia `storage/ingestion_staging` dentro del repositorio.
+seleccionada hacia [storage/ingestion_staging](storage/ingestion_staging/)
+dentro del repositorio.
 Luego envia esa ruta al backend (`api`/`worker`) para que funcione igual
 en runtime local y en Docker/Rancher, sin configurar mapeos por carpeta.
 
 Plantillas listas para copiar:
-- `.env.openai.example`
-- `.env.gemini.example`
-- `.env.vertex.example`
+- [.env.openai.example](.env.openai.example)
+- [.env.gemini.example](.env.gemini.example)
+- [.env.vertex.example](.env.vertex.example)
 
 ## Estado y roadmap
 
