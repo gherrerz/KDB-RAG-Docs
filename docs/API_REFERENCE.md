@@ -27,6 +27,7 @@ de la red puede consumirse usando la IP del host.
 | Servicio HTTP | Metodo | Path | Handler FastAPI | Servicio interno | Schema request | Schema response |
 | --- | --- | --- | --- | --- | --- | --- |
 | Health | GET | `/health` | `health` | N/A | N/A | `{"status": "ok"}` |
+| Readiness | GET | `/readiness` | `readiness` | `SERVICE.store.get_index_version` | N/A | `{"status": "ready"}` |
 | Ingestion sync | POST | `/sources/ingest` | `ingest_source` | `SERVICE.ingest` | `IngestionRequest` | `dict` (estado de job + metricas) |
 | Ingestion async | POST | `/sources/ingest/async` | `ingest_source_async` | `enqueue_ingest_job` o `enqueue_local_ingest_job` | `IngestionRequest` | `{"job_id", "status", "message"}` |
 | Job status | GET | `/jobs/{job_id}` | `get_job` | `SERVICE.get_job` y fallback `get_rq_job_status` | `job_id` en path | `dict` (estado + timeline) |
@@ -134,6 +135,24 @@ Response:
 Codigos comunes:
 
 - `200`: servicio disponible.
+
+## GET /readiness
+
+Valida que el proceso este listo para recibir trafico y que el estado de
+runtime principal sea accesible.
+
+Response:
+
+```json
+{
+  "status": "ready"
+}
+```
+
+Codigos comunes:
+
+- `200`: servicio listo para trafico.
+- `503`: servicio levantado pero no listo para atender peticiones.
 
 ## POST /sources/ingest
 

@@ -1,0 +1,19 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: coderag-api
+  namespace: coderag
+  annotations:
+    kubernetes.io/ingress.class: nginx
+spec:
+  rules:
+    - host: coderag.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: coderag-api
+                port:
+                  number: 8000

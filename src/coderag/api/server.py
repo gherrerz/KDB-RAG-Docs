@@ -68,6 +68,27 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get(
+    "/readiness",
+    tags=["health"],
+    summary="Readiness check",
+    description=(
+        "Validate that the API process is ready to serve traffic and can "
+        "access its critical runtime state."
+    ),
+    responses={
+        503: {"description": "Service not ready to accept traffic."}
+    },
+)
+def readiness() -> dict[str, str]:
+    """Service readiness endpoint for orchestrators."""
+    try:
+        SERVICE.store.get_index_version()
+        return {"status": "ready"}
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
 @app.post(
     "/sources/ingest",
     tags=["ingestion"],

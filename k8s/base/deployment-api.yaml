@@ -1,0 +1,85 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: coderag-api
+  namespace: coderag
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: coderag-api
+  template:
+    metadata:
+      labels:
+        app: coderag-api
+    spec:
+      containers:
+        - name: api
+          image: kdb-rag-docs:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+              name: http
+          envFrom:
+            - configMapRef:
+                name: coderag-app-config
+          env:
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: coderag-app-secrets
+                  key: OPENAI_API_KEY
+                  optional: true
+            - name: GEMINI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: coderag-app-secrets
+                  key: GEMINI_API_KEY
+                  optional: true
+            - name: VERTEX_AI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: coderag-app-secrets
+                  key: VERTEX_AI_API_KEY
+                  optional: true
+            - name: VERTEX_PROJECT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: coderag-app-secrets
+                  key: VERTEX_PROJECT_ID
+                  optional: true
+            - name: NEO4J_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: coderag-app-secrets
+                  key: NEO4J_PASSWORD
+          volumeMounts:
+            - name: app-data
+              mountPath: /data
+          readinessProbe:
+            httpGet:
+              path: /readiness
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: 1
+              memory: 2Gi
+      volumes:
+        - name: app-data
+          persistentVolumeClaim:
+            claimName: coderag-data-pvc

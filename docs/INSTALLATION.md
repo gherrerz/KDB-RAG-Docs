@@ -182,3 +182,4 @@ En sesiones con politica que bloquea `Remove-Item`, usa:
 - Configuracion avanzada: [docs/CONFIGURATION.md](CONFIGURATION.md)
 - Referencia de endpoints y contratos: [docs/API_REFERENCE.md](API_REFERENCE.md)
 - Arquitectura tecnica: [docs/ARCHITECTURE.md](ARCHITECTURE.md)
+- Despliegue en Kubernetes: [docs/KUBERNETES.md](KUBERNETES.md)

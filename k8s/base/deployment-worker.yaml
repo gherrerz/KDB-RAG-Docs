@@ -1,0 +1,70 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: coderag-worker
+  namespace: coderag
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: coderag-worker
+  template:
+    metadata:
+      labels:
+        app: coderag-worker
+    spec:
+      containers:
+        - name: worker
+          image: kdb-rag-docs:latest
+          imagePullPolicy: IfNotPresent
+          command:
+            - python
+            - -c
+            - import sys; from pathlib import Path; sys.path.insert(0, str(Path('src').resolve())); from coderag.jobs.worker import run_worker; run_worker()
+          envFrom:
+            - configMapRef:
+                name: coderag-app-config
+          env:
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: coderag-app-secrets
+                  key: OPENAI_API_KEY
+                  optional: true
+            - name: GEMINI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: coderag-app-secrets
+                  key: GEMINI_API_KEY
+                  optional: true
+            - name: VERTEX_AI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: coderag-app-secrets
+                  key: VERTEX_AI_API_KEY
+                  optional: true
+            - name: VERTEX_PROJECT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: coderag-app-secrets
+                  key: VERTEX_PROJECT_ID
+                  optional: true
+            - name: NEO4J_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: coderag-app-secrets
+                  key: NEO4J_PASSWORD
+          volumeMounts:
+            - name: app-data
+              mountPath: /data
+          resources:
+            requests:
+              cpu: 150m
+              memory: 256Mi
+            limits:
+              cpu: 1
+              memory: 1Gi
+      volumes:
+        - name: app-data
+          persistentVolumeClaim:
+            claimName: coderag-data-pvc
