@@ -158,6 +158,18 @@ Ejemplo `confluence`:
 }
 ```
 
+Ejemplo `tdm_folder` (catalogo de esquemas/servicios):
+
+```json
+{
+  "source": {
+    "source_type": "tdm_folder",
+    "local_path": "sample_data",
+    "filters": {}
+  }
+}
+```
+
 ## Query payload
 
 ```json
@@ -175,3 +187,35 @@ Ejemplo `confluence`:
 
 - No persistas tokens en texto plano.
 - Usa variables de entorno o keyring para integraciones reales.
+
+## TDM feature flags (opt-in)
+
+Los siguientes flags habilitan capacidades TDM de forma aditiva.
+Todos default en `false` para preservar compatibilidad estricta con
+la funcionalidad y servicios actuales.
+
+- `ENABLE_TDM`: activa rutas y flujos TDM nuevos cuando existan.
+- `TDM_ENABLE_MASKING`: habilita capacidades de politicas de enmascaramiento.
+- `TDM_ENABLE_VIRTUALIZATION`: habilita capacidades de virtualizacion.
+- `TDM_ENABLE_SYNTHETIC`: habilita capacidades de perfiles sinteticos.
+- `TDM_ADMIN_ENDPOINTS`: habilita endpoints administrativos TDM.
+
+Notas operativas:
+
+- `ENABLE_TDM=true` habilita los endpoints `/tdm/*`.
+- `TDM_ENABLE_VIRTUALIZATION=true` habilita la generacion/persistencia de
+  templates en `/tdm/virtualization/preview`.
+- `TDM_ENABLE_SYNTHETIC=true` habilita la planificacion sintetica en
+  `/tdm/synthetic/profile/{table_name}`.
+- `TDM_ENABLE_MASKING=true` habilita previews de enmascaramiento en
+  respuestas de consulta TDM.
+
+Ejemplo:
+
+```dotenv
+ENABLE_TDM=false
+TDM_ENABLE_MASKING=false
+TDM_ENABLE_VIRTUALIZATION=false
+TDM_ENABLE_SYNTHETIC=false
+TDM_ADMIN_ENDPOINTS=false
+```

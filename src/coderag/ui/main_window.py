@@ -14,6 +14,7 @@ from PySide6.QtWidgets import QApplication, QMainWindow, QTabWidget, QWidget, QV
 from coderag.ui.ingestion_view import IngestionView
 from coderag.ui.query_view import QueryView
 from coderag.ui.staging import stage_folder_source
+from coderag.ui.tdm_view import TdmView
 from coderag.ui.theme import build_stylesheet
 
 
@@ -72,6 +73,17 @@ class MainWindow(QMainWindow):
         tabs = QTabWidget()
         tabs.addTab(IngestionView(self.ingest, self.reset_all), "Ingestion")
         tabs.addTab(QueryView(self.query), "Query")
+        tabs.addTab(
+            TdmView(
+                on_tdm_ingest=self.tdm_ingest,
+                on_tdm_query=self.tdm_query,
+                on_tdm_service_catalog=self.tdm_service_catalog,
+                on_tdm_table_catalog=self.tdm_table_catalog,
+                on_tdm_virtualization_preview=self.tdm_virtualization_preview,
+                on_tdm_synthetic_profile=self.tdm_synthetic_profile,
+            ),
+            "TDM",
+        )
 
         shell = QWidget()
         shell_layout = QVBoxLayout(shell)
@@ -137,6 +149,62 @@ class MainWindow(QMainWindow):
             {"confirm": True},
             timeout=180,
         )
+
+    def tdm_ingest(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Call backend TDM ingest endpoint."""
+        return self._post_json("/tdm/ingest", payload, timeout=3600)
+
+    def tdm_query(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Call backend TDM query endpoint."""
+        return self._post_json("/tdm/query", payload, timeout=180)
+
+    def tdm_service_catalog(
+        self,
+        service_name: str,
+        source_id: str | None = None,
+    ) -> Dict[str, Any]:
+        """Fetch TDM service catalog by service name."""
+        path = f"/tdm/catalog/services/{service_name}"
+        if source_id:
+            path = f"{path}?source_id={source_id}"
+        return self._get_json(path, timeout=60)
+
+    def tdm_table_catalog(
+        self,
+        table_name: str,
+        source_id: str | None = None,
+    ) -> Dict[str, Any]:
+        """Fetch TDM table catalog by table name."""
+        path = f"/tdm/catalog/tables/{table_name}"
+        if source_id:
+            path = f"{path}?source_id={source_id}"
+        return self._get_json(path, timeout=60)
+
+    def tdm_virtualization_preview(
+        self,
+        payload: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Call backend TDM virtualization preview endpoint."""
+        return self._post_json(
+            "/tdm/virtualization/preview",
+            payload,
+            timeout=180,
+        )
+
+    def tdm_synthetic_profile(
+        self,
+        table_name: str,
+        source_id: str | None = None,
+        target_rows: int = 1000,
+    ) -> Dict[str, Any]:
+        """Fetch synthetic profile plan for one table."""
+        path = (
+            "/tdm/synthetic/profile/"
+            f"{table_name}?target_rows={max(1, int(target_rows))}"
+        )
+        if source_id:
+            path = f"{path}&source_id={source_id}"
+        return self._get_json(path, timeout=120)
 
     def _post_json(
         self,

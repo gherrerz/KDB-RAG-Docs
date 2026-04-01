@@ -95,3 +95,14 @@ def test_absolute_paths_remain_unchanged(tmp_path: Path) -> None:
     assert settings.workspace_dir == workspace_dir
     assert settings.data_dir == data_dir
     assert settings.chroma_persist_dir == chroma_dir
+
+
+def test_tdm_flags_default_to_compatibility_mode() -> None:
+    """Keep TDM capabilities disabled by default to preserve behavior."""
+    settings = Settings()
+
+    assert settings.enable_tdm is False
+    assert settings.tdm_enable_masking is False
+    assert settings.tdm_enable_virtualization is False
+    assert settings.tdm_enable_synthetic is False
+    assert settings.tdm_admin_endpoints is False

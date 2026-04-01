@@ -34,6 +34,12 @@ de la red puede consumirse usando la IP del host.
 | Full reset | POST | `/sources/reset` | `reset_sources` | `SERVICE.reset_all` | `ResetAllRequest` | `ResetAllResponse` |
 | Query | POST | `/query` | `query` | `SERVICE.query` | `QueryRequest` | `QueryResponse` |
 | Retrieval alias | POST | `/query/retrieval` | `retrieval_only` | `SERVICE.query` | `QueryRequest` | `QueryResponse` |
+| TDM ingest | POST | `/tdm/ingest` | `ingest_tdm` | `SERVICE.ingest_tdm_assets` | `IngestionRequest` | `dict` (resumen TDM) |
+| TDM query | POST | `/tdm/query` | `query_tdm` | `SERVICE.query_tdm` | `TdmQueryRequest` | `TdmQueryResponse` |
+| TDM service catalog | GET | `/tdm/catalog/services/{service_name}` | `tdm_service_catalog` | `SERVICE.get_tdm_service_catalog` | `service_name` + `source_id?` | `dict` |
+| TDM table catalog | GET | `/tdm/catalog/tables/{table_name}` | `tdm_table_catalog` | `SERVICE.get_tdm_table_catalog` | `table_name` + `source_id?` | `dict` |
+| TDM virtualization preview | POST | `/tdm/virtualization/preview` | `preview_tdm_virtualization` | `SERVICE.preview_tdm_virtualization` | `TdmQueryRequest` | `dict` |
+| TDM synthetic profile | GET | `/tdm/synthetic/profile/{table_name}` | `tdm_synthetic_profile` | `SERVICE.get_tdm_synthetic_profile` | `table_name` + `source_id?` + `target_rows?` | `dict` |
 
 ## Esquemas principales
 
@@ -335,3 +341,62 @@ Alias funcional de `/query` para diagnostico y compatibilidad.
 - Arquitectura general: [docs/ARCHITECTURE.md](ARCHITECTURE.md)
 - Configuracion de providers y runtime: [docs/CONFIGURATION.md](CONFIGURATION.md)
 - Arranque local: [docs/INSTALLATION.md](INSTALLATION.md)
+
+## Endpoints TDM (aditivos)
+
+Los endpoints `/tdm/*` son opt-in y se exponen solo con `ENABLE_TDM=true`.
+Con `ENABLE_TDM=false` responden `404` por diseno para mantener
+compatibilidad estricta en despliegues existentes.
+
+### POST /tdm/ingest
+
+Ingesta catalogo TDM desde fuentes tecnicas (`tdm_folder`).
+
+Request (ejemplo):
+
+```json
+{
+  "source": {
+    "source_type": "tdm_folder",
+    "local_path": "sample_data",
+    "filters": {}
+  }
+}
+```
+
+### POST /tdm/query
+
+Consulta catalogo TDM para agentes (impacto, mapeos, pistas de masking).
+
+Request (ejemplo):
+
+```json
+{
+  "question": "que tablas usa billing-api",
+  "source_id": null,
+  "service_name": "billing-api",
+  "table_name": null,
+  "include_virtualization_preview": false
+}
+```
+
+### GET /tdm/catalog/services/{service_name}
+
+Retorna mapeos servicio-endpoint-tabla desde el catalogo TDM.
+
+### GET /tdm/catalog/tables/{table_name}
+
+Retorna metadata de tabla y columnas asociadas en el catalogo TDM.
+
+### POST /tdm/virtualization/preview
+
+Genera plantillas ligeras de virtualizacion a partir de mapeos TDM.
+
+### GET /tdm/synthetic/profile/{table_name}
+
+Construye y persiste un plan de perfil sintetico basado en metadata de tabla.
+
+Parametros opcionales:
+
+- `source_id`
+- `target_rows` (default `1000`)

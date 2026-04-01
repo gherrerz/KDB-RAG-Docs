@@ -47,6 +47,14 @@ TOKEN_STOPWORDS = {
     "su",
     "y",
 }
+TDM_RELATIONSHIP_TYPES = {
+    "USES_TABLE",
+    "HAS_COLUMN",
+    "HAS_PII_CLASS",
+    "MASKED_BY",
+    "EXPOSES_ENDPOINT",
+    "BACKED_BY_SCHEMA",
+}
 
 
 def _normalize_token(token: str) -> str:
@@ -208,6 +216,163 @@ class GraphStore:
             result = session.run("MATCH ()-[r:RELATES_TO]-() DELETE r")
             summary = result.consume()
             return int(summary.counters.relationships_deleted)
+
+    @staticmethod
+    def _write_tdm_batch(tx_or_session, rows: List[dict[str, str]]) -> None:
+        """Write one typed TDM relationship batch in Neo4j."""
+        tx_or_session.run(
+            """
+            UNWIND $rows AS row
+            MERGE (a:Entity {name: row.src})
+            MERGE (b:Entity {name: row.tgt})
+            MERGE (a)-[r:TDM_REL {
+                source_id: row.source_id,
+                relation_type: row.rel
+            }]->(b)
+            """,
+            rows=rows,
+        )
+
+    def _write_tdm_batch_with_retries(
+        self,
+        session,
+        rows: List[dict[str, str]],
+    ) -> int:
+        """Write one TDM edge batch with bounded retries."""
+        retries_done = 0
+        max_retries = max(0, SETTINGS.neo4j_ingest_max_retries)
+        base_delay_ms = max(1, SETTINGS.neo4j_ingest_retry_delay_ms)
+
+        while True:
+            try:
+                if hasattr(session, "execute_write"):
+                    session.execute_write(self._write_tdm_batch, rows)
+                else:
+                    self._write_tdm_batch(session, rows)
+                return retries_done
+            except Exception:
+                if retries_done >= max_retries:
+                    raise
+                retries_done += 1
+                time.sleep((base_delay_ms * retries_done) / 1000.0)
+
+    def replace_tdm_edges(
+        self,
+        source_id: str,
+        typed_edges: Iterable[Tuple[str, str, str, str]],
+    ) -> dict[str, int]:
+        """Replace typed TDM edges for one source in Neo4j."""
+        driver = self._get_driver()
+
+        edge_rows = list(typed_edges)
+        with driver.session() as session:
+            session.run(
+                "MATCH ()-[r:TDM_REL {source_id: $source_id}]-() DELETE r",
+                source_id=source_id,
+            )
+
+            metrics = {
+                "batch_size": max(1, SETTINGS.neo4j_ingest_batch_size),
+                "batches_written": 0,
+                "rows_written": 0,
+                "retries": 0,
+            }
+            if not edge_rows:
+                return metrics
+
+            normalized_rows: List[dict[str, str]] = []
+            for src, rel, tgt, src_id in edge_rows:
+                relation = rel.strip().upper()
+                if relation not in TDM_RELATIONSHIP_TYPES:
+                    continue
+                normalized_rows.append(
+                    {
+                        "src": src,
+                        "rel": relation,
+                        "tgt": tgt,
+                        "source_id": src_id,
+                    }
+                )
+
+            if not normalized_rows:
+                return metrics
+
+            for batch_rows in self._chunk_rows(
+                normalized_rows,
+                SETTINGS.neo4j_ingest_batch_size,
+            ):
+                metrics["retries"] += self._write_tdm_batch_with_retries(
+                    session,
+                    batch_rows,
+                )
+                metrics["batches_written"] += 1
+                metrics["rows_written"] += len(batch_rows)
+            return metrics
+
+    def expand_tdm_paths(
+        self,
+        query: str,
+        hops: int,
+        max_paths: int,
+        source_id: Optional[str] = None,
+        rel_types: Optional[List[str]] = None,
+    ) -> List[GraphPath]:
+        """Expand typed TDM graph paths using relation filters when provided."""
+        driver = self._get_driver()
+        entities = self._resolve_entities_from_query_tokens(
+            driver=driver,
+            query=query,
+            max_entities=max_paths,
+            source_id=source_id,
+        )
+        if not entities:
+            entities = list(dict.fromkeys(ENTITY_PATTERN.findall(query)))
+        if not entities:
+            return []
+
+        normalized_rel_types: List[str] = []
+        if rel_types:
+            normalized_rel_types = [
+                rel.strip().upper()
+                for rel in rel_types
+                if rel.strip().upper() in TDM_RELATIONSHIP_TYPES
+            ]
+
+        hop_count = max(1, min(hops, 4))
+        cypher = (
+            "MATCH p=(a:Entity)-[rels:TDM_REL*1.."
+            f"{hop_count}"
+            "]-(b:Entity) "
+            "WHERE a.name IN $entities "
+            "AND ($source_id IS NULL "
+            "OR all(r IN rels WHERE r.source_id = $source_id)) "
+            "AND (size($rel_types) = 0 "
+            "OR all(r IN rels WHERE r.relation_type IN $rel_types)) "
+            "RETURN [n IN nodes(p) | n.name] AS nodes, "
+            "[r IN relationships(p) | r.relation_type] AS relationships "
+            "LIMIT $limit"
+        )
+
+        paths: List[GraphPath] = []
+        with driver.session() as session:
+            records = session.run(
+                cypher,
+                entities=entities,
+                source_id=source_id,
+                rel_types=normalized_rel_types,
+                limit=max_paths,
+            )
+            for record in records:
+                nodes = record.get("nodes", [])
+                relationships = record.get("relationships", [])
+                if nodes and relationships:
+                    paths.append(
+                        GraphPath(
+                            nodes=nodes,
+                            relationships=relationships,
+                        )
+                    )
+        return paths
 
     def expand_paths(
         self,

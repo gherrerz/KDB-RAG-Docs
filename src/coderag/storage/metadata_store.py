@@ -113,6 +113,88 @@ class MetadataStore:
                 updated_at TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS tdm_schemas (
+                schema_id TEXT PRIMARY KEY,
+                source_id TEXT NOT NULL,
+                database_name TEXT NOT NULL,
+                schema_name TEXT NOT NULL,
+                metadata_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS tdm_tables (
+                table_id TEXT PRIMARY KEY,
+                source_id TEXT NOT NULL,
+                schema_id TEXT NOT NULL,
+                table_name TEXT NOT NULL,
+                table_type TEXT NOT NULL,
+                metadata_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS tdm_columns (
+                column_id TEXT PRIMARY KEY,
+                source_id TEXT NOT NULL,
+                table_id TEXT NOT NULL,
+                column_name TEXT NOT NULL,
+                data_type TEXT NOT NULL,
+                nullable INTEGER NOT NULL,
+                pii_class TEXT,
+                metadata_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS tdm_service_mappings (
+                mapping_id TEXT PRIMARY KEY,
+                source_id TEXT NOT NULL,
+                service_name TEXT NOT NULL,
+                endpoint TEXT NOT NULL,
+                method TEXT NOT NULL,
+                table_id TEXT NOT NULL,
+                metadata_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS tdm_masking_rules (
+                rule_id TEXT PRIMARY KEY,
+                source_id TEXT NOT NULL,
+                rule_name TEXT NOT NULL,
+                policy_type TEXT NOT NULL,
+                scope TEXT NOT NULL,
+                table_id TEXT,
+                column_id TEXT,
+                priority INTEGER NOT NULL,
+                metadata_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS tdm_virtualization_artifacts (
+                artifact_id TEXT PRIMARY KEY,
+                source_id TEXT NOT NULL,
+                service_name TEXT NOT NULL,
+                artifact_type TEXT NOT NULL,
+                content_json TEXT NOT NULL,
+                metadata_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS tdm_synthetic_profiles (
+                profile_id TEXT PRIMARY KEY,
+                source_id TEXT NOT NULL,
+                profile_name TEXT NOT NULL,
+                target_table_id TEXT,
+                strategy TEXT NOT NULL,
+                metadata_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
             CREATE INDEX IF NOT EXISTS idx_documents_source
             ON documents(source_id);
 
@@ -124,9 +206,40 @@ class MetadataStore:
 
             CREATE INDEX IF NOT EXISTS idx_job_events_job
             ON job_events(job_id, ordinal);
+
+            CREATE INDEX IF NOT EXISTS idx_tdm_schemas_source
+            ON tdm_schemas(source_id);
+
+            CREATE INDEX IF NOT EXISTS idx_tdm_tables_source
+            ON tdm_tables(source_id);
+
+            CREATE INDEX IF NOT EXISTS idx_tdm_columns_source
+            ON tdm_columns(source_id);
+
+            CREATE INDEX IF NOT EXISTS idx_tdm_service_mappings_source
+            ON tdm_service_mappings(source_id);
+
+            CREATE INDEX IF NOT EXISTS idx_tdm_masking_rules_source
+            ON tdm_masking_rules(source_id);
+
+            CREATE INDEX IF NOT EXISTS idx_tdm_virtualization_artifacts_source
+            ON tdm_virtualization_artifacts(source_id);
+
+            CREATE INDEX IF NOT EXISTS idx_tdm_synthetic_profiles_source
+            ON tdm_synthetic_profiles(source_id);
             """
         )
         conn.commit()
+
+    @staticmethod
+    def _now_iso() -> str:
+        """Return UTC timestamp in ISO-8601 format for writes."""
+        return datetime.now(UTC).isoformat()
+
+    @staticmethod
+    def _json_dump(value: Dict[str, Any]) -> str:
+        """Serialize metadata dictionaries with ASCII-safe JSON output."""
+        return json.dumps(value, ensure_ascii=True)
 
     def upsert_document(self, doc: DocumentRecord) -> None:
         """Insert or update a document row."""
@@ -589,5 +702,525 @@ class MetadataStore:
             )
             conn.commit()
             return next_value
+        finally:
+            conn.close()
+
+    def upsert_tdm_schema(
+        self,
+        schema_id: str,
+        source_id: str,
+        database_name: str,
+        schema_name: str,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Insert or update one TDM schema asset."""
+        conn = self._connect()
+        try:
+            now_iso = self._now_iso()
+            conn.execute(
+                """
+                INSERT INTO tdm_schemas (
+                    schema_id, source_id, database_name, schema_name,
+                    metadata_json, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(schema_id) DO UPDATE SET
+                    source_id = excluded.source_id,
+                    database_name = excluded.database_name,
+                    schema_name = excluded.schema_name,
+                    metadata_json = excluded.metadata_json,
+                    updated_at = excluded.updated_at;
+                """,
+                (
+                    schema_id,
+                    source_id,
+                    database_name,
+                    schema_name,
+                    self._json_dump(metadata or {}),
+                    now_iso,
+                    now_iso,
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def list_tdm_schemas(
+        self,
+        source_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Return stored TDM schema assets, optionally filtered by source."""
+        conn = self._connect()
+        try:
+            if source_id:
+                rows = conn.execute(
+                    "SELECT * FROM tdm_schemas WHERE source_id = ?",
+                    (source_id,),
+                ).fetchall()
+            else:
+                rows = conn.execute("SELECT * FROM tdm_schemas").fetchall()
+            return [
+                {
+                    "schema_id": row["schema_id"],
+                    "source_id": row["source_id"],
+                    "database_name": row["database_name"],
+                    "schema_name": row["schema_name"],
+                    "metadata": json.loads(row["metadata_json"]),
+                }
+                for row in rows
+            ]
+        finally:
+            conn.close()
+
+    def upsert_tdm_table(
+        self,
+        table_id: str,
+        source_id: str,
+        schema_id: str,
+        table_name: str,
+        table_type: str = "table",
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Insert or update one TDM table asset."""
+        conn = self._connect()
+        try:
+            now_iso = self._now_iso()
+            conn.execute(
+                """
+                INSERT INTO tdm_tables (
+                    table_id, source_id, schema_id, table_name, table_type,
+                    metadata_json, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(table_id) DO UPDATE SET
+                    source_id = excluded.source_id,
+                    schema_id = excluded.schema_id,
+                    table_name = excluded.table_name,
+                    table_type = excluded.table_type,
+                    metadata_json = excluded.metadata_json,
+                    updated_at = excluded.updated_at;
+                """,
+                (
+                    table_id,
+                    source_id,
+                    schema_id,
+                    table_name,
+                    table_type,
+                    self._json_dump(metadata or {}),
+                    now_iso,
+                    now_iso,
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def list_tdm_tables(
+        self,
+        source_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Return stored TDM table assets, optionally filtered by source."""
+        conn = self._connect()
+        try:
+            if source_id:
+                rows = conn.execute(
+                    "SELECT * FROM tdm_tables WHERE source_id = ?",
+                    (source_id,),
+                ).fetchall()
+            else:
+                rows = conn.execute("SELECT * FROM tdm_tables").fetchall()
+            return [
+                {
+                    "table_id": row["table_id"],
+                    "source_id": row["source_id"],
+                    "schema_id": row["schema_id"],
+                    "table_name": row["table_name"],
+                    "table_type": row["table_type"],
+                    "metadata": json.loads(row["metadata_json"]),
+                }
+                for row in rows
+            ]
+        finally:
+            conn.close()
+
+    def upsert_tdm_column(
+        self,
+        column_id: str,
+        source_id: str,
+        table_id: str,
+        column_name: str,
+        data_type: str,
+        nullable: bool = True,
+        pii_class: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Insert or update one TDM column asset."""
+        conn = self._connect()
+        try:
+            now_iso = self._now_iso()
+            conn.execute(
+                """
+                INSERT INTO tdm_columns (
+                    column_id, source_id, table_id, column_name, data_type,
+                    nullable, pii_class, metadata_json, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(column_id) DO UPDATE SET
+                    source_id = excluded.source_id,
+                    table_id = excluded.table_id,
+                    column_name = excluded.column_name,
+                    data_type = excluded.data_type,
+                    nullable = excluded.nullable,
+                    pii_class = excluded.pii_class,
+                    metadata_json = excluded.metadata_json,
+                    updated_at = excluded.updated_at;
+                """,
+                (
+                    column_id,
+                    source_id,
+                    table_id,
+                    column_name,
+                    data_type,
+                    1 if nullable else 0,
+                    pii_class,
+                    self._json_dump(metadata or {}),
+                    now_iso,
+                    now_iso,
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def list_tdm_columns(
+        self,
+        source_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Return stored TDM column assets, optionally filtered by source."""
+        conn = self._connect()
+        try:
+            if source_id:
+                rows = conn.execute(
+                    "SELECT * FROM tdm_columns WHERE source_id = ?",
+                    (source_id,),
+                ).fetchall()
+            else:
+                rows = conn.execute("SELECT * FROM tdm_columns").fetchall()
+            return [
+                {
+                    "column_id": row["column_id"],
+                    "source_id": row["source_id"],
+                    "table_id": row["table_id"],
+                    "column_name": row["column_name"],
+                    "data_type": row["data_type"],
+                    "nullable": bool(row["nullable"]),
+                    "pii_class": row["pii_class"],
+                    "metadata": json.loads(row["metadata_json"]),
+                }
+                for row in rows
+            ]
+        finally:
+            conn.close()
+
+    def upsert_tdm_service_mapping(
+        self,
+        mapping_id: str,
+        source_id: str,
+        service_name: str,
+        endpoint: str,
+        method: str,
+        table_id: str,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Insert or update one service-to-table mapping for TDM."""
+        conn = self._connect()
+        try:
+            now_iso = self._now_iso()
+            conn.execute(
+                """
+                INSERT INTO tdm_service_mappings (
+                    mapping_id, source_id, service_name, endpoint, method,
+                    table_id, metadata_json, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(mapping_id) DO UPDATE SET
+                    source_id = excluded.source_id,
+                    service_name = excluded.service_name,
+                    endpoint = excluded.endpoint,
+                    method = excluded.method,
+                    table_id = excluded.table_id,
+                    metadata_json = excluded.metadata_json,
+                    updated_at = excluded.updated_at;
+                """,
+                (
+                    mapping_id,
+                    source_id,
+                    service_name,
+                    endpoint,
+                    method,
+                    table_id,
+                    self._json_dump(metadata or {}),
+                    now_iso,
+                    now_iso,
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def list_tdm_service_mappings(
+        self,
+        source_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Return stored service mappings, optionally filtered by source."""
+        conn = self._connect()
+        try:
+            if source_id:
+                rows = conn.execute(
+                    "SELECT * FROM tdm_service_mappings WHERE source_id = ?",
+                    (source_id,),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM tdm_service_mappings"
+                ).fetchall()
+            return [
+                {
+                    "mapping_id": row["mapping_id"],
+                    "source_id": row["source_id"],
+                    "service_name": row["service_name"],
+                    "endpoint": row["endpoint"],
+                    "method": row["method"],
+                    "table_id": row["table_id"],
+                    "metadata": json.loads(row["metadata_json"]),
+                }
+                for row in rows
+            ]
+        finally:
+            conn.close()
+
+    def upsert_tdm_masking_rule(
+        self,
+        rule_id: str,
+        source_id: str,
+        rule_name: str,
+        policy_type: str,
+        scope: str,
+        table_id: Optional[str] = None,
+        column_id: Optional[str] = None,
+        priority: int = 100,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Insert or update one TDM masking rule."""
+        conn = self._connect()
+        try:
+            now_iso = self._now_iso()
+            conn.execute(
+                """
+                INSERT INTO tdm_masking_rules (
+                    rule_id, source_id, rule_name, policy_type, scope,
+                    table_id, column_id, priority, metadata_json,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(rule_id) DO UPDATE SET
+                    source_id = excluded.source_id,
+                    rule_name = excluded.rule_name,
+                    policy_type = excluded.policy_type,
+                    scope = excluded.scope,
+                    table_id = excluded.table_id,
+                    column_id = excluded.column_id,
+                    priority = excluded.priority,
+                    metadata_json = excluded.metadata_json,
+                    updated_at = excluded.updated_at;
+                """,
+                (
+                    rule_id,
+                    source_id,
+                    rule_name,
+                    policy_type,
+                    scope,
+                    table_id,
+                    column_id,
+                    int(priority),
+                    self._json_dump(metadata or {}),
+                    now_iso,
+                    now_iso,
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def list_tdm_masking_rules(
+        self,
+        source_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Return stored masking rules, optionally filtered by source."""
+        conn = self._connect()
+        try:
+            if source_id:
+                rows = conn.execute(
+                    "SELECT * FROM tdm_masking_rules WHERE source_id = ?",
+                    (source_id,),
+                ).fetchall()
+            else:
+                rows = conn.execute("SELECT * FROM tdm_masking_rules").fetchall()
+            return [
+                {
+                    "rule_id": row["rule_id"],
+                    "source_id": row["source_id"],
+                    "rule_name": row["rule_name"],
+                    "policy_type": row["policy_type"],
+                    "scope": row["scope"],
+                    "table_id": row["table_id"],
+                    "column_id": row["column_id"],
+                    "priority": int(row["priority"]),
+                    "metadata": json.loads(row["metadata_json"]),
+                }
+                for row in rows
+            ]
+        finally:
+            conn.close()
+
+    def upsert_tdm_virtualization_artifact(
+        self,
+        artifact_id: str,
+        source_id: str,
+        service_name: str,
+        artifact_type: str,
+        content: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Insert or update one virtualization artifact for TDM."""
+        conn = self._connect()
+        try:
+            now_iso = self._now_iso()
+            conn.execute(
+                """
+                INSERT INTO tdm_virtualization_artifacts (
+                    artifact_id, source_id, service_name, artifact_type,
+                    content_json, metadata_json, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(artifact_id) DO UPDATE SET
+                    source_id = excluded.source_id,
+                    service_name = excluded.service_name,
+                    artifact_type = excluded.artifact_type,
+                    content_json = excluded.content_json,
+                    metadata_json = excluded.metadata_json,
+                    updated_at = excluded.updated_at;
+                """,
+                (
+                    artifact_id,
+                    source_id,
+                    service_name,
+                    artifact_type,
+                    self._json_dump(content or {}),
+                    self._json_dump(metadata or {}),
+                    now_iso,
+                    now_iso,
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def list_tdm_virtualization_artifacts(
+        self,
+        source_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Return virtualization artifacts, optionally filtered by source."""
+        conn = self._connect()
+        try:
+            if source_id:
+                rows = conn.execute(
+                    """
+                    SELECT * FROM tdm_virtualization_artifacts
+                    WHERE source_id = ?
+                    """,
+                    (source_id,),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM tdm_virtualization_artifacts"
+                ).fetchall()
+            return [
+                {
+                    "artifact_id": row["artifact_id"],
+                    "source_id": row["source_id"],
+                    "service_name": row["service_name"],
+                    "artifact_type": row["artifact_type"],
+                    "content": json.loads(row["content_json"]),
+                    "metadata": json.loads(row["metadata_json"]),
+                }
+                for row in rows
+            ]
+        finally:
+            conn.close()
+
+    def upsert_tdm_synthetic_profile(
+        self,
+        profile_id: str,
+        source_id: str,
+        profile_name: str,
+        strategy: str = "template",
+        target_table_id: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Insert or update one synthetic data profile for TDM."""
+        conn = self._connect()
+        try:
+            now_iso = self._now_iso()
+            conn.execute(
+                """
+                INSERT INTO tdm_synthetic_profiles (
+                    profile_id, source_id, profile_name, target_table_id,
+                    strategy, metadata_json, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(profile_id) DO UPDATE SET
+                    source_id = excluded.source_id,
+                    profile_name = excluded.profile_name,
+                    target_table_id = excluded.target_table_id,
+                    strategy = excluded.strategy,
+                    metadata_json = excluded.metadata_json,
+                    updated_at = excluded.updated_at;
+                """,
+                (
+                    profile_id,
+                    source_id,
+                    profile_name,
+                    target_table_id,
+                    strategy,
+                    self._json_dump(metadata or {}),
+                    now_iso,
+                    now_iso,
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def list_tdm_synthetic_profiles(
+        self,
+        source_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Return synthetic profiles, optionally filtered by source."""
+        conn = self._connect()
+        try:
+            if source_id:
+                rows = conn.execute(
+                    "SELECT * FROM tdm_synthetic_profiles WHERE source_id = ?",
+                    (source_id,),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM tdm_synthetic_profiles"
+                ).fetchall()
+            return [
+                {
+                    "profile_id": row["profile_id"],
+                    "source_id": row["source_id"],
+                    "profile_name": row["profile_name"],
+                    "target_table_id": row["target_table_id"],
+                    "strategy": row["strategy"],
+                    "metadata": json.loads(row["metadata_json"]),
+                }
+                for row in rows
+            ]
         finally:
             conn.close()

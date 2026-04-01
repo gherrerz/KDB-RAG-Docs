@@ -11,6 +11,7 @@ from coderag.core.models import (
     IngestionRequest,
     QueryRequest,
     ResetAllRequest,
+    TdmQueryRequest,
 )
 from coderag.core.service import SERVICE
 from coderag.core.settings import SETTINGS
@@ -51,6 +52,12 @@ app = FastAPI(
         {
             "name": "query",
             "description": "Hybrid retrieval and grounded answer endpoints.",
+        },
+        {
+            "name": "tdm",
+            "description": (
+                "Additive TDM catalog and virtualization endpoints."
+            ),
         },
     ],
     lifespan=_lifespan,
@@ -236,5 +243,166 @@ def retrieval_only(request: QueryRequest) -> dict:
     try:
         response = SERVICE.query(request)
         return response.model_dump()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.post(
+    "/tdm/ingest",
+    tags=["tdm"],
+    summary="Run TDM ingestion",
+    description=(
+        "Ingest SQL/OpenAPI/data-dictionary assets into additive TDM "
+        "catalog tables."
+    ),
+    responses={
+        404: {"description": "TDM capability disabled."},
+        503: {"description": "TDM runtime validation error."},
+    },
+)
+def ingest_tdm(request: IngestionRequest) -> dict[str, Any]:
+    """Trigger additive TDM catalog ingestion."""
+    if not SETTINGS.enable_tdm:
+        raise HTTPException(
+            status_code=404,
+            detail="TDM endpoints are disabled.",
+        )
+    try:
+        return SERVICE.ingest_tdm_assets(request)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.post(
+    "/tdm/query",
+    tags=["tdm"],
+    summary="Run TDM catalog query",
+    description=(
+        "Query TDM catalog entities and typed graph paths for agent workflows."
+    ),
+    responses={
+        404: {"description": "TDM capability disabled."},
+        503: {"description": "TDM query error."},
+    },
+)
+def query_tdm(request: TdmQueryRequest) -> dict[str, Any]:
+    """Run additive TDM query mode."""
+    if not SETTINGS.enable_tdm:
+        raise HTTPException(
+            status_code=404,
+            detail="TDM endpoints are disabled.",
+        )
+    try:
+        response = SERVICE.query_tdm(request)
+        return response.model_dump()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.get(
+    "/tdm/catalog/services/{service_name}",
+    tags=["tdm"],
+    summary="Get TDM service catalog",
+    description="Return service-to-table mappings from TDM catalog.",
+    responses={
+        404: {"description": "TDM capability disabled."},
+    },
+)
+def tdm_service_catalog(
+    service_name: str,
+    source_id: str | None = None,
+) -> dict[str, Any]:
+    """Return additive TDM catalog view by service."""
+    if not SETTINGS.enable_tdm:
+        raise HTTPException(
+            status_code=404,
+            detail="TDM endpoints are disabled.",
+        )
+    return SERVICE.get_tdm_service_catalog(
+        service_name=service_name,
+        source_id=source_id,
+    )
+
+
+@app.get(
+    "/tdm/catalog/tables/{table_name}",
+    tags=["tdm"],
+    summary="Get TDM table catalog",
+    description="Return table and column metadata from TDM catalog.",
+    responses={
+        404: {"description": "TDM capability disabled."},
+    },
+)
+def tdm_table_catalog(
+    table_name: str,
+    source_id: str | None = None,
+) -> dict[str, Any]:
+    """Return additive TDM catalog view by table."""
+    if not SETTINGS.enable_tdm:
+        raise HTTPException(
+            status_code=404,
+            detail="TDM endpoints are disabled.",
+        )
+    return SERVICE.get_tdm_table_catalog(
+        table_name=table_name,
+        source_id=source_id,
+    )
+
+
+@app.post(
+    "/tdm/virtualization/preview",
+    tags=["tdm"],
+    summary="Preview virtualization templates",
+    description=(
+        "Build lightweight mock/virtualization templates from TDM mappings."
+    ),
+    responses={
+        404: {"description": "TDM capability disabled."},
+        503: {"description": "TDM preview error."},
+    },
+)
+def preview_tdm_virtualization(request: TdmQueryRequest) -> dict[str, Any]:
+    """Return additive TDM virtualization previews."""
+    if not SETTINGS.enable_tdm:
+        raise HTTPException(
+            status_code=404,
+            detail="TDM endpoints are disabled.",
+        )
+    try:
+        return SERVICE.preview_tdm_virtualization(request)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.get(
+    "/tdm/synthetic/profile/{table_name}",
+    tags=["tdm"],
+    summary="Build synthetic profile plan",
+    description=(
+        "Build and persist a synthetic data profile plan from TDM table "
+        "metadata."
+    ),
+    responses={
+        404: {"description": "TDM capability disabled."},
+        503: {"description": "Synthetic planning error."},
+    },
+)
+def tdm_synthetic_profile(
+    table_name: str,
+    source_id: str | None = None,
+    target_rows: int = 1000,
+) -> dict[str, Any]:
+    """Return additive synthetic profile plan for one table."""
+    if not SETTINGS.enable_tdm:
+        raise HTTPException(
+            status_code=404,
+            detail="TDM endpoints are disabled.",
+        )
+    try:
+        return SERVICE.get_tdm_synthetic_profile(
+            table_name=table_name,
+            source_id=source_id,
+            target_rows=target_rows,
+        )
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc

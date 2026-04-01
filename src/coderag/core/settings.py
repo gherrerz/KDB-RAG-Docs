@@ -179,6 +179,24 @@ class Settings(BaseModel):
     )
 
     use_rq: bool = Field(default_factory=lambda: _env_bool("USE_RQ", False))
+    enable_tdm: bool = Field(
+        default_factory=lambda: _env_bool("ENABLE_TDM", False)
+    )
+    tdm_enable_masking: bool = Field(
+        default_factory=lambda: _env_bool("TDM_ENABLE_MASKING", False)
+    )
+    tdm_enable_virtualization: bool = Field(
+        default_factory=lambda: _env_bool(
+            "TDM_ENABLE_VIRTUALIZATION",
+            False,
+        )
+    )
+    tdm_enable_synthetic: bool = Field(
+        default_factory=lambda: _env_bool("TDM_ENABLE_SYNTHETIC", False)
+    )
+    tdm_admin_endpoints: bool = Field(
+        default_factory=lambda: _env_bool("TDM_ADMIN_ENDPOINTS", False)
+    )
     redis_url: str = Field(
         default_factory=lambda: (
             _env_str("REDIS_URL", "redis://localhost:6379/0")

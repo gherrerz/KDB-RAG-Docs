@@ -120,3 +120,111 @@ class JobStatus(BaseModel):
     message: str
     created_at: datetime
     updated_at: datetime
+
+
+class TdmSchemaAsset(BaseModel):
+    """Schema-level TDM metadata captured from technical sources."""
+
+    schema_id: str
+    source_id: str
+    database_name: str
+    schema_name: str
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class TdmTableAsset(BaseModel):
+    """Table-level TDM metadata mapped to one schema."""
+
+    table_id: str
+    source_id: str
+    schema_id: str
+    table_name: str
+    table_type: str = "table"
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class TdmColumnAsset(BaseModel):
+    """Column-level TDM metadata including sensitivity hints."""
+
+    column_id: str
+    source_id: str
+    table_id: str
+    column_name: str
+    data_type: str
+    nullable: bool = True
+    pii_class: Optional[str] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class TdmServiceMapping(BaseModel):
+    """Maps service/API contracts to backing table assets."""
+
+    mapping_id: str
+    source_id: str
+    service_name: str
+    endpoint: str
+    method: str
+    table_id: str
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class TdmMaskingRule(BaseModel):
+    """Masking policy definition linked to table/column scope."""
+
+    rule_id: str
+    source_id: str
+    rule_name: str
+    policy_type: str
+    scope: str
+    table_id: Optional[str] = None
+    column_id: Optional[str] = None
+    priority: int = 100
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class TdmSyntheticProfile(BaseModel):
+    """Synthetic data profile instructions for TDM generation workflows."""
+
+    profile_id: str
+    source_id: str
+    profile_name: str
+    target_table_id: Optional[str] = None
+    strategy: str = "template"
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class TdmVirtualizationArtifact(BaseModel):
+    """Virtualization artifact generated for API/service test environments."""
+
+    artifact_id: str
+    source_id: str
+    service_name: str
+    artifact_type: str
+    content_json: Dict[str, Any] = Field(default_factory=dict)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class TdmIngestRequest(BaseModel):
+    """Request payload for additive TDM ingestion routes."""
+
+    source: SourceConfig
+    include_masking_hints: bool = True
+    include_virtualization_hints: bool = True
+
+
+class TdmQueryRequest(BaseModel):
+    """Request payload for TDM agent-facing query routes."""
+
+    question: str
+    source_id: Optional[str] = None
+    service_name: Optional[str] = None
+    table_name: Optional[str] = None
+    include_virtualization_preview: bool = False
+
+
+class TdmQueryResponse(BaseModel):
+    """Response payload for additive TDM query routes."""
+
+    answer: str
+    findings: List[Dict[str, Any]] = Field(default_factory=list)
+    diagnostics: Dict[str, Any] = Field(default_factory=dict)

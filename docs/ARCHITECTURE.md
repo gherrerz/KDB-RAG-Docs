@@ -297,3 +297,39 @@ Parametros de tuning relevantes:
 - `NEO4J_INGEST_BATCH_SIZE`
 - `NEO4J_INGEST_MAX_RETRIES`
 - `NEO4J_INGEST_RETRY_DELAY_MS`
+
+## Extension TDM (iteracion aditiva)
+
+La iteracion actual incorpora una base TDM sin romper contratos existentes:
+
+- Nuevos modelos de dominio TDM en `src/coderag/core/models.py`
+  (`TdmSchemaAsset`, `TdmTableAsset`, `TdmColumnAsset`,
+  `TdmServiceMapping`, `TdmMaskingRule`, `TdmSyntheticProfile`,
+  `TdmVirtualizationArtifact`).
+- Nuevas tablas SQLite aditivas para catalogo TDM en
+  `src/coderag/storage/metadata_store.py`:
+  `tdm_schemas`, `tdm_tables`, `tdm_columns`, `tdm_service_mappings`,
+  `tdm_masking_rules`, `tdm_virtualization_artifacts`,
+  `tdm_synthetic_profiles`.
+- Parsers TDM especializados en `src/coderag/parsers/*` para:
+  - SQL DDL (`sql_schema_parser.py`),
+  - contratos OpenAPI (`openapi_service_parser.py`),
+  - diccionarios de datos y pistas de masking (`data_dictionary_parser.py`).
+- Orquestador dedicado de ingesta TDM en
+  `src/coderag/ingestion/tdm_ingestion.py`.
+- Builder de grafo tipado TDM en `src/coderag/ingestion/tdm_graph_builder.py`
+  y persistencia en Neo4j via `GraphStore.replace_tdm_edges`.
+- Modulos de dominio TDM para etapa avanzada:
+  - `src/coderag/tdm/masking_engine.py`
+  - `src/coderag/tdm/synthetic_planner.py`
+  - `src/coderag/tdm/virtualization_export.py`
+- Endpoints TDM nuevos (`/tdm/*`) en `src/coderag/api/server.py`,
+  habilitados por `ENABLE_TDM=true`.
+
+Compatibilidad:
+
+- Rutas actuales (`/sources/*`, `/query*`) se mantienen sin cambios.
+- Activacion controlada por flags (`ENABLE_TDM` y derivados) con default
+  `false` para preservar funcionalidad existente.
+- Las rutas legacy (`/sources/*`, `/query*`) no dependen de TDM y mantienen
+  contrato y payload sin cambios.

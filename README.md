@@ -56,6 +56,29 @@ Aplicacion Python para ingesta documental y consulta con RAG hibrido
 - No existe fallback a embeddings locales en memoria cuando falta
   configuracion/credenciales.
 
+## TDM (opt-in)
+
+- Extension TDM aditiva para catalogo esquema-servicio, grafo tipado,
+  masking preview, virtualizacion preview y planificacion sintetica.
+- Los endpoints `/tdm/*` requieren `ENABLE_TDM=true`.
+- Endpoints disponibles:
+  - `POST /tdm/ingest`
+  - `POST /tdm/query`
+  - `GET /tdm/catalog/services/{service_name}`
+  - `GET /tdm/catalog/tables/{table_name}`
+  - `POST /tdm/virtualization/preview` (requiere `TDM_ENABLE_VIRTUALIZATION=true`)
+  - `GET /tdm/synthetic/profile/{table_name}` (requiere `TDM_ENABLE_SYNTHETIC=true`)
+- Feature flags:
+  - `ENABLE_TDM`
+  - `TDM_ENABLE_MASKING`
+  - `TDM_ENABLE_VIRTUALIZATION`
+  - `TDM_ENABLE_SYNTHETIC`
+  - `TDM_ADMIN_ENDPOINTS`
+- Referencias:
+  - [docs/TDM_ROLLOUT_CHECKLIST.md](docs/TDM_ROLLOUT_CHECKLIST.md)
+  - [docs/migration-guides/MIGRATION_0_2_TDM.md](docs/migration-guides/MIGRATION_0_2_TDM.md)
+  - [docs/TDM_UI_OPERATIONS.md](docs/TDM_UI_OPERATIONS.md)
+
 ## Requisitos
 
 - Python 3.11+
@@ -91,6 +114,33 @@ python run_ui.py
 4. En la pestaña Query, preguntar por ejemplo:
 - `Who works on Project Atlas?`
 - `Which procedure depends on Policy FIN-001?`
+
+5. En la pestaña TDM (nueva):
+- Usar `Ingerir TDM` para invocar `POST /tdm/ingest`.
+- Usar `Consultar TDM` para invocar `POST /tdm/query`.
+- Usar `Catalogo por servicio` y `Catalogo por tabla` para consultar
+  `GET /tdm/catalog/services/{service_name}` y
+  `GET /tdm/catalog/tables/{table_name}`.
+- Usar `Preview de virtualizacion` para `POST /tdm/virtualization/preview`.
+- Usar `Perfil sintetico` para
+  `GET /tdm/synthetic/profile/{table_name}`.
+- Si `ENABLE_TDM=false`, la UI mostrara mensaje explicito de TDM deshabilitado.
+- Si una capacidad esta deshabilitada por flag (virtualization/synthetic),
+  la UI mostrara el hint correspondiente para activar el flag correcto.
+- Si el backend devuelve `503`, la UI mostrara estado de indisponibilidad
+  temporal para facilitar diagnostico operativo.
+- La pestaña TDM muestra resultados en una tabla estructurada con panel de
+  detalle JSON por fila, ademas del panel de JSON crudo completo.
+- Puedes filtrar filas de resultados por texto y exportar las filas visibles
+  a JSON crudo con `Exportar filas visibles`.
+- El filtro de resultados combina selector por tipo (`finding`,
+  `service_mapping`, `table`, `column`, etc.) y busqueda por texto.
+- Acciones rapidas por fila: copiar JSON de la fila, copiar
+  `endpoint/metodo`, y cargar la fila seleccionada al panel JSON crudo.
+- Atajos de teclado en TDM: `Ctrl+Shift+C` (copiar fila JSON),
+  `Ctrl+Shift+E` (copiar endpoint/metodo), `Ctrl+Shift+L`
+  (cargar fila en raw), `Ctrl+Shift+X` (exportar filas visibles).
+- Guia operativa detallada: [docs/TDM_UI_OPERATIONS.md](docs/TDM_UI_OPERATIONS.md).
 
 ## API Endpoints
 
@@ -201,6 +251,18 @@ En Windows (recomendado en este repo):
 
 ```bash
 .venv\Scripts\python.exe -m pytest -q
+```
+
+Preflight de release (compatibilidad legacy + readiness TDM):
+
+```bash
+.venv\Scripts\python.exe scripts\preflight_release.py --skip-http
+```
+
+Con API levantada, validar tambien contrato OpenAPI:
+
+```bash
+.venv\Scripts\python.exe scripts\preflight_release.py --base-url http://127.0.0.1:8000
 ```
 
 Benchmark E2E de consultas complejas (multi-hop y multi-documento):

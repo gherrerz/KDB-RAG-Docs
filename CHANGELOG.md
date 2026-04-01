@@ -1,5 +1,51 @@
 # Changelog
 
+## [0.3.0] - 2026-04-01
+
+### Added
+- Extension TDM aditiva y opt-in por feature flags:
+	`ENABLE_TDM`, `TDM_ENABLE_MASKING`, `TDM_ENABLE_VIRTUALIZATION`,
+	`TDM_ENABLE_SYNTHETIC`, `TDM_ADMIN_ENDPOINTS`.
+- Nuevas tablas SQLite de catalogo TDM:
+	`tdm_schemas`, `tdm_tables`, `tdm_columns`, `tdm_service_mappings`,
+	`tdm_masking_rules`, `tdm_virtualization_artifacts`,
+	`tdm_synthetic_profiles`.
+- Parsers TDM para SQL DDL, OpenAPI y diccionarios de datos.
+- Grafo tipado TDM con relaciones:
+	`USES_TABLE`, `HAS_COLUMN`, `HAS_PII_CLASS`, `MASKED_BY`,
+	`EXPOSES_ENDPOINT`, `BACKED_BY_SCHEMA`.
+- Endpoints TDM nuevos:
+	- `POST /tdm/ingest`
+	- `POST /tdm/query`
+	- `GET /tdm/catalog/services/{service_name}`
+	- `GET /tdm/catalog/tables/{table_name}`
+	- `POST /tdm/virtualization/preview`
+	- `GET /tdm/synthetic/profile/{table_name}`
+- Modulos de dominio TDM:
+	- `src/coderag/tdm/masking_engine.py`
+	- `src/coderag/tdm/synthetic_planner.py`
+	- `src/coderag/tdm/virtualization_export.py`
+- Guia de migracion y checklist de rollout:
+	- `docs/migration-guides/MIGRATION_0_2_TDM.md`
+	- `docs/TDM_ROLLOUT_CHECKLIST.md`
+- Script de preflight de release `scripts/preflight_release.py` para validar
+	compatibilidad legacy, dependencias de flags TDM y contrato OpenAPI.
+
+### Changed
+- `RagApplicationService.ingest_tdm_assets` ahora sincroniza aristas tipadas
+	TDM a Neo4j.
+- `RagApplicationService.query_tdm` agrega `masking_preview` cuando
+	`TDM_ENABLE_MASKING=true`.
+- `RagApplicationService.preview_tdm_virtualization` usa exportador dedicado
+	y persiste artefactos en `tdm_virtualization_artifacts` cuando
+	`TDM_ENABLE_VIRTUALIZATION=true`.
+
+### Fixed
+- Compatibilidad estricta preservada para rutas legacy:
+	`/sources/*` y `/query*` se mantienen sin cambios de contrato.
+- Rutas `/tdm/*` retornan `404` cuando `ENABLE_TDM=false` para evitar
+	activaciones accidentales en despliegues existentes.
+
 ## [0.2.6] - 2026-03-31
 
 ### Added
