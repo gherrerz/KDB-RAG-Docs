@@ -8,7 +8,11 @@ from typing import Iterable, List, Tuple
 
 from coderag.core.models import ChunkRecord
 
-ENTITY_PATTERN = re.compile(r"\b[A-Z][a-zA-Z]{2,}\b")
+ENTITY_PATTERN = re.compile(
+    r"\b[A-ZÁÉÍÓÚÑ][\wÁÉÍÓÚÑáéíóúñ\-]{2,}"
+    r"(?:\s+[A-ZÁÉÍÓÚÑ][\wÁÉÍÓÚÑáéíóúñ\-]{2,}){0,2}\b",
+    re.UNICODE,
+)
 
 
 def build_graph_edges(

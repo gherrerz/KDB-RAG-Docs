@@ -109,3 +109,31 @@ def test_expand_paths_falls_back_to_lowercase_token_entity_seeds() -> None:
     assert isinstance(tokens, list)
     assert "datos" in tokens
     assert "estrategica" in tokens
+
+
+def test_expand_paths_passes_source_filter_to_neo4j_calls() -> None:
+    """Forward source_id to both entity seed and path expansion queries."""
+    path_rows = [
+        {
+            "nodes": ["Gobierno de Datos", "Calidad"],
+            "relationships": ["RELATES_TO"],
+        }
+    ]
+    session = _FakeSession(
+        seed_names=["Gobierno de Datos"],
+        path_rows=path_rows,
+    )
+    store = GraphStore()
+    store._get_driver = lambda: _FakeDriver(session)
+
+    paths = store.expand_paths(
+        query="gobierno de datos y calidad",
+        hops=2,
+        max_paths=6,
+        source_id="source-xyz",
+    )
+
+    assert len(paths) == 1
+    assert paths[0].nodes == ["Gobierno de Datos", "Calidad"]
+    for call in session.calls:
+        assert call.params.get("source_id") == "source-xyz"

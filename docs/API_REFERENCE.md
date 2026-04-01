@@ -218,6 +218,8 @@ Campos relevantes en `diagnostics`:
 
 - `retrieval_candidates`
 - `reranked`
+- `retrieval_unique_documents`
+- `reranked_unique_documents`
 - `graph_paths`
 - `llm_provider`
 - `requested_mode`
@@ -234,6 +236,8 @@ Campos relevantes en `diagnostics`:
 Notas:
 
 - `source_id` filtra retrieval BM25/vector a la fuente indicada.
+- Si se envia `source_id`, la expansion de grafo restringe caminos a
+  relaciones de esa misma fuente.
 - Si `source_id` no existe, `citations` puede ser vacio.
 - En `answer`, las citas textuales deben referenciar documento/archivo
   con extension cuando este disponible.
@@ -242,3 +246,47 @@ Notas:
 ## POST /query/retrieval
 
 Alias funcional de `/query` para diagnostico y compatibilidad.
+
+## Benchmark recomendado
+
+Para validar robustez multi-hop y cobertura multi-documento de forma
+reproducible:
+
+```bash
+.venv\Scripts\python.exe scripts\run_multihop_benchmark.py --fail-on-threshold
+```
+
+El benchmark ejecuta consultas complejas del archivo
+`docs/benchmarks/complex_queries.json` y verifica umbrales minimos de:
+
+- `retrieval_unique_documents`
+- `reranked_unique_documents`
+- documentos unicos en `citations`
+- `required_answer_terms_hit` cuando el caso define `required_answer_terms`
+
+Tambien soporta archivo extendido con `thresholds_by_type` + `cases` para
+gates por tipo de pregunta (ej. `cross_doc_relacional`,
+`persona_proyecto_presupuesto`, `single_doc_control`):
+
+```bash
+.venv\Scripts\python.exe scripts\run_multihop_benchmark.py --benchmark-file docs/benchmarks/complex_queries_release_es.json --output-json docs/benchmarks/last_run_release_es.json --output-md docs/benchmarks/last_run_release_es.md --fail-on-threshold
+```
+
+Perfil de release para preguntas de Gobierno de Datos (incluye validacion de
+patrones minimos en respuesta/evidencia):
+
+```bash
+.venv\Scripts\python.exe scripts\run_multihop_benchmark.py --benchmark-file docs/benchmarks/complex_queries_release_gobierno_datos_es.json --output-json docs/benchmarks/last_run_release_gobierno_datos_es.json --output-md docs/benchmarks/last_run_release_gobierno_datos_es.md --fail-on-threshold
+```
+
+Este perfil requiere que el corpus de Gobierno de Datos este indexado en la
+fuente objetivo; de lo contrario fallara por terminos requeridos.
+
+Reportes generados:
+
+- `docs/benchmarks/last_run.json`
+- `docs/benchmarks/last_run.md`
+- `docs/benchmarks/last_run_release_es.json`
+- `docs/benchmarks/last_run_release_es.md`
+- `docs/benchmarks/last_run_release_gobierno_datos_es.json`
+- `docs/benchmarks/last_run_release_gobierno_datos_es.md`

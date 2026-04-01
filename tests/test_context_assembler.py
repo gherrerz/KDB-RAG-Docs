@@ -64,3 +64,58 @@ def test_assemble_context_prefers_filename_when_title_has_no_extension() -> None
 
     assert "[Documento DM_GobiernoDelDato.pdf]" in context
     assert "[Documento DM_GobiernoDelDato]" not in context
+
+
+def test_assemble_context_interleaves_documents_before_truncation() -> None:
+    """Preserve multi-document coverage when context budget is limited."""
+    chunks = [
+        ChunkRecord(
+            chunk_id="a-1",
+            document_id="doc-a",
+            source_id="source-1",
+            section_name="General",
+            text="A" * 220,
+            start_ref=0,
+            end_ref=220,
+            metadata={},
+        ),
+        ChunkRecord(
+            chunk_id="a-2",
+            document_id="doc-a",
+            source_id="source-1",
+            section_name="General",
+            text="B" * 220,
+            start_ref=220,
+            end_ref=440,
+            metadata={},
+        ),
+        ChunkRecord(
+            chunk_id="b-1",
+            document_id="doc-b",
+            source_id="source-1",
+            section_name="General",
+            text="C" * 220,
+            start_ref=0,
+            end_ref=220,
+            metadata={},
+        ),
+    ]
+
+    context = assemble_context(
+        chunks=chunks,
+        graph_paths=[],
+        max_chars=650,
+        document_map={
+            "doc-a": {
+                "title": "DocA.md",
+                "path_or_url": "sample_data/DocA.md",
+            },
+            "doc-b": {
+                "title": "DocB.md",
+                "path_or_url": "sample_data/DocB.md",
+            },
+        },
+    )
+
+    assert "[Documento DocA.md]" in context
+    assert "[Documento DocB.md]" in context

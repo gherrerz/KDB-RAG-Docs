@@ -1,0 +1,37 @@
+[
+  {
+    "id": "es_cross_doc_roles_budget",
+    "question": "Como se relaciona Project Atlas con el cumplimiento de presupuesto y que personas participan?",
+    "hops": 2,
+    "min_reranked_unique_documents": 2,
+    "min_citation_unique_documents": 2
+  },
+  {
+    "id": "es_policy_procedure_chain",
+    "question": "Explica la cadena entre ENG-DELIVERY, FIN-001 y Budget FY26-Platform.",
+    "hops": 2,
+    "min_reranked_unique_documents": 2,
+    "min_citation_unique_documents": 2
+  },
+  {
+    "id": "es_governance_multi_hop",
+    "question": "Que relacion hay entre la gobernanza financiera y el proceso de entrega de Engineering?",
+    "hops": 2,
+    "min_reranked_unique_documents": 2,
+    "min_citation_unique_documents": 2
+  },
+  {
+    "id": "en_people_and_compliance",
+    "question": "Who works on Project Atlas and how does this connect to budget compliance and governance?",
+    "hops": 2,
+    "min_reranked_unique_documents": 2,
+    "min_citation_unique_documents": 2
+  },
+  {
+    "id": "single_doc_control",
+    "question": "Which policy does Procedure PR-200 depend on?",
+    "hops": 1,
+    "min_reranked_unique_documents": 1,
+    "min_citation_unique_documents": 1
+  }
+]

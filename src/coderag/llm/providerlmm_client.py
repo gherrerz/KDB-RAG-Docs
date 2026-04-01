@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -125,13 +126,32 @@ class ProviderLlmClient:
         if not chunks:
             return "No se encontro informacion en las fuentes indexadas."
 
-        top = chunks[0]
-        snippet = top.text.strip().replace("\n", " ")
-        if not snippet:
+        clean_chunks = [
+            chunk for chunk in chunks if chunk.text.strip()
+        ]
+        if not clean_chunks:
             return "No se encontro informacion en las fuentes indexadas."
 
+        # Keep one high-value finding per document first, then fill by rank.
+        findings: List[ChunkRecord] = []
+        findings_by_doc: Dict[str, int] = defaultdict(int)
+        for chunk in clean_chunks:
+            if findings_by_doc[chunk.document_id] >= 1:
+                continue
+            findings.append(chunk)
+            findings_by_doc[chunk.document_id] += 1
+            if len(findings) >= 3:
+                break
+
+        if len(findings) < 2:
+            findings = clean_chunks[:3]
+
+        key_lines: list[str] = []
+        for chunk in findings:
+            key_lines.append(f"- {chunk.text.strip().replace(chr(10), ' ')[:260]}")
+
         evidence_lines = []
-        for index, chunk in enumerate(chunks[:3], start=1):
+        for index, chunk in enumerate(clean_chunks[:5], start=1):
             document_name = self._resolve_document_name(chunk, doc_map)
             evidence_lines.append(
                 f"- {index}. [{document_name}] {chunk.text.strip()[:220]}"
@@ -147,13 +167,17 @@ class ProviderLlmClient:
 
         graph_text = "\n".join(graph_lines) or "- Sin rutas de grafo relevantes."
         evidence_text = "\n".join(evidence_lines)
+        findings_text = "\n".join(key_lines)
+        covered_docs = len({chunk.document_id for chunk in clean_chunks[:5]})
 
         response = (
             "## Resumen\n"
             "Basado en la evidencia recuperada, esta es la mejor respuesta "
             "disponible con el contexto indexado.\n\n"
+            "## Cobertura\n"
+            f"- Documentos considerados en la sintesis local: {covered_docs}.\n\n"
             "## Hallazgos clave\n"
-            f"- {snippet[:280]}\n\n"
+            f"{findings_text}\n\n"
             "## Evidencia\n"
             f"{evidence_text}\n\n"
             "## Relacion de grafo\n"

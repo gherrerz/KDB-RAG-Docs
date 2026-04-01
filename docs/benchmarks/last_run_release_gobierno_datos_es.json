@@ -1,0 +1,154 @@
+{
+  "summary": {
+    "total": 5,
+    "passed": 1,
+    "failed": 4,
+    "pass_rate": 20.0
+  },
+  "summary_by_type": {
+    "gobierno_datos_multihop": {
+      "total": 4,
+      "passed": 0,
+      "failed": 4,
+      "pass_rate": 0.0
+    },
+    "single_doc_control": {
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "pass_rate": 100.0
+    }
+  },
+  "results": [
+    {
+      "id": "gd_estrategia_vs_gobierno",
+      "question": "Que sabes de gestion estrategica y como se relaciona con Gobierno de Datos?",
+      "type": "gobierno_datos_multihop",
+      "source_id": "bb1ec9ad58ce",
+      "hops": 2,
+      "retrieval_candidates": 60,
+      "retrieval_unique_documents": 2,
+      "reranked_unique_documents": 1,
+      "citation_unique_documents": 1,
+      "graph_paths": 6,
+      "required_answer_terms_hit": 2,
+      "required_answer_terms_total": 3,
+      "thresholds": {
+        "min_retrieval_unique_documents": 2,
+        "min_reranked_unique_documents": 2,
+        "min_citation_unique_documents": 2,
+        "min_graph_paths": 0,
+        "min_required_answer_terms_hit": 2
+      },
+      "failure_reasons": [
+        "reranked_unique_documents 1 < 2",
+        "citation_unique_documents 1 < 2"
+      ],
+      "passed": false
+    },
+    {
+      "id": "gd_roles_y_responsabilidades",
+      "question": "Que roles son clave para el Gobierno de Datos y como se conectan con la estrategia de datos?",
+      "type": "gobierno_datos_multihop",
+      "source_id": "bb1ec9ad58ce",
+      "hops": 2,
+      "retrieval_candidates": 60,
+      "retrieval_unique_documents": 2,
+      "reranked_unique_documents": 1,
+      "citation_unique_documents": 1,
+      "graph_paths": 6,
+      "required_answer_terms_hit": 1,
+      "required_answer_terms_total": 3,
+      "thresholds": {
+        "min_retrieval_unique_documents": 2,
+        "min_reranked_unique_documents": 2,
+        "min_citation_unique_documents": 2,
+        "min_graph_paths": 0,
+        "min_required_answer_terms_hit": 2
+      },
+      "failure_reasons": [
+        "reranked_unique_documents 1 < 2",
+        "citation_unique_documents 1 < 2",
+        "required_answer_terms_hit 1 < 2"
+      ],
+      "passed": false
+    },
+    {
+      "id": "gd_iniciativas_prioritarias",
+      "question": "Cuales iniciativas de Gobierno de Datos deberian priorizarse y como impactan en analitica de negocio?",
+      "type": "gobierno_datos_multihop",
+      "source_id": "bb1ec9ad58ce",
+      "hops": 2,
+      "retrieval_candidates": 60,
+      "retrieval_unique_documents": 2,
+      "reranked_unique_documents": 1,
+      "citation_unique_documents": 1,
+      "graph_paths": 6,
+      "required_answer_terms_hit": 1,
+      "required_answer_terms_total": 3,
+      "thresholds": {
+        "min_retrieval_unique_documents": 2,
+        "min_reranked_unique_documents": 2,
+        "min_citation_unique_documents": 2,
+        "min_graph_paths": 0,
+        "min_required_answer_terms_hit": 2
+      },
+      "failure_reasons": [
+        "reranked_unique_documents 1 < 2",
+        "citation_unique_documents 1 < 2",
+        "required_answer_terms_hit 1 < 2"
+      ],
+      "passed": false
+    },
+    {
+      "id": "gd_trazabilidad_integridad",
+      "question": "Explica la relacion entre responsabilidad, integridad y calidad en una estrategia de Gobierno de Datos.",
+      "type": "gobierno_datos_multihop",
+      "source_id": "bb1ec9ad58ce",
+      "hops": 2,
+      "retrieval_candidates": 60,
+      "retrieval_unique_documents": 1,
+      "reranked_unique_documents": 1,
+      "citation_unique_documents": 1,
+      "graph_paths": 6,
+      "required_answer_terms_hit": 3,
+      "required_answer_terms_total": 3,
+      "thresholds": {
+        "min_retrieval_unique_documents": 2,
+        "min_reranked_unique_documents": 2,
+        "min_citation_unique_documents": 2,
+        "min_graph_paths": 0,
+        "min_required_answer_terms_hit": 2
+      },
+      "failure_reasons": [
+        "retrieval_unique_documents 1 < 2",
+        "reranked_unique_documents 1 < 2",
+        "citation_unique_documents 1 < 2"
+      ],
+      "passed": false
+    },
+    {
+      "id": "gd_control_politica",
+      "question": "Que documento describe de forma explicita las iniciativas clave de Gobierno del Dato?",
+      "type": "single_doc_control",
+      "source_id": "bb1ec9ad58ce",
+      "hops": 1,
+      "retrieval_candidates": 60,
+      "retrieval_unique_documents": 2,
+      "reranked_unique_documents": 2,
+      "citation_unique_documents": 2,
+      "graph_paths": 6,
+      "required_answer_terms_hit": 1,
+      "required_answer_terms_total": 1,
+      "thresholds": {
+        "min_retrieval_unique_documents": 1,
+        "min_reranked_unique_documents": 1,
+        "min_citation_unique_documents": 1,
+        "min_graph_paths": 0,
+        "min_required_answer_terms_hit": 1
+      },
+      "failure_reasons": [],
+      "passed": true
+    }
+  ]
+}

@@ -1,0 +1,151 @@
+{
+  "summary": {
+    "total": 5,
+    "passed": 5,
+    "failed": 0,
+    "pass_rate": 100.0
+  },
+  "summary_by_type": {
+    "cross_doc_relacional": {
+      "total": 2,
+      "passed": 2,
+      "failed": 0,
+      "pass_rate": 100.0
+    },
+    "cadena_normativa": {
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "pass_rate": 100.0
+    },
+    "persona_proyecto_presupuesto": {
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "pass_rate": 100.0
+    },
+    "single_doc_control": {
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "pass_rate": 100.0
+    }
+  },
+  "results": [
+    {
+      "id": "es_relacion_ingenieria_finanzas",
+      "question": "Como se relacionan la gobernanza financiera y el proceso de entrega de Engineering?",
+      "type": "cross_doc_relacional",
+      "source_id": "815f5fd41095",
+      "hops": 2,
+      "retrieval_candidates": 4,
+      "retrieval_unique_documents": 2,
+      "reranked_unique_documents": 2,
+      "citation_unique_documents": 2,
+      "graph_paths": 0,
+      "required_answer_terms_hit": 0,
+      "required_answer_terms_total": 0,
+      "thresholds": {
+        "min_retrieval_unique_documents": 2,
+        "min_reranked_unique_documents": 2,
+        "min_citation_unique_documents": 2,
+        "min_graph_paths": 0,
+        "min_required_answer_terms_hit": 0
+      },
+      "failure_reasons": [],
+      "passed": true
+    },
+    {
+      "id": "es_trazabilidad_proc_policy_budget",
+      "question": "Explica la cadena entre ENG-DELIVERY, FIN-001 y Budget FY26-Platform.",
+      "type": "cadena_normativa",
+      "source_id": "815f5fd41095",
+      "hops": 2,
+      "retrieval_candidates": 4,
+      "retrieval_unique_documents": 2,
+      "reranked_unique_documents": 2,
+      "citation_unique_documents": 2,
+      "graph_paths": 0,
+      "required_answer_terms_hit": 0,
+      "required_answer_terms_total": 0,
+      "thresholds": {
+        "min_retrieval_unique_documents": 2,
+        "min_reranked_unique_documents": 2,
+        "min_citation_unique_documents": 2,
+        "min_graph_paths": 0,
+        "min_required_answer_terms_hit": 0
+      },
+      "failure_reasons": [],
+      "passed": true
+    },
+    {
+      "id": "es_personas_project_atlas",
+      "question": "Que personas participan en Project Atlas y como se vinculan con cumplimiento de presupuesto?",
+      "type": "persona_proyecto_presupuesto",
+      "source_id": "815f5fd41095",
+      "hops": 2,
+      "retrieval_candidates": 4,
+      "retrieval_unique_documents": 2,
+      "reranked_unique_documents": 2,
+      "citation_unique_documents": 2,
+      "graph_paths": 0,
+      "required_answer_terms_hit": 0,
+      "required_answer_terms_total": 0,
+      "thresholds": {
+        "min_retrieval_unique_documents": 2,
+        "min_reranked_unique_documents": 2,
+        "min_citation_unique_documents": 2,
+        "min_graph_paths": 0,
+        "min_required_answer_terms_hit": 0
+      },
+      "failure_reasons": [],
+      "passed": true
+    },
+    {
+      "id": "es_procurement_to_delivery",
+      "question": "Relaciona Procedure PR-200 con ENG-DELIVERY y describe el rol de FIN-001.",
+      "type": "cross_doc_relacional",
+      "source_id": "815f5fd41095",
+      "hops": 2,
+      "retrieval_candidates": 4,
+      "retrieval_unique_documents": 2,
+      "reranked_unique_documents": 2,
+      "citation_unique_documents": 2,
+      "graph_paths": 0,
+      "required_answer_terms_hit": 0,
+      "required_answer_terms_total": 0,
+      "thresholds": {
+        "min_retrieval_unique_documents": 2,
+        "min_reranked_unique_documents": 2,
+        "min_citation_unique_documents": 2,
+        "min_graph_paths": 0,
+        "min_required_answer_terms_hit": 0
+      },
+      "failure_reasons": [],
+      "passed": true
+    },
+    {
+      "id": "es_control_single_doc",
+      "question": "Que politica depende de Procedure PR-200?",
+      "type": "single_doc_control",
+      "source_id": "815f5fd41095",
+      "hops": 1,
+      "retrieval_candidates": 4,
+      "retrieval_unique_documents": 2,
+      "reranked_unique_documents": 2,
+      "citation_unique_documents": 2,
+      "graph_paths": 0,
+      "required_answer_terms_hit": 0,
+      "required_answer_terms_total": 0,
+      "thresholds": {
+        "min_retrieval_unique_documents": 1,
+        "min_reranked_unique_documents": 1,
+        "min_citation_unique_documents": 1,
+        "min_graph_paths": 0,
+        "min_required_answer_terms_hit": 0
+      },
+      "failure_reasons": [],
+      "passed": true
+    }
+  ]
+}

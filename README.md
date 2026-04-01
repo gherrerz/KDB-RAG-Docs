@@ -200,6 +200,40 @@ En Windows (recomendado en este repo):
 .venv\Scripts\python.exe -m pytest -q
 ```
 
+Benchmark E2E de consultas complejas (multi-hop y multi-documento):
+
+```bash
+.venv\Scripts\python.exe scripts\run_multihop_benchmark.py --fail-on-threshold
+```
+
+Benchmark de release en espanol con umbrales por tipo de pregunta:
+
+```bash
+.venv\Scripts\python.exe scripts\run_multihop_benchmark.py --benchmark-file docs/benchmarks/complex_queries_release_es.json --output-json docs/benchmarks/last_run_release_es.json --output-md docs/benchmarks/last_run_release_es.md --fail-on-threshold
+```
+
+Benchmark de release para Gobierno de Datos (preguntas reales + patrones
+minimos en respuesta/evidencia):
+
+```bash
+.venv\Scripts\python.exe scripts\run_multihop_benchmark.py --benchmark-file docs/benchmarks/complex_queries_release_gobierno_datos_es.json --output-json docs/benchmarks/last_run_release_gobierno_datos_es.json --output-md docs/benchmarks/last_run_release_gobierno_datos_es.md --fail-on-threshold
+```
+
+Nota: este perfil requiere tener previamente ingerido el corpus de Gobierno de
+Datos en la fuente activa. Si el `source_id` activo solo contiene
+`sample_data`, el gate fallara por `required_answer_terms_hit`.
+
+Artefactos de salida del benchmark:
+- `docs/benchmarks/complex_queries.json` (casos)
+- `docs/benchmarks/complex_queries_release_es.json` (casos de release + `thresholds_by_type`)
+- `docs/benchmarks/complex_queries_release_gobierno_datos_es.json` (release Gobierno de Datos + `required_answer_terms`)
+- `docs/benchmarks/last_run.json` (resultado estructurado)
+- `docs/benchmarks/last_run.md` (reporte legible)
+- `docs/benchmarks/last_run_release_es.json` (resultado release)
+- `docs/benchmarks/last_run_release_es.md` (reporte release por tipo)
+- `docs/benchmarks/last_run_release_gobierno_datos_es.json` (resultado release Gobierno de Datos)
+- `docs/benchmarks/last_run_release_gobierno_datos_es.md` (reporte release Gobierno de Datos)
+
 ## Cleanup artifacts
 
 Para limpiar artefactos locales sin usar `Remove-Item` (bloqueado en algunos
@@ -296,9 +330,22 @@ El diseño de modulos permite evolucionar componentes opcionales como:
 - `source_id` en `/query` aplica filtro real sobre retrieval BM25/vector.
 - Si `source_id` no existe, `citations` retorna vacio en lugar de mezclar
   resultados de otras fuentes.
+- En preguntas complejas, el reranking aplica diversidad documental para
+  reducir colapso de resultados sobre un solo documento cuando existe
+  evidencia relevante en multiples fuentes.
+- El ensamblado de contexto ahora intercala chunks por documento antes de
+  truncar por longitud para mejorar cobertura en consultas multi-hop.
+- La expansion de grafo con `source_id` restringe paths a relaciones
+  asociadas a la misma fuente consultada.
 - `/query` soporta dos modos via `include_llm_answer`:
   - `true`: retrieval+grafo+respuesta LLM (markdown estructurado)
   - `false`: retrieval+grafo sin LLM (`answer=""` para consumo por otros
     agentes)
 - En modo LLM estricto (`include_llm_answer=true` y `force_fallback=false`),
   fallas de provider remoto retornan error en lugar de fallback silencioso.
+- En fallback local (`force_fallback=true` o `LLM_PROVIDER=local`), la
+  respuesta extractiva sintetiza hallazgos desde varios documentos cuando
+  existe evidencia multi-documento.
+- El reranking para consultas complejas aplica una etapa adicional tipo
+  Maximal Marginal Relevance (MMR) para reducir redundancia semantica entre
+  chunks y mejorar cobertura cross-documento.

@@ -1,0 +1,118 @@
+{
+  "summary": {
+    "total": 5,
+    "passed": 5,
+    "failed": 0,
+    "pass_rate": 100.0
+  },
+  "summary_by_type": {
+    "default": {
+      "total": 5,
+      "passed": 5,
+      "failed": 0,
+      "pass_rate": 100.0
+    }
+  },
+  "results": [
+    {
+      "id": "es_cross_doc_roles_budget",
+      "question": "Como se relaciona Project Atlas con el cumplimiento de presupuesto y que personas participan?",
+      "type": "default",
+      "source_id": "815f5fd41095",
+      "hops": 2,
+      "retrieval_candidates": 4,
+      "retrieval_unique_documents": 2,
+      "reranked_unique_documents": 2,
+      "citation_unique_documents": 2,
+      "graph_paths": 0,
+      "thresholds": {
+        "min_retrieval_unique_documents": 1,
+        "min_reranked_unique_documents": 2,
+        "min_citation_unique_documents": 2,
+        "min_graph_paths": 0
+      },
+      "failure_reasons": [],
+      "passed": true
+    },
+    {
+      "id": "es_policy_procedure_chain",
+      "question": "Explica la cadena entre ENG-DELIVERY, FIN-001 y Budget FY26-Platform.",
+      "type": "default",
+      "source_id": "815f5fd41095",
+      "hops": 2,
+      "retrieval_candidates": 4,
+      "retrieval_unique_documents": 2,
+      "reranked_unique_documents": 2,
+      "citation_unique_documents": 2,
+      "graph_paths": 0,
+      "thresholds": {
+        "min_retrieval_unique_documents": 1,
+        "min_reranked_unique_documents": 2,
+        "min_citation_unique_documents": 2,
+        "min_graph_paths": 0
+      },
+      "failure_reasons": [],
+      "passed": true
+    },
+    {
+      "id": "es_governance_multi_hop",
+      "question": "Que relacion hay entre la gobernanza financiera y el proceso de entrega de Engineering?",
+      "type": "default",
+      "source_id": "815f5fd41095",
+      "hops": 2,
+      "retrieval_candidates": 4,
+      "retrieval_unique_documents": 2,
+      "reranked_unique_documents": 2,
+      "citation_unique_documents": 2,
+      "graph_paths": 0,
+      "thresholds": {
+        "min_retrieval_unique_documents": 1,
+        "min_reranked_unique_documents": 2,
+        "min_citation_unique_documents": 2,
+        "min_graph_paths": 0
+      },
+      "failure_reasons": [],
+      "passed": true
+    },
+    {
+      "id": "en_people_and_compliance",
+      "question": "Who works on Project Atlas and how does this connect to budget compliance and governance?",
+      "type": "default",
+      "source_id": "815f5fd41095",
+      "hops": 2,
+      "retrieval_candidates": 4,
+      "retrieval_unique_documents": 2,
+      "reranked_unique_documents": 2,
+      "citation_unique_documents": 2,
+      "graph_paths": 0,
+      "thresholds": {
+        "min_retrieval_unique_documents": 1,
+        "min_reranked_unique_documents": 2,
+        "min_citation_unique_documents": 2,
+        "min_graph_paths": 0
+      },
+      "failure_reasons": [],
+      "passed": true
+    },
+    {
+      "id": "single_doc_control",
+      "question": "Which policy does Procedure PR-200 depend on?",
+      "type": "default",
+      "source_id": "815f5fd41095",
+      "hops": 1,
+      "retrieval_candidates": 4,
+      "retrieval_unique_documents": 2,
+      "reranked_unique_documents": 2,
+      "citation_unique_documents": 2,
+      "graph_paths": 0,
+      "thresholds": {
+        "min_retrieval_unique_documents": 1,
+        "min_reranked_unique_documents": 1,
+        "min_citation_unique_documents": 1,
+        "min_graph_paths": 0
+      },
+      "failure_reasons": [],
+      "passed": true
+    }
+  ]
+}

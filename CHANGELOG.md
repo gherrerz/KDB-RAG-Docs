@@ -1,5 +1,76 @@
 # Changelog
 
+## [0.2.6] - 2026-03-31
+
+### Added
+- Nuevo perfil de benchmark de release para Gobierno de Datos en
+	`docs/benchmarks/complex_queries_release_gobierno_datos_es.json`, con
+	preguntas complejas y `required_answer_terms` por caso.
+- Nuevos reportes dedicados para este perfil:
+	`docs/benchmarks/last_run_release_gobierno_datos_es.json` y
+	`docs/benchmarks/last_run_release_gobierno_datos_es.md`.
+
+### Changed
+- `scripts/run_multihop_benchmark.py` ahora soporta validacion opcional de
+	cobertura semantica por terminos requeridos en respuesta/evidencia, mediante
+	`required_answer_terms` y `min_required_answer_terms_hit` (por caso o por
+	`thresholds_by_type`).
+- Reportes JSON/Markdown/console del benchmark ahora incluyen `terms_hit` para
+	facilitar gates de calidad semantica en consultas complejas.
+
+## [0.2.5] - 2026-03-31
+
+### Added
+- Benchmark de release en espanol con casos complejos y umbrales por tipo de
+	pregunta en `docs/benchmarks/complex_queries_release_es.json`.
+- Reportes de benchmark de release en
+	`docs/benchmarks/last_run_release_es.json` y
+	`docs/benchmarks/last_run_release_es.md`.
+
+### Changed
+- `scripts/run_multihop_benchmark.py` ahora soporta dos formatos de entrada:
+	lista legacy de casos y esquema extendido con `thresholds_by_type` +
+	`cases`, manteniendo compatibilidad hacia atras.
+- El benchmark ahora evalua umbrales por tipo de pregunta y publica
+	`summary_by_type` en salida JSON/Markdown para gates de calidad por
+	categoria.
+
+## [0.2.4] - 2026-03-31
+
+### Added
+- Benchmark persistente de consultas complejas en
+	`docs/benchmarks/complex_queries.json`.
+- Script de evaluacion E2E `scripts/run_multihop_benchmark.py` con salida en
+	JSON y Markdown para seguimiento de regresiones multi-hop.
+
+### Changed
+- Reranking para consultas complejas reforzado con seleccion tipo
+	Maximal Marginal Relevance (MMR) para reducir redundancia y elevar cobertura
+	cross-documento.
+
+## [0.2.3] - 2026-03-31
+
+### Added
+- Nuevas metricas de diagnostico de diversidad documental en `/query`:
+	`retrieval_unique_documents` y `reranked_unique_documents`.
+- Pruebas de regresion para cobertura multi-documento en reranking,
+	contexto y fallback local.
+
+### Changed
+- Reranking reforzado con normalizacion lexica (acentos/casefold),
+	`token_overlap`, `phrase_overlap` y seleccion diversificada para
+	consultas complejas.
+- Ensamblado de contexto ahora intercala chunks por documento y reserva
+	espacio para paths de grafo, reduciendo sesgo por truncado secuencial.
+- Fallback local extractivo en LLM ahora sintetiza hallazgos desde varios
+	documentos en lugar de depender de un unico chunk dominante.
+- Deteccion de entidades en ingesta/grafo mejorada para textos en espanol
+	con acentos y entidades multi-palabra.
+
+### Fixed
+- Expansion de grafo multi-hop ahora puede restringirse por `source_id`,
+	evitando mezclar rutas de otras fuentes durante consulta filtrada.
+
 ## [0.2.2] - 2026-03-31
 
 ### Added

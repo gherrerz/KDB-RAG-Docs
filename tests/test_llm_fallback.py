@@ -114,6 +114,52 @@ def test_local_fallback_prefers_filename_when_title_has_no_extension() -> None:
     assert "[c5]" not in answer
 
 
+def test_local_fallback_includes_multi_document_coverage() -> None:
+    """Report evidence from multiple documents in local extractive mode."""
+    client = ProviderLlmClient()
+    chunk_a = ChunkRecord(
+        chunk_id="ca",
+        document_id="doc-a",
+        source_id="s1",
+        section_name="General",
+        text="Gobierno de datos define roles y accountability.",
+        start_ref=0,
+        end_ref=46,
+        metadata={},
+    )
+    chunk_b = ChunkRecord(
+        chunk_id="cb",
+        document_id="doc-b",
+        source_id="s1",
+        section_name="General",
+        text="Gestion estrategica integra prioridades de negocio.",
+        start_ref=0,
+        end_ref=50,
+        metadata={},
+    )
+
+    answer = client.answer(
+        question="Como se relaciona gobierno de datos con gestion estrategica?",
+        chunks=[chunk_a, chunk_b],
+        provider="local",
+        force_fallback=True,
+        doc_map={
+            "doc-a": {
+                "title": "Gobierno.md",
+                "path_or_url": "sample_data/Gobierno.md",
+            },
+            "doc-b": {
+                "title": "Estrategia.md",
+                "path_or_url": "sample_data/Estrategia.md",
+            },
+        },
+    )
+
+    assert "## Cobertura" in answer
+    assert "[Gobierno.md]" in answer
+    assert "[Estrategia.md]" in answer
+
+
 def test_strict_mode_fails_without_provider_credentials() -> None:
     """Raise RuntimeError when strict mode cannot call selected provider."""
     original_openai_api_key = SETTINGS.openai_api_key

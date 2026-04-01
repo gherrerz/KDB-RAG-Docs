@@ -1,0 +1,80 @@
+{
+  "thresholds_by_type": {
+    "default": {
+      "min_retrieval_unique_documents": 1,
+      "min_reranked_unique_documents": 1,
+      "min_citation_unique_documents": 1,
+      "min_graph_paths": 0,
+      "min_required_answer_terms_hit": 0
+    },
+    "gobierno_datos_multihop": {
+      "min_retrieval_unique_documents": 2,
+      "min_reranked_unique_documents": 2,
+      "min_citation_unique_documents": 2,
+      "min_graph_paths": 0,
+      "min_required_answer_terms_hit": 2
+    },
+    "single_doc_control": {
+      "min_retrieval_unique_documents": 1,
+      "min_reranked_unique_documents": 1,
+      "min_citation_unique_documents": 1,
+      "min_graph_paths": 0,
+      "min_required_answer_terms_hit": 1
+    }
+  },
+  "cases": [
+    {
+      "id": "gd_estrategia_vs_gobierno",
+      "type": "gobierno_datos_multihop",
+      "question": "Que sabes de gestion estrategica y como se relaciona con Gobierno de Datos?",
+      "hops": 2,
+      "required_answer_terms": [
+        "gobierno de datos",
+        "gestion estrategica",
+        "roles"
+      ]
+    },
+    {
+      "id": "gd_roles_y_responsabilidades",
+      "type": "gobierno_datos_multihop",
+      "question": "Que roles son clave para el Gobierno de Datos y como se conectan con la estrategia de datos?",
+      "hops": 2,
+      "required_answer_terms": [
+        "data governance council",
+        "stewardship",
+        "estrategia"
+      ]
+    },
+    {
+      "id": "gd_iniciativas_prioritarias",
+      "type": "gobierno_datos_multihop",
+      "question": "Cuales iniciativas de Gobierno de Datos deberian priorizarse y como impactan en analitica de negocio?",
+      "hops": 2,
+      "required_answer_terms": [
+        "datos maestros",
+        "seguridad y privacidad",
+        "analitica"
+      ]
+    },
+    {
+      "id": "gd_trazabilidad_integridad",
+      "type": "gobierno_datos_multihop",
+      "question": "Explica la relacion entre responsabilidad, integridad y calidad en una estrategia de Gobierno de Datos.",
+      "hops": 2,
+      "required_answer_terms": [
+        "responsabilidad",
+        "integridad",
+        "calidad"
+      ]
+    },
+    {
+      "id": "gd_control_politica",
+      "type": "single_doc_control",
+      "question": "Que documento describe de forma explicita las iniciativas clave de Gobierno del Dato?",
+      "hops": 1,
+      "required_answer_terms": [
+        "documento"
+      ]
+    }
+  ]
+}

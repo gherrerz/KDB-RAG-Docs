@@ -3,18 +3,27 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 import time
 from typing import Iterable, List, Optional, Tuple
 
 from coderag.core.models import GraphPath
 from coderag.core.settings import SETTINGS
 
-ENTITY_PATTERN = re.compile(r"\b[A-Z][a-zA-Z]{2,}\b")
-TOKEN_PATTERN = re.compile(r"\b[a-zA-Z][a-zA-Z0-9_]{2,}\b")
+ENTITY_PATTERN = re.compile(
+    r"\b[A-ZÁÉÍÓÚÑ][\wÁÉÍÓÚÑáéíóúñ\-]{2,}"
+    r"(?:\s+[A-ZÁÉÍÓÚÑ][\wÁÉÍÓÚÑáéíóúñ\-]{2,}){0,2}\b",
+    re.UNICODE,
+)
+TOKEN_PATTERN = re.compile(r"\b[\w\-]{2,}\b", re.UNICODE)
 TOKEN_STOPWORDS = {
+    "a",
+    "al",
     "como",
     "con",
     "cual",
+    "cuanto",
+    "cuantos",
     "cuales",
     "cuando",
     "de",
@@ -29,10 +38,24 @@ TOKEN_STOPWORDS = {
     "por",
     "que",
     "se",
+    "sin",
+    "sobre",
     "una",
     "uno",
+    "un",
+    "sus",
+    "su",
     "y",
 }
+
+
+def _normalize_token(token: str) -> str:
+    """Normalize token for consistent comparison across accents/case."""
+    lowered = token.casefold().strip("_-")
+    if not lowered:
+        return ""
+    normalized = unicodedata.normalize("NFKD", lowered)
+    return "".join(ch for ch in normalized if not unicodedata.combining(ch))
 
 
 class GraphStore:
@@ -191,6 +214,7 @@ class GraphStore:
         query: str,
         hops: int,
         max_paths: int,
+        source_id: Optional[str] = None,
     ) -> List[GraphPath]:
         """Expand multi-hop graph paths using Neo4j runtime."""
         driver = self._get_driver()
@@ -201,16 +225,19 @@ class GraphStore:
                 driver=driver,
                 query=query,
                 max_entities=max_paths,
+                source_id=source_id,
             )
         if not entities:
             return []
 
         hop_count = max(1, min(hops, 4))
         cypher = (
-            "MATCH p=(a:Entity)-[:RELATES_TO*1.."
+            "MATCH p=(a:Entity)-[rels:RELATES_TO*1.."
             f"{hop_count}"
             "]-(b:Entity) "
             "WHERE a.name IN $entities "
+            "AND ($source_id IS NULL "
+            "OR all(r IN rels WHERE r.source_id = $source_id)) "
             "RETURN [n IN nodes(p) | n.name] AS nodes, "
             "[r IN relationships(p) | type(r)] AS relationships "
             "LIMIT $limit"
@@ -221,6 +248,7 @@ class GraphStore:
             records = session.run(
                 cypher,
                 entities=entities,
+                source_id=source_id,
                 limit=max_paths,
             )
             for record in records:
@@ -239,17 +267,18 @@ class GraphStore:
     def _query_tokens(query: str) -> List[str]:
         """Extract normalized query tokens for entity seed fallback."""
         tokens = [
-            token.lower()
+            _normalize_token(token)
             for token in TOKEN_PATTERN.findall(query)
-            if token.lower() not in TOKEN_STOPWORDS
+            if _normalize_token(token) not in TOKEN_STOPWORDS
         ]
-        return list(dict.fromkeys(tokens))
+        return [token for token in dict.fromkeys(tokens) if token]
 
     def _resolve_entities_from_query_tokens(
         self,
         driver,
         query: str,
         max_entities: int,
+        source_id: Optional[str] = None,
     ) -> List[str]:
         """Resolve likely entity names from lowercase query tokens."""
         tokens = self._query_tokens(query)
@@ -257,9 +286,10 @@ class GraphStore:
             return []
 
         cypher = (
-            "MATCH (e:Entity) "
+            "MATCH (e:Entity)-[r:RELATES_TO]-() "
             "WHERE any(token IN $tokens WHERE "
             "toLower(e.name) CONTAINS token) "
+            "AND ($source_id IS NULL OR r.source_id = $source_id) "
             "RETURN DISTINCT e.name AS name "
             "LIMIT $limit"
         )
@@ -267,6 +297,7 @@ class GraphStore:
             records = session.run(
                 cypher,
                 tokens=tokens,
+                source_id=source_id,
                 limit=max(1, min(max_entities, 12)),
             )
             return [

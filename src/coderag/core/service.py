@@ -506,11 +506,20 @@ class RagApplicationService:
         reranked = rerank_results(request.question, hits, top_k=top_k)
         chunks = [item[0] for item in reranked]
 
-        graph_paths: List[GraphPath] = self.graph_store.expand_paths(
-            query=request.question,
-            hops=max(1, hops),
-            max_paths=6,
-        )
+        try:
+            graph_paths = self.graph_store.expand_paths(
+                query=request.question,
+                hops=max(1, hops),
+                max_paths=6,
+                source_id=request.source_id,
+            )
+        except TypeError:
+            # Backward-compatibility for test doubles with old signature.
+            graph_paths = self.graph_store.expand_paths(
+                query=request.question,
+                hops=max(1, hops),
+                max_paths=6,
+            )
 
         doc_map = self.store.get_document_map(source_id=request.source_id)
 
@@ -579,6 +588,12 @@ class RagApplicationService:
         diagnostics = {
             "retrieval_candidates": len(hits),
             "reranked": len(reranked),
+            "retrieval_unique_documents": len(
+                {item[0].document_id for item in hits}
+            ),
+            "reranked_unique_documents": len(
+                {chunk.document_id for chunk in chunks}
+            ),
             "graph_paths": len(graph_paths),
             "requested_mode": requested_mode,
             "effective_mode": effective_mode,

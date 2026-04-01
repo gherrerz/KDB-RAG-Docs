@@ -8,7 +8,11 @@ from typing import Iterable, List
 from coderag.core.models import ChunkRecord, DocumentRecord
 
 SECTION_PATTERN = re.compile(r"^#{1,6}\s+(?P<title>.+)$", re.MULTILINE)
-ENTITY_PATTERN = re.compile(r"\b[A-Z][a-zA-Z]{2,}\b")
+ENTITY_PATTERN = re.compile(
+    r"\b[A-ZÁÉÍÓÚÑ][\wÁÉÍÓÚÑáéíóúñ\-]{2,}"
+    r"(?:\s+[A-ZÁÉÍÓÚÑ][\wÁÉÍÓÚÑáéíóúñ\-]{2,}){0,2}\b",
+    re.UNICODE,
+)
 
 
 def _split_by_sections(text: str) -> Iterable[tuple[str, str]]:
