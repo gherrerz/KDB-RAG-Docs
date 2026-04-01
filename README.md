@@ -131,6 +131,8 @@ python run_ui.py
   temporal para facilitar diagnostico operativo.
 - La pestaña TDM muestra resultados en una tabla estructurada con panel de
   detalle JSON por fila, ademas del panel de JSON crudo completo.
+- La vista TDM usa paneles por seccion (tipo acordeon) y scroll para mejorar
+  legibilidad en ventanas pequenas o con escalado alto.
 - Puedes filtrar filas de resultados por texto y exportar las filas visibles
   a JSON crudo con `Exportar filas visibles`.
 - El filtro de resultados combina selector por tipo (`finding`,

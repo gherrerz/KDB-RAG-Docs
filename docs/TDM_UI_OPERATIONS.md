@@ -34,6 +34,10 @@ Las rutas legacy (`/sources/*` y `/query*`) no cambian.
 
 ## Operacion de resultados
 
+La pestana TDM organiza los controles en secciones seleccionables
+(tipo acordeon) y usa scroll para navegar formularios y paneles con
+mejor legibilidad.
+
 La vista de resultados permite:
 
 - Filtro por tipo (`finding`, `service_mapping`, `table`, `column`, etc.).

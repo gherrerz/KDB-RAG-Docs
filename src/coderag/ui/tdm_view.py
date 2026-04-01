@@ -19,10 +19,12 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
+    QScrollArea,
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
     QTextEdit,
+    QToolBox,
     QVBoxLayout,
     QWidget,
     QApplication,
@@ -50,13 +52,25 @@ class TdmView(QWidget):
         self._on_tdm_synthetic_profile = on_tdm_synthetic_profile
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(16, 16, 16, 16)
-        root.setSpacing(10)
+        root.setContentsMargins(8, 8, 8, 8)
+        root.setSpacing(8)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll_content = QWidget()
+        content = QVBoxLayout(scroll_content)
+        content.setContentsMargins(12, 12, 12, 12)
+        content.setSpacing(10)
+        scroll.setWidget(scroll_content)
+        root.addWidget(scroll)
 
         ingest_group = QGroupBox("TDM Ingest")
         ingest_form = QFormLayout(ingest_group)
         ingest_form.setHorizontalSpacing(12)
         ingest_form.setVerticalSpacing(10)
+        ingest_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
 
         self.source_type = QLineEdit("tdm_folder")
         self.source_type.setMinimumHeight(34)
@@ -76,6 +90,7 @@ class TdmView(QWidget):
         query_form = QFormLayout(query_group)
         query_form.setHorizontalSpacing(12)
         query_form.setVerticalSpacing(10)
+        query_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
 
         self.question = QLineEdit()
         self.question.setMinimumHeight(34)
@@ -137,6 +152,14 @@ class TdmView(QWidget):
 
         planning_actions.addWidget(self.virtualization_button)
         planning_actions.addWidget(self.synthetic_button)
+
+        sections = QToolBox()
+        sections.addItem(ingest_group, "1. Ingesta")
+        sections.addItem(query_group, "2. Contexto de consulta")
+        sections.addItem(query_actions_group, "3. Ejecutar consulta")
+        sections.addItem(catalog_actions_group, "4. Catalogo")
+        sections.addItem(planning_actions_group, "5. Planning")
+        sections.setCurrentIndex(1)
 
         self.status_label = QLabel("inactivo")
         self.status_label.setProperty("role", "status")
@@ -282,21 +305,17 @@ class TdmView(QWidget):
         feedback.addWidget(self.raw)
         feedback.setChildrenCollapsible(False)
         feedback.setStretchFactor(0, 1)
-        feedback.setStretchFactor(1, 2)
+        feedback.setStretchFactor(1, 3)
         feedback.setStretchFactor(2, 2)
-        feedback.setStretchFactor(3, 2)
-        feedback.setSizes([150, 220, 180, 250])
+        feedback.setStretchFactor(3, 1)
+        feedback.setSizes([130, 300, 200, 180])
 
-        root.addWidget(ingest_group)
-        root.addWidget(query_group)
-        root.addWidget(query_actions_group)
-        root.addWidget(catalog_actions_group)
-        root.addWidget(planning_actions_group)
-        root.addLayout(status_row)
-        root.addWidget(table_tools)
-        root.addWidget(self.shortcuts_hint)
-        root.addWidget(self.show_raw)
-        root.addWidget(feedback)
+        content.addWidget(sections)
+        content.addLayout(status_row)
+        content.addWidget(table_tools)
+        content.addWidget(self.shortcuts_hint)
+        content.addWidget(self.show_raw)
+        content.addWidget(feedback)
 
     def _run_tdm_ingest(self) -> None:
         """Build payload and invoke TDM ingest endpoint."""
