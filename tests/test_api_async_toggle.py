@@ -124,6 +124,42 @@ def test_reset_requires_confirmation() -> None:
     assert response.status_code == 400
 
 
+def test_async_ingest_falls_back_to_local_when_redis_unavailable() -> None:
+    """Fallback to local worker when USE_RQ=true but Redis is unavailable."""
+    client = TestClient(server.app)
+    original_use_rq = server.SETTINGS.use_rq
+    original_enqueue_rq = server.enqueue_ingest_job
+    original_enqueue_local = server.enqueue_local_ingest_job
+
+    server.SETTINGS.use_rq = True
+    server.enqueue_ingest_job = (  # type: ignore[assignment]
+        lambda payload: (_ for _ in ()).throw(
+            RuntimeError("Error 10061 connecting to localhost:6379")
+        )
+    )
+    server.enqueue_local_ingest_job = (  # type: ignore[assignment]
+        lambda payload: "local-job-1"
+    )
+
+    try:
+        payload = {
+            "source": {
+                "source_type": "folder",
+                "local_path": "sample_data",
+            }
+        }
+        response = client.post("/sources/ingest/async", json=payload)
+        assert response.status_code == 200
+        body = response.json()
+        assert body["status"] == "queued"
+        assert body["job_id"] == "local-job-1"
+        assert "fallback" in str(body.get("message", "")).casefold()
+    finally:
+        server.SETTINGS.use_rq = original_use_rq
+        server.enqueue_ingest_job = original_enqueue_rq  # type: ignore[assignment]
+        server.enqueue_local_ingest_job = original_enqueue_local  # type: ignore[assignment]
+
+
 def test_reset_clears_ingested_data() -> None:
     """Ensure reset removes indexed content and leaves clean retrieval state."""
     client = TestClient(server.app)
@@ -190,3 +226,38 @@ def test_reset_clears_ingested_data() -> None:
         server.SERVICE.graph_store.replace_edges = original_replace_edges
         server.SERVICE.graph_store.expand_paths = original_expand_paths
         server.SERVICE.graph_store.clear_all_edges = original_clear_all_edges
+
+
+def test_get_job_prefers_rq_status_when_local_state_is_stale() -> None:
+    """Expose live RQ status when local job row is still queued."""
+    client = TestClient(server.app)
+
+    original_use_rq = server.SETTINGS.use_rq
+    original_get_job = server.SERVICE.get_job
+    original_get_rq_job_status = server.get_rq_job_status
+
+    server.SETTINGS.use_rq = True
+    server.SERVICE.get_job = lambda job_id: {
+        "job_id": job_id,
+        "status": "queued",
+        "message": "Ingestion job enqueued",
+        "progress_pct": 0.0,
+        "steps": [],
+    }
+    server.get_rq_job_status = lambda job_id: {
+        "job_id": job_id,
+        "status": "completed",
+        "message": "completed",
+        "progress_pct": 100.0,
+    }
+
+    try:
+        response = client.get("/jobs/job-123")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["status"] == "completed"
+        assert body["progress_pct"] == 100.0
+    finally:
+        server.SETTINGS.use_rq = original_use_rq
+        server.SERVICE.get_job = original_get_job
+        server.get_rq_job_status = original_get_rq_job_status

@@ -22,6 +22,25 @@ from coderag.jobs.queue import (
 )
 
 
+def _is_queue_connection_error(exc: Exception) -> bool:
+    """Return true when async queue failure looks like Redis connectivity."""
+    detail = str(exc).casefold()
+    exc_name = exc.__class__.__name__.casefold()
+    return (
+        "error 10061" in detail
+        or "connection refused" in detail
+        or "connecting to localhost:6379" in detail
+        or (
+            "connection" in exc_name
+            and (
+                "redis" in detail
+                or "localhost:6379" in detail
+                or ":6379" in detail
+            )
+        )
+    )
+
+
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
     """Release service resources when application shuts down."""
@@ -160,8 +179,17 @@ def ingest_source_async(request: IngestionRequest) -> dict[str, str]:
     """Enqueue ingestion job in Redis RQ when enabled."""
     try:
         if SETTINGS.use_rq:
-            job_id = enqueue_ingest_job(request.model_dump())
-            message = "Ingestion job enqueued"
+            try:
+                job_id = enqueue_ingest_job(request.model_dump())
+                message = "Ingestion job enqueued"
+            except Exception as exc:
+                if not _is_queue_connection_error(exc):
+                    raise
+                job_id = enqueue_local_ingest_job(request.model_dump())
+                message = (
+                    "RQ unavailable; ingestion job started "
+                    "(local async worker fallback)"
+                )
         else:
             job_id = enqueue_local_ingest_job(request.model_dump())
             message = "Ingestion job started (local async worker)"
@@ -189,8 +217,23 @@ def ingest_source_async(request: IngestionRequest) -> dict[str, str]:
 def get_job(job_id: str) -> dict[str, Any]:
     """Return ingestion job status."""
     job = SERVICE.get_job(job_id)
-    if job is None and SETTINGS.use_rq:
-        job = get_rq_job_status(job_id)
+
+    if SETTINGS.use_rq:
+        rq_job = get_rq_job_status(job_id)
+        if rq_job is not None:
+            if job is None:
+                return rq_job
+
+            merged = dict(job)
+            merged.update(rq_job)
+
+            # Keep local timeline/progress breadcrumbs when RQ payload lacks them.
+            if "steps" not in merged and "steps" in job:
+                merged["steps"] = job["steps"]
+            if "progress_pct" not in merged and "progress_pct" in job:
+                merged["progress_pct"] = job["progress_pct"]
+            return merged
+
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
     return job
