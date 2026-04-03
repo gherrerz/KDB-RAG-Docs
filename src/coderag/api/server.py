@@ -115,6 +115,111 @@ def readiness() -> dict[str, str]:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
+def _make_check(required: bool, ok: bool, detail: str) -> dict[str, Any]:
+    """Build one normalized dependency check payload."""
+    return {
+        "required": required,
+        "ok": ok,
+        "detail": detail,
+    }
+
+
+def _check_runtime_store() -> dict[str, Any]:
+    """Validate local metadata store readiness used for job tracking."""
+    try:
+        SERVICE.store.get_index_version()
+        return _make_check(True, True, "metadata store reachable")
+    except Exception as exc:
+        return _make_check(True, False, str(exc))
+
+
+def _check_neo4j_runtime() -> dict[str, Any]:
+    """Validate Neo4j connectivity when graph runtime is required."""
+    required = bool(SETTINGS.use_neo4j)
+    if not required:
+        return _make_check(False, True, "USE_NEO4J=false")
+    try:
+        SERVICE.graph_store._get_driver()
+        return _make_check(True, True, "neo4j reachable")
+    except Exception as exc:
+        return _make_check(True, False, str(exc))
+
+
+def _check_redis_runtime() -> dict[str, Any]:
+    """Validate Redis connectivity when async queue mode is enabled."""
+    required = bool(SETTINGS.use_rq)
+    if not required:
+        return _make_check(False, True, "USE_RQ=false")
+
+    try:
+        from redis import Redis
+
+        client = Redis.from_url(
+            SETTINGS.redis_url,
+            socket_connect_timeout=1,
+            socket_timeout=1,
+        )
+        client.ping()
+        return _make_check(True, True, "redis reachable")
+    except Exception as exc:
+        return _make_check(True, False, str(exc))
+
+
+def _check_rq_worker_runtime() -> dict[str, Any]:
+    """Validate that at least one RQ worker is registered when USE_RQ=true."""
+    required = bool(SETTINGS.use_rq)
+    if not required:
+        return _make_check(False, True, "USE_RQ=false")
+
+    try:
+        from redis import Redis
+
+        client = Redis.from_url(
+            SETTINGS.redis_url,
+            socket_connect_timeout=1,
+            socket_timeout=1,
+        )
+        workers = int(client.scard("rq:workers"))
+        if workers > 0:
+            return _make_check(True, True, f"workers={workers}")
+        return _make_check(True, False, "workers=0")
+    except Exception as exc:
+        return _make_check(True, False, str(exc))
+
+
+@app.get(
+    "/sources/ingest/readiness",
+    tags=["ingestion"],
+    summary="Get ingestion readiness diagnostics",
+    description=(
+        "Return operational readiness checks used by UI before running async "
+        "ingestion."
+    ),
+)
+def ingest_readiness() -> dict[str, Any]:
+    """Expose dependency checks for async ingestion mode selection."""
+    checks = {
+        "runtime_store": _check_runtime_store(),
+        "neo4j": _check_neo4j_runtime(),
+        "redis": _check_redis_runtime(),
+        "rq_worker": _check_rq_worker_runtime(),
+    }
+    required_checks_ok = [
+        item["ok"]
+        for item in checks.values()
+        if bool(item.get("required"))
+    ]
+    ready = all(required_checks_ok) if required_checks_ok else True
+    recommendation = "async" if ready else "sync"
+    return {
+        "ready": ready,
+        "recommendation": recommendation,
+        "use_rq": SETTINGS.use_rq,
+        "use_neo4j": SETTINGS.use_neo4j,
+        "checks": checks,
+    }
+
+
 @app.post(
     "/sources/ingest",
     tags=["ingestion"],
@@ -219,7 +324,14 @@ def get_job(job_id: str) -> dict[str, Any]:
     job = SERVICE.get_job(job_id)
 
     if SETTINGS.use_rq:
-        rq_job = get_rq_job_status(job_id)
+        rq_job: dict[str, Any] | None = None
+        try:
+            rq_job = get_rq_job_status(job_id)
+        except Exception as exc:
+            # If Redis is temporarily unavailable, keep local status polling
+            # operational for local async fallback jobs.
+            if not _is_queue_connection_error(exc):
+                raise
         if rq_job is not None:
             if job is None:
                 return rq_job

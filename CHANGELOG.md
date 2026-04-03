@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.3.1] - 2026-04-03
+
+### Added
+- Endpoint operativo `GET /sources/ingest/readiness` para diagnosticar
+	dependencias de ingesta y recomendar modo `async`/`sync`.
+- Selector explicito de modo de ejecucion en Ingestion UI
+	(`Asincrono`/`Sincrono`) con precheck de readiness antes de despachar jobs.
+- Cobertura de regresion para routing de modo de ingesta en UI/API:
+	`tests/test_main_window_ingestion_mode.py` y casos nuevos en
+	`tests/test_api_async_toggle.py` y `tests/test_ingestion_view.py`.
+- Script unificado `scripts/run_release_gates.py` para ejecutar gates
+	`smoke`/`full` de release con preflight, tests y benchmarks.
+
+### Changed
+- `MainWindow.ingest` ahora enruta por `_ingestion_mode`: usa
+	`/sources/ingest` en `sync` y `/sources/ingest/async` en `async`.
+- `IngestionView` cambia automaticamente a `sync` cuando el readiness reporta
+	dependencias async no listas, mostrando detalle tecnico de checks.
+- Documentacion sincronizada en `README.md` y `docs/API_REFERENCE.md` para
+	nuevo endpoint y flujo de modo de ejecucion.
+
+### Fixed
+- `GET /jobs/{job_id}` ya no retorna `500` cuando Redis/RQ no es alcanzable
+	durante polling; ahora preserva estado local para jobs en fallback async.
+
 ## [0.3.0] - 2026-04-01
 
 ### Added

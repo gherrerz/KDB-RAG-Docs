@@ -30,6 +30,7 @@ de la red puede consumirse usando la IP del host.
 | Readiness | GET | `/readiness` | `readiness` | `SERVICE.store.get_index_version` | N/A | `{"status": "ready"}` |
 | Ingestion sync | POST | `/sources/ingest` | `ingest_source` | `SERVICE.ingest` | `IngestionRequest` | `dict` (estado de job + metricas) |
 | Ingestion async | POST | `/sources/ingest/async` | `ingest_source_async` | `enqueue_ingest_job` o `enqueue_local_ingest_job` | `IngestionRequest` | `{"job_id", "status", "message"}` |
+| Ingestion readiness | GET | `/sources/ingest/readiness` | `ingest_readiness` | checks runtime + Neo4j + Redis + RQ worker | N/A | `{"ready", "recommendation", "checks"}` |
 | Job status | GET | `/jobs/{job_id}` | `get_job` | `SERVICE.get_job` y fallback `get_rq_job_status` | `job_id` en path | `dict` (estado + timeline) |
 | Full reset | POST | `/sources/reset` | `reset_sources` | `SERVICE.reset_all` | `ResetAllRequest` | `ResetAllResponse` |
 | Query | POST | `/query` | `query` | `SERVICE.query` | `QueryRequest` | `QueryResponse` |
@@ -260,6 +261,43 @@ Codigos comunes:
 
 - `200`: job encontrado.
 - `404`: job inexistente.
+
+## GET /sources/ingest/readiness
+
+Expone readiness operativo para decidir entre ingesta `async` o `sync`.
+
+Response (shape):
+
+```json
+{
+  "ready": true,
+  "recommendation": "async",
+  "use_rq": true,
+  "use_neo4j": true,
+  "checks": {
+    "runtime_store": {
+      "required": true,
+      "ok": true,
+      "detail": "metadata store reachable"
+    },
+    "neo4j": {
+      "required": true,
+      "ok": true,
+      "detail": "neo4j reachable"
+    },
+    "redis": {
+      "required": true,
+      "ok": true,
+      "detail": "redis reachable"
+    },
+    "rq_worker": {
+      "required": true,
+      "ok": true,
+      "detail": "workers=1"
+    }
+  }
+}
+```
 
 ## POST /sources/reset
 

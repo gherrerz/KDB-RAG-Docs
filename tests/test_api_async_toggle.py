@@ -261,3 +261,88 @@ def test_get_job_prefers_rq_status_when_local_state_is_stale() -> None:
         server.SETTINGS.use_rq = original_use_rq
         server.SERVICE.get_job = original_get_job
         server.get_rq_job_status = original_get_rq_job_status
+
+
+def test_get_job_keeps_local_status_when_rq_is_unreachable() -> None:
+    """Avoid 500 in /jobs when Redis is unavailable during RQ lookup."""
+    client = TestClient(server.app)
+
+    original_use_rq = server.SETTINGS.use_rq
+    original_get_job = server.SERVICE.get_job
+    original_get_rq_job_status = server.get_rq_job_status
+
+    server.SETTINGS.use_rq = True
+    server.SERVICE.get_job = lambda job_id: {
+        "job_id": job_id,
+        "status": "running",
+        "message": "local async worker",
+        "progress_pct": 10.0,
+        "steps": [],
+    }
+    server.get_rq_job_status = (  # type: ignore[assignment]
+        lambda job_id: (_ for _ in ()).throw(
+            RuntimeError("Error 10061 connecting to localhost:6379")
+        )
+    )
+
+    try:
+        response = client.get("/jobs/local-job")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["job_id"] == "local-job"
+        assert body["status"] == "running"
+        assert body["message"] == "local async worker"
+    finally:
+        server.SETTINGS.use_rq = original_use_rq
+        server.SERVICE.get_job = original_get_job
+        server.get_rq_job_status = original_get_rq_job_status
+
+
+def test_ingest_readiness_reports_sync_recommendation_when_async_unready() -> None:
+    """Return recommendation=sync when required async dependencies fail."""
+    client = TestClient(server.app)
+
+    original_use_rq = server.SETTINGS.use_rq
+    original_use_neo4j = server.SETTINGS.use_neo4j
+    original_runtime_check = server._check_runtime_store
+    original_neo4j_check = server._check_neo4j_runtime
+    original_redis_check = server._check_redis_runtime
+    original_worker_check = server._check_rq_worker_runtime
+
+    server.SETTINGS.use_rq = True
+    server.SETTINGS.use_neo4j = True
+    server._check_runtime_store = lambda: {
+        "required": True,
+        "ok": True,
+        "detail": "metadata store reachable",
+    }
+    server._check_neo4j_runtime = lambda: {
+        "required": True,
+        "ok": False,
+        "detail": "Neo4j connectivity check failed.",
+    }
+    server._check_redis_runtime = lambda: {
+        "required": True,
+        "ok": True,
+        "detail": "redis reachable",
+    }
+    server._check_rq_worker_runtime = lambda: {
+        "required": True,
+        "ok": True,
+        "detail": "workers=1",
+    }
+
+    try:
+        response = client.get("/sources/ingest/readiness")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["ready"] is False
+        assert body["recommendation"] == "sync"
+        assert body["checks"]["neo4j"]["ok"] is False
+    finally:
+        server.SETTINGS.use_rq = original_use_rq
+        server.SETTINGS.use_neo4j = original_use_neo4j
+        server._check_runtime_store = original_runtime_check
+        server._check_neo4j_runtime = original_neo4j_check
+        server._check_redis_runtime = original_redis_check
+        server._check_rq_worker_runtime = original_worker_check

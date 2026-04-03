@@ -110,3 +110,31 @@ def test_ingestion_view_toggles_raw_output_visibility() -> None:
 
     view._toggle_raw_output(True)
     assert not view.output.isHidden()
+
+
+def test_ingestion_view_mode_selector_defaults_to_async() -> None:
+    """Expose explicit ingestion mode selector with async as default."""
+    view = _build_view()
+
+    assert str(view.execution_mode.currentData()) == "async"
+    assert view.execution_mode.count() == 2
+
+
+def test_ingestion_view_async_readiness_helpers() -> None:
+    """Format readiness payload and detect not-ready async conditions."""
+    payload = {
+        "ready": False,
+        "recommendation": "sync",
+        "checks": {
+            "redis": {
+                "required": True,
+                "ok": False,
+                "detail": "connection refused",
+            }
+        },
+    }
+
+    assert IngestionView._is_async_ready(payload) is False
+    rendered = IngestionView._format_async_readiness(payload)
+    assert "recommendation: sync" in rendered
+    assert "redis" in rendered

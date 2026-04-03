@@ -34,6 +34,8 @@ Checklist operativo para validar la experiencia UI antes de publicar una version
 
 ## 5. Regresion minima recomendada
 
+- Ejecutar gate smoke unificado:
+  - `.venv\Scripts\python.exe scripts\run_release_gates.py --mode smoke`
 - Ejecutar pruebas UI:
   - `.venv\Scripts\python.exe -m pytest -q tests/test_query_view.py tests/test_ingestion_view.py tests/test_evidence_view.py`
 - Ejecutar regresion completa:

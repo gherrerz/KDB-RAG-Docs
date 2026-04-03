@@ -9,6 +9,7 @@ from PySide6.QtCore import QObject, QThread, Signal, Slot, Qt
 from PySide6.QtGui import QKeySequence, QRegularExpressionValidator, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
+    QComboBox,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -64,10 +65,12 @@ class IngestionView(QWidget):
         self,
         on_ingest: Callable[[dict, Callable[[dict], None] | None], dict],
         on_reset_all: Callable[[], dict],
+        on_ingestion_readiness: Callable[[], dict] | None = None,
     ) -> None:
         super().__init__()
         self._on_ingest = on_ingest
         self._on_reset_all = on_reset_all
+        self._on_ingestion_readiness = on_ingestion_readiness
         self._ingest_thread: QThread | None = None
         self._ingest_worker: _IngestionWorker | None = None
 
@@ -82,6 +85,11 @@ class IngestionView(QWidget):
 
         self.source_type = QLineEdit("folder")
         self.source_type.setMinimumHeight(34)
+        self.execution_mode = QComboBox()
+        self.execution_mode.setMinimumHeight(34)
+        self.execution_mode.addItem("Asincrono (cola + jobs)", "async")
+        self.execution_mode.addItem("Sincrono (directo)", "sync")
+        self.execution_mode.setCurrentIndex(0)
         self.local_path = QLineEdit("sample_data")
         self.local_path.setMinimumHeight(34)
         self.local_path.setClearButtonEnabled(True)
@@ -97,6 +105,10 @@ class IngestionView(QWidget):
         self.source_type.setToolTip(
             "Use 'folder' para archivos locales o 'confluence' para ingesta API."
         )
+        self.execution_mode.setToolTip(
+            "Asincrono requiere cola operativa; Sincrono ejecuta ingesta en "
+            "la llamada HTTP sin polling de jobs."
+        )
         self.local_path.setPlaceholderText("sample_data o C:/ruta/a/documentos")
         self.local_path.setToolTip("Obligatorio para ingesta de tipo folder.")
         self.base_url.setPlaceholderText("https://company.atlassian.net/wiki")
@@ -111,6 +123,7 @@ class IngestionView(QWidget):
         self.source_type.setValidator(QRegularExpressionValidator(source_pattern))
 
         form_layout.addRow("Tipo de fuente", self.source_type)
+        form_layout.addRow("Modo de ejecucion", self.execution_mode)
         form_layout.addRow("Ruta local", self.local_path)
         form_layout.addRow("URL base", self.base_url)
         form_layout.addRow("Token", self.token)
@@ -206,10 +219,27 @@ class IngestionView(QWidget):
                 "base_url": self.base_url.text().strip() or None,
                 "token": self.token.text().strip() or None,
                 "filters": self._safe_json(self.filters.text().strip()),
-            }
+            },
+            "_ingestion_mode": str(self.execution_mode.currentData() or "async"),
         }
+
+        execution_mode = str(payload.get("_ingestion_mode") or "async")
+        if execution_mode == "async" and self._on_ingestion_readiness is not None:
+            readiness = self._on_ingestion_readiness()
+            if not self._is_async_ready(readiness):
+                self.execution_mode.setCurrentIndex(1)
+                payload["_ingestion_mode"] = "sync"
+                self.summary.setPlainText(
+                    "Estado: en curso\n"
+                    "Dependencias async no listas; se ejecutara en modo sincrono."
+                )
+                self.output.setPlainText(self._format_async_readiness(readiness))
+        selected_mode = str(payload.get("_ingestion_mode") or "async")
+        dispatch_message = "Enviando job de ingesta..."
+        if selected_mode == "sync":
+            dispatch_message = "Ejecutando ingesta sincrona..."
         self.summary.setPlainText(
-            "Estado: en curso\nEnviando job de ingesta..."
+            f"Estado: en curso\n{dispatch_message}"
         )
         self.progress.setValue(0)
         self._set_status("running")
@@ -447,6 +477,35 @@ class IngestionView(QWidget):
         self.status_badge.style().unpolish(self.status_badge)
         self.status_badge.style().polish(self.status_badge)
         self.status_badge.update()
+
+    @staticmethod
+    def _is_async_ready(payload: dict) -> bool:
+        """Return True when async ingestion dependencies are reported ready."""
+        ready = payload.get("ready")
+        if isinstance(ready, bool):
+            return ready
+        return False
+
+    @staticmethod
+    def _format_async_readiness(payload: dict) -> str:
+        """Format readiness payload for operator-facing technical output."""
+        checks = payload.get("checks") if isinstance(payload, dict) else None
+        lines = ["Readiness de ingesta asincrona:"]
+        lines.append(f"- ready: {payload.get('ready')}")
+        lines.append(
+            f"- recommendation: {payload.get('recommendation', 'sync')}"
+        )
+        if isinstance(checks, dict):
+            for name, value in checks.items():
+                if not isinstance(value, dict):
+                    continue
+                lines.append(
+                    "- "
+                    f"{name}: ok={value.get('ok')} "
+                    f"required={value.get('required')} "
+                    f"detail={value.get('detail', '')}"
+                )
+        return "\n".join(lines)
 
     @staticmethod
     def _localize_status(status: str) -> str:

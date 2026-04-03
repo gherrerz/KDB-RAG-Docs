@@ -71,7 +71,14 @@ class MainWindow(QMainWindow):
         self.setStyleSheet(build_stylesheet())
 
         tabs = QTabWidget()
-        tabs.addTab(IngestionView(self.ingest, self.reset_all), "Ingestion")
+        tabs.addTab(
+            IngestionView(
+                self.ingest,
+                self.reset_all,
+                on_ingestion_readiness=self.ingest_readiness,
+            ),
+            "Ingestion",
+        )
         tabs.addTab(QueryView(self.query), "Query")
         tabs.addTab(
             TdmView(
@@ -96,7 +103,7 @@ class MainWindow(QMainWindow):
         payload: Dict[str, Any],
         on_update: Optional[Callable[[Dict[str, Any]], None]] = None,
     ) -> Dict[str, Any]:
-        """Run ingestion through async endpoint and poll live progress."""
+        """Run ingestion in selected mode and poll when async is used."""
         try:
             prepared_payload, preflight_update = _prepare_ingestion_payload(payload)
         except (ValueError, FileNotFoundError, NotADirectoryError, OSError) as exc:
@@ -115,6 +122,15 @@ class MainWindow(QMainWindow):
 
         if on_update is not None and preflight_update is not None:
             on_update(preflight_update)
+
+        execution_mode = str(
+            prepared_payload.pop("_ingestion_mode", "async")
+        ).strip().lower()
+        if execution_mode not in {"async", "sync"}:
+            execution_mode = "async"
+
+        if execution_mode == "sync":
+            return self._post_json("/sources/ingest", prepared_payload, timeout=3600)
 
         async_response = self._post_json(
             "/sources/ingest/async", prepared_payload, timeout=15
@@ -137,6 +153,10 @@ class MainWindow(QMainWindow):
         if isinstance(poll_result, dict):
             poll_result.setdefault("job_id", job_id)
         return poll_result
+
+    def ingest_readiness(self) -> Dict[str, Any]:
+        """Fetch operational readiness details for async ingestion mode."""
+        return self._get_json("/sources/ingest/readiness", timeout=10)
 
     def query(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Call backend query endpoint."""

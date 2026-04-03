@@ -108,8 +108,10 @@ python run_ui.py
 
 3. En la UI, pestaña Ingestion:
 - `Source Type`: `folder`
+- `Modo de ejecucion`: `Asincrono (cola + jobs)` o `Sincrono (directo)`
 - `Local Path`: [sample_data](sample_data/)
 - Click en `Ingest`
+- Si modo async no esta listo, la UI recomienda/usa modo sync para evitar bloqueo.
 
 4. En la pestaña Query, preguntar por ejemplo:
 - `Who works on Project Atlas?`
@@ -150,6 +152,7 @@ python run_ui.py
 - `POST /sources/ingest`
 - `POST /sources/reset`
 - `POST /sources/ingest/async`
+- `GET /sources/ingest/readiness`
 - `GET /jobs/{id}`
 - `POST /query`
 - `POST /query/retrieval`
@@ -255,6 +258,18 @@ En Windows (recomendado en este repo):
 .venv\Scripts\python.exe -m pytest -q
 ```
 
+Gate unificado de release (preflight + regresion smoke):
+
+```bash
+.venv\Scripts\python.exe scripts\run_release_gates.py --mode smoke
+```
+
+Gate full (incluye regresion completa y benchmarks de release):
+
+```bash
+.venv\Scripts\python.exe scripts\run_release_gates.py --mode full
+```
+
 Preflight de release (compatibilidad legacy + readiness TDM):
 
 ```bash
@@ -289,6 +304,13 @@ minimos en respuesta/evidencia):
 Nota: este perfil requiere tener previamente ingerido el corpus de Gobierno de
 Datos en la fuente activa. Si el `source_id` activo solo contiene
 [sample_data](sample_data/), el gate fallara por `required_answer_terms_hit`.
+
+Tip: si ejecutas `--mode full` sobre `sample_data`, puedes evitar falsos
+negativos en benchmark usando:
+
+```bash
+.venv\Scripts\python.exe scripts\run_release_gates.py --mode full --skip-benchmarks
+```
 
 Artefactos de salida del benchmark:
 - [docs/benchmarks/complex_queries.json](docs/benchmarks/complex_queries.json) (casos)
