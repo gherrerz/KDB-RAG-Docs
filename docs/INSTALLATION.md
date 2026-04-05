@@ -60,8 +60,14 @@ Para ejecutar API/UI locales, levanta primero la infraestructura.
 
 Imagenes usadas por `docker-compose.yml`:
 
-- `neo4j:5` (obligatorio)
-- `redis:7-alpine` (opcional, solo async con RQ)
+- `neo4j:5.24.0` (obligatorio)
+- `redis:7.2.4-alpine` (opcional, solo async con RQ)
+
+Antes de levantar compose, define password de Neo4j (evita defaults inseguros):
+
+```powershell
+$env:NEO4J_PASSWORD="<neo4j-password-seguro>"
+```
 
 Descarga recomendada previa de imagenes:
 
@@ -83,14 +89,17 @@ docker compose up -d neo4j redis
 
 Puertos esperados:
 
-- Neo4j Browser: `http://localhost:7474`
-- Neo4j Bolt: `localhost:7687`
-- Redis: `localhost:6379`
+- Neo4j Browser: `http://127.0.0.1:7474`
+- Neo4j Bolt: `127.0.0.1:7687`
+- Redis: `127.0.0.1:6379`
+
+Nota: Redis y Neo4j quedan bind a localhost por defecto en compose para
+reducir exposicion de red en desarrollo.
 
 Credenciales por defecto en compose:
 
 - Neo4j user: `neo4j`
-- Neo4j password: `password`
+- Neo4j password: valor de `NEO4J_PASSWORD`
 
 ## 5. Run API
 

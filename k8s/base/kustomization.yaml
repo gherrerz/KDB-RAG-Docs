@@ -4,9 +4,9 @@ namespace: coderag
 resources:
   - namespace.yaml
   - configmap-app.yaml
+  - networkpolicy.yaml
   - pvc-data.yaml
   - deployment-api.yaml
   - service-api.yaml
   - deployment-worker.yaml
-# Optional in production ingress controllers.
-# - ingress-api.yaml
+  - ingress-api.yaml

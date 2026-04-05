@@ -57,6 +57,36 @@ spec:
           volumeMounts:
             - name: app-data
               mountPath: /data
+          startupProbe:
+            exec:
+              command:
+                - python
+                - -c
+                - import os; from redis import Redis; Redis.from_url(os.getenv('REDIS_URL', 'redis://redis:6379/0')).ping()
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 12
+          readinessProbe:
+            exec:
+              command:
+                - python
+                - -c
+                - import os; from redis import Redis; Redis.from_url(os.getenv('REDIS_URL', 'redis://redis:6379/0')).ping()
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            exec:
+              command:
+                - python
+                - -c
+                - import os; from redis import Redis; Redis.from_url(os.getenv('REDIS_URL', 'redis://redis:6379/0')).ping()
+            initialDelaySeconds: 20
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
           resources:
             requests:
               cpu: 150m

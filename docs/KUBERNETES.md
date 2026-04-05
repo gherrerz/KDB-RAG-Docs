@@ -19,11 +19,12 @@ Directorio `k8s/`:
 - `k8s/base/namespace.yaml`
 - `k8s/base/configmap-app.yaml`
 - `k8s/base/secret-app.example.yaml`
+- `k8s/base/networkpolicy.yaml`
 - `k8s/base/pvc-data.yaml`
 - `k8s/base/deployment-api.yaml`
 - `k8s/base/service-api.yaml`
 - `k8s/base/deployment-worker.yaml`
-- `k8s/base/ingress-api.yaml` (opcional)
+- `k8s/base/ingress-api.yaml` (TLS habilitado)
 - `k8s/base/kustomization.yaml`
 - `k8s/overlays/dev/kustomization.yaml`
 - `k8s/overlays/prod/kustomization.yaml`
@@ -61,7 +62,8 @@ imagen local (`docker build -t kdb-rag-docs:latest .`).
 ## Configuracion de secretos
 
 1. Copia `k8s/base/secret-app.example.yaml` a un archivo local no versionado.
-2. Completa credenciales reales.
+2. Completa credenciales reales (en especial `NEO4J_PASSWORD`, no usar
+  placeholders como `REPLACE_ME`).
 3. Aplica el secreto antes del deploy:
 
 ```powershell
@@ -96,6 +98,18 @@ El overlay `dev` incluye dependencias in-cluster:
 - Redis (Service `redis`)
 - Neo4j (Service `neo4j`)
 
+El baseline `base` aplica tambien:
+
+- NetworkPolicy para limitar trafico entre `api`/`worker` y `redis`/`neo4j`.
+- Ingress con redireccion HTTPS y `tls.secretName=coderag-api-tls`.
+
+Si no usas cert-manager, crea el secret TLS manualmente:
+
+```powershell
+kubectl create secret tls coderag-api-tls --namespace coderag \
+  --cert=<ruta-cert.pem> --key=<ruta-key.pem>
+```
+
 Verifica estado:
 
 ```powershell
@@ -107,6 +121,9 @@ kubectl get svc -n coderag
 
 - Liveness probe: `GET /health`
 - Readiness probe: `GET /readiness`
+- Worker: startup/readiness/liveness probe via ping a Redis URL activa.
+- Overlay `dev`: Redis y Neo4j incluyen probes y recursos base para mejorar
+  estabilidad operativa.
 
 Si haces port-forward:
 

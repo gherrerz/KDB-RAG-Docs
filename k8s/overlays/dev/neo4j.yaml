@@ -20,15 +20,48 @@ spec:
         fsGroup: 7474
       containers:
         - name: neo4j
-          image: neo4j:5
+          image: neo4j:5.24.0
           ports:
             - containerPort: 7474
               name: http
             - containerPort: 7687
               name: bolt
           env:
+            - name: NEO4J_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: coderag-app-secrets
+                  key: NEO4J_PASSWORD
             - name: NEO4J_AUTH
-              value: neo4j/password
+              value: neo4j/$(NEO4J_PASSWORD)
+          startupProbe:
+            tcpSocket:
+              port: bolt
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 12
+          readinessProbe:
+            tcpSocket:
+              port: bolt
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            tcpSocket:
+              port: bolt
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: 2
+              memory: 3Gi
           volumeMounts:
             - name: neo4j-data
               mountPath: /data

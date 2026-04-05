@@ -2,6 +2,7 @@ services:
   api:
     build: .
     container_name: kdb-rag-docs-api
+    restart: unless-stopped
     ports:
       - "8000:8000"
     volumes:
@@ -15,14 +16,34 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - NEO4J_URI=bolt://neo4j:7687
       - NEO4J_USER=neo4j
-      - NEO4J_PASSWORD=password
+      - NEO4J_PASSWORD=${NEO4J_PASSWORD:?Set NEO4J_PASSWORD}
     depends_on:
-      - redis
-      - neo4j
+      redis:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
 
   worker:
     build: .
     container_name: kdb-rag-docs-worker
+    restart: unless-stopped
     command: rq worker --url redis://redis:6379/0 ingestion
     volumes:
       - ./:/app
@@ -35,21 +56,70 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - NEO4J_URI=bolt://neo4j:7687
       - NEO4J_USER=neo4j
-      - NEO4J_PASSWORD=password
+      - NEO4J_PASSWORD=${NEO4J_PASSWORD:?Set NEO4J_PASSWORD}
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import os; from redis import Redis; Redis.from_url(os.getenv('REDIS_URL', 'redis://redis:6379/0')).ping()",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
 
   redis:
-    image: redis:7-alpine
+    image: redis:7.2.4-alpine
     container_name: kdb-rag-docs-redis
+    restart: unless-stopped
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
 
   neo4j:
-    image: neo4j:5
+    image: neo4j:5.24.0
     container_name: kdb-rag-docs-neo4j
+    restart: unless-stopped
     ports:
-      - "7474:7474"
-      - "7687:7687"
+      - "127.0.0.1:7474:7474"
+      - "127.0.0.1:7687:7687"
     environment:
-      - NEO4J_AUTH=neo4j/password
+      - NEO4J_PASSWORD=${NEO4J_PASSWORD:?Set NEO4J_PASSWORD}
+      - NEO4J_AUTH=neo4j/${NEO4J_PASSWORD:?Set NEO4J_PASSWORD}
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "cypher-shell -a bolt://localhost:7687 -u neo4j -p \"$${NEO4J_PASSWORD}\" \"RETURN 1\" >/dev/null 2>&1",
+        ]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"

@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.3.2] - 2026-04-05
+
+### Added
+- `HEALTHCHECK` en imagen API (`Dockerfile`) para validar `GET /health`.
+- Healthchecks, politicas `restart`, y rotacion de logs en
+	`docker-compose.yml` para `api`, `worker`, `redis` y `neo4j`.
+- Probes y recursos para Redis/Neo4j en `k8s/overlays/dev`.
+- Startup/readiness/liveness probe para `coderag-worker` en Kubernetes.
+- `k8s/base/networkpolicy.yaml` con politicas de red para `api`, `worker`,
+	`redis` y `neo4j`.
+
+### Changed
+- `docker-compose.yml` ahora usa `NEO4J_PASSWORD` por variable de entorno
+	en lugar de password fija en texto plano.
+- Puertos de infraestructura en compose (`redis`, `neo4j`) ahora quedan
+	bind a `127.0.0.1` por defecto para reducir exposicion en dev.
+- Pinning de imagenes en runtime:
+	- `python:3.12.3-slim` en `Dockerfile`
+	- `redis:7.2.4-alpine` en compose/dev overlay
+	- `neo4j:5.24.0` en compose/dev overlay
+- Plantilla `k8s/base/secret-app.example.yaml` reemplaza password por
+	placeholder `REPLACE_ME`.
+- Ingress base ahora incluye TLS (`coderag-api-tls`) y redireccion HTTPS.
+- Documentacion de instalacion y Kubernetes actualizada para nuevos
+	requisitos de seguridad/operacion.
+
 ## [0.3.1] - 2026-04-03
 
 ### Added
