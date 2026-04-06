@@ -104,7 +104,7 @@ Credenciales por defecto en compose:
 ## 5. Run API
 
 ```powershell
-python run_api.py
+python src/main.py
 ```
 
 Verificacion rapida:
@@ -118,7 +118,7 @@ Verificacion rapida:
 En otra terminal (con `.venv` activa):
 
 ```powershell
-python run_ui.py
+python src/run_ui.py
 ```
 
 ## 7. Optional async worker

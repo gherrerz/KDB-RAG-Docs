@@ -2,7 +2,7 @@
 
 ## API docs entrypoints
 
-Con el backend levantado con [run_api.py](../run_api.py), la API local expone:
+Con el backend levantado con [src/main.py](../src/main.py), la API local expone:
 
 - Base URL local: `http://127.0.0.1:8000`
 - Base URL alternativa: `http://localhost:8000`

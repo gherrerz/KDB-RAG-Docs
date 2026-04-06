@@ -97,13 +97,13 @@ pip install -r requirements.txt
 1. Iniciar API:
 
 ```bash
-python run_api.py
+python src/main.py
 ```
 
 2. Iniciar UI en otra terminal:
 
 ```bash
-python run_ui.py
+python src/run_ui.py
 ```
 
 3. En la UI, pestaña Ingestion:

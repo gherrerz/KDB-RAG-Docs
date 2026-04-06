@@ -118,7 +118,7 @@ function Start-Services {
         [switch]$StartRQWorker
     )
 
-    $api = Start-Process -FilePath $PythonExe -ArgumentList @("run_api.py") -WorkingDirectory $RepoRoot -PassThru
+    $api = Start-Process -FilePath $PythonExe -ArgumentList @("src/main.py") -WorkingDirectory $RepoRoot -PassThru
     Write-Host ("API iniciada. PID={0}" -f $api.Id)
 
     Start-Sleep -Seconds 2
@@ -148,7 +148,7 @@ with urllib.request.urlopen(url, timeout=8) as response:
     }
 
     if ($StartUI) {
-        $ui = Start-Process -FilePath $PythonExe -ArgumentList @("run_ui.py") -WorkingDirectory $RepoRoot -PassThru
+        $ui = Start-Process -FilePath $PythonExe -ArgumentList @("src/run_ui.py") -WorkingDirectory $RepoRoot -PassThru
         Write-Host ("UI iniciada. PID={0}" -f $ui.Id)
     }
 }

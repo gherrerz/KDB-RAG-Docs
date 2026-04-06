@@ -8,7 +8,15 @@ from typing import List, Optional, Sequence, Tuple
 
 import chromadb
 from chromadb.api.models.Collection import Collection
-from chromadb.errors import InvalidCollectionException, InvalidDimensionException
+from chromadb import errors as chroma_errors
+
+InvalidDimensionException = chroma_errors.InvalidDimensionException
+InvalidArgumentError = getattr(chroma_errors, "InvalidArgumentError", ValueError)
+InvalidCollectionException = getattr(
+    chroma_errors,
+    "InvalidCollectionException",
+    chroma_errors.NotFoundError,
+)
 
 from coderag.core.models import ChunkRecord
 from coderag.core.settings import SETTINGS
@@ -147,7 +155,11 @@ class ChromaVectorIndex:
 
         try:
             _upsert_all()
-        except (InvalidDimensionException, InvalidCollectionException):
+        except (
+            InvalidDimensionException,
+            InvalidArgumentError,
+            InvalidCollectionException,
+        ):
             # Auto-heal when persisted collection was created with another
             # embedding dimensionality or when a stale collection handle was
             # invalidated by another process.
@@ -192,7 +204,11 @@ class ChromaVectorIndex:
             if source_id:
                 params["where"] = {"source_id": source_id}
             payload = self._collection.query(**params)
-        except (InvalidDimensionException, InvalidCollectionException):
+        except (
+            InvalidDimensionException,
+            InvalidArgumentError,
+            InvalidCollectionException,
+        ):
             return []
 
         ids = payload.get("ids", [[]])
@@ -224,7 +240,7 @@ class ChromaVectorIndex:
         """Delete and recreate active collection to reset dimensionality."""
         try:
             self._client.delete_collection(name=SETTINGS.chroma_collection)
-        except ValueError:
+        except (ValueError, InvalidCollectionException):
             # Chroma raises when the collection is already missing; reset must
             # stay idempotent for API/UI flows.
             pass

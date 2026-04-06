@@ -25,6 +25,9 @@
 - Ingress base ahora incluye TLS (`coderag-api-tls`) y redireccion HTTPS.
 - Documentacion de instalacion y Kubernetes actualizada para nuevos
 	requisitos de seguridad/operacion.
+- Dependencia `chromadb` actualizada a `1.5.5` y capa de compatibilidad
+	de excepciones en `index_chroma` para soportar API 0.x/1.x sin warnings
+	deprecados de Pydantic en tests/runtime.
 
 ## [0.3.1] - 2026-04-03
 
@@ -278,7 +281,7 @@
 - Robustez de persistencia post-restart: rutas relativas de `workspace_dir`,
 	`data_dir` y `CHROMA_PERSIST_DIR` ahora se normalizan a absolutas contra el
 	root del repositorio para evitar drift entre procesos API/UI.
-- `run_api.py` y `run_ui.py` fijan CWD al root del repositorio al iniciar,
+- `src/main.py` y `src/run_ui.py` fijan CWD al root del repositorio al iniciar,
 	reduciendo inconsistencias cuando se ejecutan desde otras carpetas.
 - Diagnostico de ingesta por carpeta reforzado: ahora diferencia entre ruta
 	no encontrada, ruta no directorio y carpeta sin extensiones soportadas,
