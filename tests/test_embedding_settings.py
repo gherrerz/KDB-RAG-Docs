@@ -50,6 +50,68 @@ def test_embedding_provider_requires_credentials() -> None:
         settings.require_embedding_provider_configured()
 
 
+def test_vertex_provider_requires_service_account_credentials() -> None:
+    """Reject Vertex provider when service-account credentials are missing."""
+    settings = Settings(
+        llm_provider="vertex",
+        vertex_project_id="project-id",
+        vertex_service_account_json=None,
+    )
+    with pytest.raises(RuntimeError):
+        settings.require_embedding_provider_configured()
+
+
+def test_vertex_provider_is_configured_with_service_account_json() -> None:
+    """Accept Vertex provider when project and service account are set."""
+    settings = Settings(
+        llm_provider="vertex",
+        vertex_project_id="project-id",
+        vertex_service_account_json=(
+            '{"client_email":"svc@test","private_key":"abc",'
+            '"token_uri":"https://oauth2.googleapis.com/token"}'
+        ),
+    )
+    assert settings.require_embedding_provider_configured() == "vertex"
+
+
+def test_vertex_labels_defaults_are_available() -> None:
+    """Expose default Vertex labels used for request attribution."""
+    settings = Settings()
+    labels = settings.resolve_vertex_labels()
+
+    assert labels["service"] == "webspec-coipo"
+    assert labels["service_account"] == "qa-anthos"
+    assert labels["model_name"] == "gemini-2.0-flash-001"
+    assert labels["use_case_id"] == "tbd"
+
+
+def test_vertex_labels_are_normalized_from_env_values() -> None:
+    """Normalize label values to lowercase API-safe tokens."""
+    settings = Settings(
+        vertex_label_service="Web Spec Coipo",
+        vertex_label_service_account="QA Anthos",
+        vertex_label_model_name="Gemini 2.0 Flash 001",
+        vertex_label_use_case_id="Use Case 01",
+    )
+    labels = settings.resolve_vertex_labels()
+
+    assert labels["service"] == "web-spec-coipo"
+    assert labels["service_account"] == "qa-anthos"
+    assert labels["model_name"] == "gemini-2.0-flash-001"
+    assert labels["use_case_id"] == "use-case-01"
+
+
+def test_vertex_labels_use_dynamic_model_override() -> None:
+    """Prefer operation model name when resolving Vertex model label."""
+    settings = Settings(
+        vertex_label_model_name="configured-static-model",
+    )
+
+    labels = settings.resolve_vertex_labels(model_name="text-embedding-005")
+
+    assert labels["model_name"] == "text-embedding-005"
+
+
 def test_chroma_must_be_enabled_in_runtime() -> None:
     """Fail fast when vector runtime is not configured for Chroma."""
     settings = Settings(use_chroma=False)

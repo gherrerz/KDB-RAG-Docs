@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.3.3] - 2026-04-09
+
+### Added
+- Nueva capa de autenticacion Vertex en
+	`src/coderag/core/vertex_auth.py` con OAuth bearer token basado en
+	`VERTEX_SERVICE_ACCOUNT_JSON`.
+- Soporte de labels configurables para requests Vertex (answer + embeddings)
+	via `VERTEX_LABEL_SERVICE`, `VERTEX_LABEL_SERVICE_ACCOUNT`,
+	`VERTEX_LABEL_MODEL_NAME` y `VERTEX_LABEL_USE_CASE_ID`.
+- Cobertura de pruebas para auth/labels Vertex en
+	`tests/test_vertex_auth_and_labels.py` y casos nuevos en
+	`tests/test_embedding_settings.py`.
+
+### Changed
+- Migracion de llamadas Vertex para eliminar API key en query params y usar
+	`Authorization: Bearer <token>` en:
+	- `src/coderag/llm/providerlmm_client.py`
+	- `src/coderag/ingestion/embedding.py`
+- Contrato de configuracion Vertex actualizado para requerir
+	`VERTEX_SERVICE_ACCOUNT_JSON` + `VERTEX_PROJECT_ID`.
+- Plantillas `.env`, manifests Kubernetes y documentacion (`README`,
+	`docs/CONFIGURATION.md`, `docs/INSTALLATION.md`,
+	`docs/KUBERNETES.md`, `docs/API_REFERENCE.md`) alineadas al nuevo esquema.
+- `gcp_credentials_vertex.json` (y variantes) agregado a `.gitignore` para
+	uso local de ejemplo sin versionar secretos.
+
 ## [0.3.2] - 2026-04-05
 
 ### Added

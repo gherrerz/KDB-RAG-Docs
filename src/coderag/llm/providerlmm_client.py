@@ -11,6 +11,7 @@ import requests
 
 from coderag.core.models import ChunkRecord
 from coderag.core.settings import SETTINGS
+from coderag.core.vertex_auth import build_vertex_request_headers
 from coderag.llm.prompts import build_answer_prompt
 
 LOGGER = logging.getLogger(__name__)
@@ -318,22 +319,22 @@ class ProviderLlmClient:
         question: str,
         context: str,
     ) -> str | None:
-        """Call Vertex AI endpoint with API key when configured."""
+        """Call Vertex AI endpoint using service-account OAuth credentials."""
         if (
-            not SETTINGS.vertex_ai_api_key
-            or not SETTINGS.vertex_project_id
+            not SETTINGS.vertex_project_id
+            or not SETTINGS.vertex_service_account_json
         ):
             return None
 
         model = SETTINGS.vertex_answer_model
         location = SETTINGS.vertex_location
         project_id = SETTINGS.vertex_project_id
+        labels = SETTINGS.resolve_vertex_labels(model_name=model)
         url = (
             "https://"
             f"{location}-aiplatform.googleapis.com/v1/projects/{project_id}"
             "/locations/"
             f"{location}/publishers/google/models/{model}:generateContent"
-            f"?key={SETTINGS.vertex_ai_api_key}"
         )
         payload = {
             "contents": [
@@ -347,8 +348,16 @@ class ProviderLlmClient:
                 }
             ]
         }
+        if labels:
+            payload["labels"] = labels
         try:
-            response = requests.post(url, json=payload, timeout=30)
+            headers = build_vertex_request_headers(labels)
+            response = requests.post(
+                url,
+                headers=headers,
+                json=payload,
+                timeout=30,
+            )
             response.raise_for_status()
             data = response.json()
             candidates = data.get("candidates", [])
@@ -358,6 +367,6 @@ class ProviderLlmClient:
             if not parts:
                 return None
             return parts[0].get("text")
-        except requests.RequestException:
+        except (RuntimeError, requests.RequestException):
             LOGGER.exception("Vertex AI call failed")
             return None

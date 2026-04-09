@@ -50,11 +50,15 @@ La configuracion principal se define en `src/coderag/core/settings.py`.
 - `GEMINI_API_KEY`
 - `GEMINI_ANSWER_MODEL`
 - `GEMINI_EMBEDDING_MODEL` (default `text-embedding-004`)
-- `VERTEX_AI_API_KEY`
+- `VERTEX_SERVICE_ACCOUNT_JSON` (JSON de service account en una sola linea)
 - `VERTEX_PROJECT_ID`
 - `VERTEX_LOCATION`
 - `VERTEX_ANSWER_MODEL`
 - `VERTEX_EMBEDDING_MODEL` (default `text-embedding-005`)
+- `VERTEX_LABEL_SERVICE` (default `webspec-coipo`)
+- `VERTEX_LABEL_SERVICE_ACCOUNT` (default `qa-anthos`)
+- `VERTEX_LABEL_MODEL_NAME` (fallback opcional; se infiere dinamicamente)
+- `VERTEX_LABEL_USE_CASE_ID` (default `tbd`)
 - `LLM_EMBEDDING` (override global opcional para el modelo de embedding)
 
 ### Plantillas .env por provider
@@ -82,6 +86,26 @@ Precedencia:
    `VERTEX_EMBEDDING_MODEL`)
 3. Sin fallback local: si no hay credenciales/provider valido, la operacion
   falla con error explicito.
+
+### Credenciales Vertex (sin API key)
+
+- El provider `vertex` usa autenticacion OAuth con service account.
+- `VERTEX_SERVICE_ACCOUNT_JSON` debe contener el JSON completo de la cuenta
+  de servicio en formato de una sola linea.
+- En pruebas locales puedes cargarlo desde archivo con PowerShell:
+  `$env:VERTEX_SERVICE_ACCOUNT_JSON = (Get-Content gcp_credentials_vertex.json -Raw)`.
+- `VERTEX_PROJECT_ID` es obligatorio para llamadas de answer y embeddings.
+- No se usa `VERTEX_AI_API_KEY` en este runtime.
+
+### Labels Vertex
+
+- Todas las llamadas Vertex (answer y embeddings) adjuntan labels para
+  trazabilidad.
+- `model_name` se ajusta automaticamente al modelo real de cada operacion:
+  `VERTEX_ANSWER_MODEL` para respuestas y el modelo efectivo de embedding
+  para vectorizacion.
+- Los labels se resuelven desde `VERTEX_LABEL_*` y se normalizan a formato
+  seguro (`lowercase`, espacios a `-`, sin caracteres invalidos).
 
 ### Fallback de respuesta LLM
 

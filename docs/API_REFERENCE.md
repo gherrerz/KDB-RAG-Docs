@@ -358,6 +358,10 @@ Request:
 Notas operativas:
 
 - `llm_provider` acepta `local`, `openai`, `gemini`, `vertex` y alias `vertex_ai`.
+- Para `llm_provider=vertex`, el runtime exige
+  `VERTEX_SERVICE_ACCOUNT_JSON` y `VERTEX_PROJECT_ID`.
+- Las llamadas Vertex incluyen labels de trazabilidad configurados por
+  `VERTEX_LABEL_*`.
 - `include_llm_answer=false` ejecuta retrieval+grafo sin invocar LLM.
 - `force_fallback=true` fuerza respuesta extractiva local.
 - Si `source_id` existe, retrieval y expansion de grafo se restringen a esa fuente.

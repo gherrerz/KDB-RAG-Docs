@@ -367,6 +367,8 @@ Variables relevantes de entorno:
   `gemini`, `vertex`)
 - Nota: para embeddings el runtime requiere provider externo
   (`openai`/`gemini`/`vertex`); `local` aplica a respuesta extractiva.
+- Para `vertex`, el runtime usa `VERTEX_SERVICE_ACCOUNT_JSON` +
+  `VERTEX_PROJECT_ID` (sin API keys).
 - `LLM_EMBEDDING`: override global opcional para modelo de embedding
 - `INGEST_EMBED_WORKERS`: workers para generar embeddings en paralelo
 - `CHROMA_UPSERT_BATCH_SIZE`: tamano de lote por escritura en Chroma
@@ -381,6 +383,9 @@ Variables relevantes de entorno:
 - `NEO4J_INGEST_RETRY_DELAY_MS`: espera base en milisegundos para reintentos
 - `OPENAI_EMBEDDING_MODEL`, `GEMINI_EMBEDDING_MODEL`,
   `VERTEX_EMBEDDING_MODEL`: modelos por provider
+- `VERTEX_LABEL_SERVICE`, `VERTEX_LABEL_SERVICE_ACCOUNT`,
+  `VERTEX_LABEL_MODEL_NAME`, `VERTEX_LABEL_USE_CASE_ID`: labels de
+  trazabilidad para requests Vertex (defaults en `.env.vertex.example`).
 - `RQ_INGEST_JOB_TIMEOUT_SEC`: timeout en segundos para ingestas async con
   RQ (`USE_RQ=true`). Default: `900`.
 

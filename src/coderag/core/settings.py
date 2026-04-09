@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Dict, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 from dotenv import load_dotenv
@@ -131,8 +131,8 @@ class Settings(BaseModel):
         )
     )
 
-    vertex_ai_api_key: Optional[str] = Field(
-        default_factory=lambda: _env_str("VERTEX_AI_API_KEY")
+    vertex_service_account_json: Optional[str] = Field(
+        default_factory=lambda: _env_str("VERTEX_SERVICE_ACCOUNT_JSON")
     )
     vertex_project_id: Optional[str] = Field(
         default_factory=lambda: _env_str("VERTEX_PROJECT_ID")
@@ -153,6 +153,33 @@ class Settings(BaseModel):
         default_factory=lambda: (
             _env_str("VERTEX_EMBEDDING_MODEL", "text-embedding-005")
             or "text-embedding-005"
+        )
+    )
+    vertex_label_service: str = Field(
+        default_factory=lambda: (
+            _env_str("VERTEX_LABEL_SERVICE", "webspec-coipo")
+            or "webspec-coipo"
+        )
+    )
+    vertex_label_service_account: str = Field(
+        default_factory=lambda: (
+            _env_str("VERTEX_LABEL_SERVICE_ACCOUNT", "qa-anthos")
+            or "qa-anthos"
+        )
+    )
+    vertex_label_model_name: str = Field(
+        default_factory=lambda: (
+            _env_str(
+                "VERTEX_LABEL_MODEL_NAME",
+                "gemini-2.0-flash-001",
+            )
+            or "gemini-2.0-flash-001"
+        )
+    )
+    vertex_label_use_case_id: str = Field(
+        default_factory=lambda: (
+            _env_str("VERTEX_LABEL_USE_CASE_ID", "tbd")
+            or "tbd"
         )
     )
 
@@ -240,6 +267,36 @@ class Settings(BaseModel):
             return "vertex"
         return normalized
 
+    @staticmethod
+    def _normalize_vertex_label(value: str) -> str:
+        """Normalize Vertex label values to API-safe lowercase tokens."""
+        safe = value.strip().lower().replace(" ", "-")
+        if not safe:
+            return "unset"
+        return "".join(
+            ch for ch in safe if ch.isalnum() or ch in {"-", "_", "."}
+        )
+
+    def resolve_vertex_labels(
+        self,
+        model_name: Optional[str] = None,
+    ) -> Dict[str, str]:
+        """Resolve request labels sent with Vertex calls."""
+        effective_model_name = model_name or self.vertex_label_model_name
+        labels = {
+            "service": self._normalize_vertex_label(self.vertex_label_service),
+            "service_account": self._normalize_vertex_label(
+                self.vertex_label_service_account
+            ),
+            "model_name": self._normalize_vertex_label(
+                effective_model_name
+            ),
+            "use_case_id": self._normalize_vertex_label(
+                self.vertex_label_use_case_id
+            ),
+        }
+        return {key: value for key, value in labels.items() if value}
+
     def resolve_llm_provider(self, override: Optional[str] = None) -> str:
         """Resolve effective provider considering request override."""
         provider_name = override or self.llm_provider
@@ -303,7 +360,9 @@ class Settings(BaseModel):
         if provider_name == "gemini":
             return bool(self.gemini_api_key)
         if provider_name == "vertex":
-            return bool(self.vertex_ai_api_key and self.vertex_project_id)
+            return bool(
+                self.vertex_service_account_json and self.vertex_project_id
+            )
         return False
 
     def require_chroma_enabled(self) -> None:

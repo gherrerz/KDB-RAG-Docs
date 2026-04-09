@@ -18,3 +18,4 @@ python-pptx==1.0.2
 openpyxl==3.1.5
 python-dotenv==1.0.1
 chromadb==1.5.5
+google-auth==2.40.1

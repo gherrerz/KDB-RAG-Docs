@@ -7,6 +7,7 @@ from typing import List
 import requests
 
 from coderag.core.settings import SETTINGS
+from coderag.core.vertex_auth import build_vertex_request_headers
 
 def _embed_text_openai(
     text: str,
@@ -65,21 +66,32 @@ def _embed_text_gemini(text: str, model: str) -> List[float]:
 
 def _embed_text_vertex(text: str, model: str) -> List[float]:
     """Generate embeddings using Vertex AI publisher model endpoint."""
-    if not SETTINGS.vertex_ai_api_key or not SETTINGS.vertex_project_id:
+    if (
+        not SETTINGS.vertex_project_id
+        or not SETTINGS.vertex_service_account_json
+    ):
         raise RuntimeError(
-            "VERTEX_AI_API_KEY and VERTEX_PROJECT_ID are required for embeddings."
+            "VERTEX_SERVICE_ACCOUNT_JSON and VERTEX_PROJECT_ID are "
+            "required for embeddings."
         )
 
     location = SETTINGS.vertex_location
+    labels = SETTINGS.resolve_vertex_labels(model_name=model)
     url = (
         f"https://{location}-aiplatform.googleapis.com/v1/projects/"
         f"{SETTINGS.vertex_project_id}/locations/{location}/publishers/google/"
-        f"models/{model}:predict?key={SETTINGS.vertex_ai_api_key}"
+        f"models/{model}:predict"
     )
     payload = {
         "instances": [{"content": text}],
     }
-    response = requests.post(url, json=payload, timeout=45)
+    headers = build_vertex_request_headers(labels)
+    response = requests.post(
+        url,
+        headers=headers,
+        json=payload,
+        timeout=45,
+    )
     response.raise_for_status()
     data = response.json()
     predictions = data.get("predictions", [])
