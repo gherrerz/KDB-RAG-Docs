@@ -66,14 +66,18 @@ def _embed_text_gemini(text: str, model: str) -> List[float]:
 
 def _embed_text_vertex(text: str, model: str) -> List[float]:
     """Generate embeddings using Vertex AI publisher model endpoint."""
-    if (
-        not SETTINGS.vertex_project_id
-        or not SETTINGS.vertex_service_account_json
-    ):
+    if not SETTINGS.vertex_project_id:
         raise RuntimeError(
-            "VERTEX_SERVICE_ACCOUNT_JSON and VERTEX_PROJECT_ID are "
-            "required for embeddings."
+            "VERTEX_PROJECT_ID is required for Vertex embeddings."
         )
+    try:
+        if not SETTINGS.resolve_vertex_service_account_json():
+            raise RuntimeError(
+                "VERTEX_SERVICE_ACCOUNT_JSON_B64 is required for Vertex "
+                "embeddings (or legacy VERTEX_SERVICE_ACCOUNT_JSON)."
+            )
+    except RuntimeError as exc:
+        raise RuntimeError(str(exc)) from exc
 
     location = SETTINGS.vertex_location
     labels = SETTINGS.resolve_vertex_labels(model_name=model)

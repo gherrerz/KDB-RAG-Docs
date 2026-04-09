@@ -367,7 +367,7 @@ Variables relevantes de entorno:
   `gemini`, `vertex`)
 - Nota: para embeddings el runtime requiere provider externo
   (`openai`/`gemini`/`vertex`); `local` aplica a respuesta extractiva.
-- Para `vertex`, el runtime usa `VERTEX_SERVICE_ACCOUNT_JSON` +
+- Para `vertex`, el runtime usa `VERTEX_SERVICE_ACCOUNT_JSON_B64` +
   `VERTEX_PROJECT_ID` (sin API keys).
 - `LLM_EMBEDDING`: override global opcional para modelo de embedding
 - `INGEST_EMBED_WORKERS`: workers para generar embeddings en paralelo

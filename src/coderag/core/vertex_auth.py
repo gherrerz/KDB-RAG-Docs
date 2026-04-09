@@ -32,12 +32,12 @@ def _parse_service_account_info(raw_json: str) -> Dict[str, Any]:
         payload = json.loads(raw_json)
     except json.JSONDecodeError as exc:
         raise RuntimeError(
-            "VERTEX_SERVICE_ACCOUNT_JSON is not valid JSON."
+            "Decoded Vertex service account payload is not valid JSON."
         ) from exc
 
     if not isinstance(payload, dict):
         raise RuntimeError(
-            "VERTEX_SERVICE_ACCOUNT_JSON must deserialize to an object."
+            "Decoded Vertex service account payload must be an object."
         )
 
     required_keys = {"client_email", "private_key", "token_uri"}
@@ -45,7 +45,7 @@ def _parse_service_account_info(raw_json: str) -> Dict[str, Any]:
     if missing:
         missing_str = ", ".join(missing)
         raise RuntimeError(
-            "VERTEX_SERVICE_ACCOUNT_JSON is missing required keys: "
+            "Vertex service account payload is missing required keys: "
             f"{missing_str}."
         )
 
@@ -80,10 +80,11 @@ def _token_needs_refresh(
 
 def get_vertex_access_token() -> str:
     """Return an access token for authenticated Vertex API requests."""
-    raw_json = SETTINGS.vertex_service_account_json
+    raw_json = SETTINGS.resolve_vertex_service_account_json()
     if not raw_json:
         raise RuntimeError(
-            "VERTEX_SERVICE_ACCOUNT_JSON is required for Vertex provider."
+            "VERTEX_SERVICE_ACCOUNT_JSON_B64 is required for Vertex "
+            "provider (or legacy VERTEX_SERVICE_ACCOUNT_JSON)."
         )
 
     fingerprint = _fingerprint_secret(raw_json)

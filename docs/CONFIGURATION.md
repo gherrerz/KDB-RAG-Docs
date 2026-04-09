@@ -50,7 +50,7 @@ La configuracion principal se define en `src/coderag/core/settings.py`.
 - `GEMINI_API_KEY`
 - `GEMINI_ANSWER_MODEL`
 - `GEMINI_EMBEDDING_MODEL` (default `text-embedding-004`)
-- `VERTEX_SERVICE_ACCOUNT_JSON` (JSON de service account en una sola linea)
+- `VERTEX_SERVICE_ACCOUNT_JSON_B64` (JSON de service account en base64)
 - `VERTEX_PROJECT_ID`
 - `VERTEX_LOCATION`
 - `VERTEX_ANSWER_MODEL`
@@ -90,11 +90,15 @@ Precedencia:
 ### Credenciales Vertex (sin API key)
 
 - El provider `vertex` usa autenticacion OAuth con service account.
-- `VERTEX_SERVICE_ACCOUNT_JSON` debe contener el JSON completo de la cuenta
-  de servicio en formato de una sola linea.
+- `VERTEX_SERVICE_ACCOUNT_JSON_B64` debe contener el JSON completo de la
+  cuenta de servicio codificado en base64.
+- En el arranque de la app, el runtime decodifica ese valor y deja el JSON
+  disponible en memoria para uso interno de autenticacion.
 - En pruebas locales puedes cargarlo desde archivo con PowerShell:
-  `$env:VERTEX_SERVICE_ACCOUNT_JSON = (Get-Content gcp_credentials_vertex.json -Raw)`.
+  `$env:VERTEX_SERVICE_ACCOUNT_JSON_B64 = (Get-Content gcp_credentials_vertex.base64.txt -Raw)`.
 - `VERTEX_PROJECT_ID` es obligatorio para llamadas de answer y embeddings.
+- Compatibilidad: `VERTEX_SERVICE_ACCOUNT_JSON` (raw JSON) se mantiene como
+  fallback legacy, pero el formato recomendado es base64.
 - No se usa `VERTEX_AI_API_KEY` en este runtime.
 
 ### Labels Vertex

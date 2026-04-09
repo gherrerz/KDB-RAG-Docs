@@ -320,10 +320,12 @@ class ProviderLlmClient:
         context: str,
     ) -> str | None:
         """Call Vertex AI endpoint using service-account OAuth credentials."""
-        if (
-            not SETTINGS.vertex_project_id
-            or not SETTINGS.vertex_service_account_json
-        ):
+        if not SETTINGS.vertex_project_id:
+            return None
+        try:
+            if not SETTINGS.resolve_vertex_service_account_json():
+                return None
+        except RuntimeError:
             return None
 
         model = SETTINGS.vertex_answer_model

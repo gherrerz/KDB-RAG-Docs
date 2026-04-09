@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 from pathlib import Path
 
 import pytest
@@ -74,6 +75,31 @@ def test_vertex_provider_is_configured_with_service_account_json() -> None:
     assert settings.require_embedding_provider_configured() == "vertex"
 
 
+def test_vertex_provider_is_configured_with_service_account_json_b64() -> None:
+    """Accept Vertex provider when base64 service account payload is set."""
+    raw_json = (
+        '{"client_email":"svc@test","private_key":"abc",'
+        '"token_uri":"https://oauth2.googleapis.com/token"}'
+    )
+    encoded = base64.b64encode(raw_json.encode("utf-8")).decode("utf-8")
+    settings = Settings(
+        llm_provider="vertex",
+        vertex_project_id="project-id",
+        vertex_service_account_json_b64=encoded,
+        vertex_service_account_json=None,
+    )
+
+    assert settings.require_embedding_provider_configured() == "vertex"
+    assert settings.vertex_service_account_json == raw_json
+    assert settings.resolve_vertex_service_account_json() == raw_json
+
+
+def test_vertex_service_account_json_b64_invalid_raises() -> None:
+    """Fail clearly when b64 payload cannot be decoded."""
+    with pytest.raises(RuntimeError):
+        Settings(vertex_service_account_json_b64="not-base64!!")
+
+
 def test_vertex_labels_defaults_are_available() -> None:
     """Expose default Vertex labels used for request attribution."""
     settings = Settings()
@@ -81,7 +107,7 @@ def test_vertex_labels_defaults_are_available() -> None:
 
     assert labels["service"] == "webspec-coipo"
     assert labels["service_account"] == "qa-anthos"
-    assert labels["model_name"] == "gemini-2.0-flash-001"
+    assert labels["model_name"] == "gemini-2.5-flash"
     assert labels["use_case_id"] == "tbd"
 
 

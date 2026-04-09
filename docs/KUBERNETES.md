@@ -81,7 +81,7 @@ Alternativa segura para secreto real (solo llaves sensibles):
 kubectl create secret generic coderag-app-secrets --namespace coderag \
   --from-literal=OPENAI_API_KEY="<openai-key>" \
   --from-literal=GEMINI_API_KEY="<gemini-key>" \
-  --from-file=VERTEX_SERVICE_ACCOUNT_JSON="<ruta-service-account.json>" \
+  --from-file=VERTEX_SERVICE_ACCOUNT_JSON_B64="<ruta-service-account.base64.txt>" \
   --from-literal=VERTEX_PROJECT_ID="<vertex-project>" \
   --from-literal=NEO4J_PASSWORD="<neo4j-password>" \
   --dry-run=client -o yaml | kubectl apply -f -

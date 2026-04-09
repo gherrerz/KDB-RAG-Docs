@@ -5,7 +5,7 @@
 ### Added
 - Nueva capa de autenticacion Vertex en
 	`src/coderag/core/vertex_auth.py` con OAuth bearer token basado en
-	`VERTEX_SERVICE_ACCOUNT_JSON`.
+	`VERTEX_SERVICE_ACCOUNT_JSON_B64`.
 - Soporte de labels configurables para requests Vertex (answer + embeddings)
 	via `VERTEX_LABEL_SERVICE`, `VERTEX_LABEL_SERVICE_ACCOUNT`,
 	`VERTEX_LABEL_MODEL_NAME` y `VERTEX_LABEL_USE_CASE_ID`.
@@ -19,7 +19,10 @@
 	- `src/coderag/llm/providerlmm_client.py`
 	- `src/coderag/ingestion/embedding.py`
 - Contrato de configuracion Vertex actualizado para requerir
-	`VERTEX_SERVICE_ACCOUNT_JSON` + `VERTEX_PROJECT_ID`.
+	`VERTEX_SERVICE_ACCOUNT_JSON_B64` + `VERTEX_PROJECT_ID`.
+- Credencial Vertex ahora soporta `VERTEX_SERVICE_ACCOUNT_JSON_B64`
+	(como formato recomendado) con decodificacion en runtime al iniciar app;
+	`VERTEX_SERVICE_ACCOUNT_JSON` se mantiene como fallback legacy.
 - Plantillas `.env`, manifests Kubernetes y documentacion (`README`,
 	`docs/CONFIGURATION.md`, `docs/INSTALLATION.md`,
 	`docs/KUBERNETES.md`, `docs/API_REFERENCE.md`) alineadas al nuevo esquema.

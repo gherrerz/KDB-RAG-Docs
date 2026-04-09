@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 from datetime import datetime, timedelta
 
 import pytest
@@ -53,12 +54,23 @@ class _FakeEmbeddingResponse:
 
 def _set_vertex_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     """Set deterministic Vertex settings values for request tests."""
+    raw_json = (
+        '{"client_email":"svc@test","private_key":"abc",'
+        '"token_uri":"https://oauth2.googleapis.com/token"}'
+    )
+    encoded_json = base64.b64encode(raw_json.encode("utf-8")).decode(
+        "utf-8"
+    )
     monkeypatch.setattr(SETTINGS, "vertex_project_id", "project-123")
     monkeypatch.setattr(
         SETTINGS,
+        "vertex_service_account_json_b64",
+        encoded_json,
+    )
+    monkeypatch.setattr(
+        SETTINGS,
         "vertex_service_account_json",
-        '{"client_email":"svc@test","private_key":"abc",'
-        '"token_uri":"https://oauth2.googleapis.com/token"}',
+        None,
     )
     monkeypatch.setattr(SETTINGS, "vertex_location", "us-central1")
     monkeypatch.setattr(SETTINGS, "vertex_answer_model", "gemini-2.0-flash")
@@ -167,6 +179,7 @@ def test_get_vertex_access_token_requires_service_account_json(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Fail fast when service account JSON is not configured."""
+    monkeypatch.setattr(SETTINGS, "vertex_service_account_json_b64", None)
     monkeypatch.setattr(SETTINGS, "vertex_service_account_json", None)
     reset_vertex_credentials_cache()
 

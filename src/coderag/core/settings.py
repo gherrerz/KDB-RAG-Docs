@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import os
 from pathlib import Path
 from typing import Dict, Optional
@@ -131,6 +133,9 @@ class Settings(BaseModel):
         )
     )
 
+    vertex_service_account_json_b64: Optional[str] = Field(
+        default_factory=lambda: _env_str("VERTEX_SERVICE_ACCOUNT_JSON_B64")
+    )
     vertex_service_account_json: Optional[str] = Field(
         default_factory=lambda: _env_str("VERTEX_SERVICE_ACCOUNT_JSON")
     )
@@ -145,8 +150,8 @@ class Settings(BaseModel):
     )
     vertex_answer_model: str = Field(
         default_factory=lambda: (
-            _env_str("VERTEX_ANSWER_MODEL", "gemini-2.0-flash")
-            or "gemini-2.0-flash"
+            _env_str("VERTEX_ANSWER_MODEL", "gemini-2.5-flash")
+            or "gemini-2.5-flash"
         )
     )
     vertex_embedding_model: str = Field(
@@ -171,9 +176,9 @@ class Settings(BaseModel):
         default_factory=lambda: (
             _env_str(
                 "VERTEX_LABEL_MODEL_NAME",
-                "gemini-2.0-flash-001",
+                "gemini-2.5-flash",
             )
-            or "gemini-2.0-flash-001"
+            or "gemini-2.5-flash"
         )
     )
     vertex_label_use_case_id: str = Field(
@@ -251,12 +256,25 @@ class Settings(BaseModel):
 
     @model_validator(mode="after")
     def normalize_paths(self) -> "Settings":
-        """Normalize workspace and storage paths to absolute locations."""
+        """Normalize paths and decode base64 service-account payloads."""
         self.workspace_dir = self._resolve_repo_path(self.workspace_dir)
         self.data_dir = self._resolve_repo_path(self.data_dir)
         self.chroma_persist_dir = self._resolve_repo_path(
             self.chroma_persist_dir
         )
+        if (
+            self.vertex_service_account_json_b64
+            and self.vertex_service_account_json_b64.strip()
+        ):
+            self.vertex_service_account_json = (
+                self._decode_vertex_service_account_json_b64(
+                    self.vertex_service_account_json_b64.strip()
+                )
+            )
+        elif self.vertex_service_account_json:
+            self.vertex_service_account_json = (
+                self.vertex_service_account_json.strip()
+            )
         return self
 
     @staticmethod
@@ -296,6 +314,40 @@ class Settings(BaseModel):
             ),
         }
         return {key: value for key, value in labels.items() if value}
+
+    def resolve_vertex_service_account_json(self) -> Optional[str]:
+        """Resolve service-account JSON, preferring base64 env payload."""
+        if (
+            self.vertex_service_account_json
+            and self.vertex_service_account_json.strip()
+        ):
+            return self.vertex_service_account_json.strip()
+
+        if (
+            self.vertex_service_account_json_b64
+            and self.vertex_service_account_json_b64.strip()
+        ):
+            encoded = self.vertex_service_account_json_b64.strip()
+            return self._decode_vertex_service_account_json_b64(encoded)
+        return None
+
+    @staticmethod
+    def _decode_vertex_service_account_json_b64(encoded: str) -> str:
+        """Decode base64 service-account payload into raw JSON text."""
+        try:
+            raw_bytes = base64.b64decode(encoded, validate=True)
+            decoded = raw_bytes.decode("utf-8").strip()
+        except (binascii.Error, UnicodeDecodeError) as exc:
+            raise RuntimeError(
+                "VERTEX_SERVICE_ACCOUNT_JSON_B64 is not valid "
+                "base64-encoded UTF-8 JSON content."
+            ) from exc
+
+        if not decoded:
+            raise RuntimeError(
+                "VERTEX_SERVICE_ACCOUNT_JSON_B64 decoded to empty content."
+            )
+        return decoded
 
     def resolve_llm_provider(self, override: Optional[str] = None) -> str:
         """Resolve effective provider considering request override."""
@@ -360,8 +412,12 @@ class Settings(BaseModel):
         if provider_name == "gemini":
             return bool(self.gemini_api_key)
         if provider_name == "vertex":
+            try:
+                vertex_json = self.resolve_vertex_service_account_json()
+            except RuntimeError:
+                return False
             return bool(
-                self.vertex_service_account_json and self.vertex_project_id
+                vertex_json and self.vertex_project_id
             )
         return False
 

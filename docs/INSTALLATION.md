@@ -44,7 +44,7 @@ Variables minimas para un arranque funcional:
 
 - `LLM_PROVIDER` en `openai`, `gemini` o `vertex`
 - credenciales del provider elegido (`OPENAI_API_KEY`, `GEMINI_API_KEY` o
-        `VERTEX_SERVICE_ACCOUNT_JSON` + `VERTEX_PROJECT_ID`)
+    `VERTEX_SERVICE_ACCOUNT_JSON_B64` + `VERTEX_PROJECT_ID`)
 - `USE_CHROMA=true`
 - `USE_NEO4J=true`
 - `NEO4J_URI`, `NEO4J_USER`, `NEO4J_PASSWORD`
@@ -55,14 +55,14 @@ Si usas `LLM_PROVIDER=vertex`:
 - Defaults incluidos en plantillas:
     - `VERTEX_LABEL_SERVICE=webspec-coipo`
     - `VERTEX_LABEL_SERVICE_ACCOUNT=qa-anthos`
-    - `VERTEX_LABEL_MODEL_NAME=gemini-2.0-flash-001`
+    - `VERTEX_LABEL_MODEL_NAME=gemini-2.5-flash`
     - `VERTEX_LABEL_USE_CASE_ID=tbd`
 
 Para usar un archivo local de ejemplo de service account durante pruebas
 manuales (sin commitearlo):
 
 ```powershell
-$env:VERTEX_SERVICE_ACCOUNT_JSON = (Get-Content gcp_credentials_vertex.json -Raw)
+$env:VERTEX_SERVICE_ACCOUNT_JSON_B64 = (Get-Content gcp_credentials_vertex.base64.txt -Raw)
 ```
 
 Si usas Redis + RQ:
