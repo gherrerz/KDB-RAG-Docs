@@ -48,6 +48,12 @@ docker push ghcr.io/gherrerz/kdb-rag-docs:latest
 
 Ajusta el tag y registro segun tu entorno.
 
+La imagen ahora usa build multi-stage para separar compilacion e imagen de
+runtime, reducir tamaño y evitar toolchains de build en produccion.
+Ademas, el runtime instala `requirements.txt` con contrato API-first,
+dejando fuera dependencias de PySide6 y tooling de tests que no aportan al
+pod API/worker.
+
 Los overlays usan un nombre base neutral (`kdb-rag-docs`) y luego mapean
 `newName/newTag`:
 
@@ -123,9 +129,12 @@ kubectl get svc -n coderag
 
 ## Probes y endpoints
 
+- Startup probe API: `GET /health` para absorber bootstrap inicial sin entrar en
+  restart loop prematuro.
 - Liveness probe: `GET /health`
 - Readiness probe: `GET /readiness`
-- Worker: startup/readiness/liveness probe via ping a Redis URL activa.
+- Worker: arranca con `python -m coderag.jobs.worker` y valida
+  startup/readiness/liveness via ping a Redis URL activa.
 - Overlay `dev`: Redis y Neo4j incluyen probes y recursos base para mejorar
   estabilidad operativa.
 

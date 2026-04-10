@@ -1,12 +1,48 @@
+# VCS and editor metadata
 .git
+.gitignore
 .github
 .vscode
-.venv
-.pytest_cache
-__pycache__
-*.pyc
+.idea
+
+# Python artifacts
+__pycache__/
+*.py[cod]
 *.pyo
 *.pyd
-*.log
-.env
+.pytest_cache/
+.mypy_cache
+.ruff_cache
+.coverage
+htmlcov
+
+# Local environments
+.venv/
+venv/
+
+# Runtime/data generated locally
 storage/
+benchmark_reports/
+secrets/
+
+# Docs, tests and local-only assets are not required in runtime image
+docs/
+examples/
+tests/
+k8s/
+scripts/
+sample_data/
+sitecustomize.py
+
+# Misc
+*.log
+*.tmp
+.tmp_*
+.env
+.env.*
+!.env.example
+docker-compose.yml
+README.md
+CHANGELOG.md
+gcp_credentials_vertex.json
+gcp_credentials_vertex.base64.txt

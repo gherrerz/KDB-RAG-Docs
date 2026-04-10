@@ -92,6 +92,13 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
+Opciones de instalacion:
+
+- `requirements.txt`: baseline API/worker para levantar el backend con foco runtime.
+- `requirements-runtime.txt`: alias explicito del perfil liviano de API/worker.
+- `requirements-desktop.txt`: runtime + UI de escritorio.
+- `requirements-full.txt`: entorno completo para desarrollo local (API + UI + tests).
+
 ## Ejecucion
 
 1. Iniciar API:

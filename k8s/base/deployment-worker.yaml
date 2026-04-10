@@ -19,8 +19,8 @@ spec:
           imagePullPolicy: IfNotPresent
           command:
             - python
-            - -c
-            - import sys; from pathlib import Path; sys.path.insert(0, str(Path('src').resolve())); from coderag.jobs.worker import run_worker; run_worker()
+            - -m
+            - coderag.jobs.worker
           envFrom:
             - configMapRef:
                 name: coderag-app-config
@@ -71,30 +71,27 @@ spec:
                 - python
                 - -c
                 - import os; from redis import Redis; Redis.from_url(os.getenv('REDIS_URL', 'redis://redis:6379/0')).ping()
-            initialDelaySeconds: 10
             periodSeconds: 10
             timeoutSeconds: 5
-            failureThreshold: 12
+            failureThreshold: 30
           readinessProbe:
             exec:
               command:
                 - python
                 - -c
                 - import os; from redis import Redis; Redis.from_url(os.getenv('REDIS_URL', 'redis://redis:6379/0')).ping()
-            initialDelaySeconds: 10
             periodSeconds: 15
             timeoutSeconds: 5
-            failureThreshold: 3
+            failureThreshold: 4
           livenessProbe:
             exec:
               command:
                 - python
                 - -c
                 - import os; from redis import Redis; Redis.from_url(os.getenv('REDIS_URL', 'redis://redis:6379/0')).ping()
-            initialDelaySeconds: 20
             periodSeconds: 20
             timeoutSeconds: 5
-            failureThreshold: 3
+            failureThreshold: 4
           resources:
             requests:
               cpu: 150m

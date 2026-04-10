@@ -28,3 +28,7 @@ def run_worker() -> None:
         else:
             worker = Worker([queue])
             worker.work(with_scheduler=True)
+
+
+if __name__ == "__main__":
+    run_worker()

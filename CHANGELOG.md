@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.3.4] - 2026-04-10
+
+### Added
+- Archivos de dependencias separados para runtime headless, desktop y desarrollo:
+	`requirements-runtime.txt`, `requirements-desktop.txt` y
+	`requirements-dev.txt`.
+- `requirements-full.txt` como entrada explicita para entorno local completo.
+
+### Changed
+- `requirements.txt` pasa a representar el baseline API/worker.
+- `Dockerfile` ahora construye la imagen API/worker con `requirements.txt`
+	alineado al contrato API-first para excluir PySide6 y pytest del runtime.
+- Documentacion de instalacion y Kubernetes actualizada para reflejar los
+	nuevos perfiles de dependencias y el entrypoint estable del worker.
+
 ## [0.3.3] - 2026-04-09
 
 ### Added

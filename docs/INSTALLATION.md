@@ -27,6 +27,13 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
+Perfiles disponibles:
+
+- `requirements.txt`: baseline API/worker para levantar la API con el menor set necesario.
+- `requirements-runtime.txt`: alias explicito de solo API/worker para entornos headless.
+- `requirements-desktop.txt`: API/worker + PySide6 para usar la UI.
+- `requirements-full.txt`: instalacion completa para desarrollo local, UI y tests.
+
 ## 3. Configure environment (.env)
 
 Usa una plantilla base y completa credenciales:
@@ -133,6 +140,14 @@ Verificacion rapida:
 
 En otra terminal (con `.venv` activa):
 
+Si el entorno fue creado solo con `requirements.txt`, instala antes soporte UI:
+
+```powershell
+pip install -r requirements-desktop.txt
+```
+
+Luego ejecuta:
+
 ```powershell
 python src/run_ui.py
 ```
@@ -142,7 +157,7 @@ python src/run_ui.py
 Si `USE_RQ=true`, inicia worker en otra terminal:
 
 ```powershell
-python -c "import sys; from pathlib import Path; sys.path.insert(0, str(Path('src').resolve())); from coderag.jobs.worker import run_worker; run_worker()"
+python -m coderag.jobs.worker
 ```
 
 En Windows, el worker usa `SimpleWorker` para evitar problemas de `os.fork`.
@@ -161,6 +176,10 @@ Servicios definidos en [docker-compose.yml](../docker-compose.yml):
 - `worker` (RQ worker)
 - `redis` (`redis:7-alpine`)
 - `neo4j` (`neo4j:5`)
+
+La imagen de contenedor usa el baseline de `requirements.txt` (alineado a
+runtime API/worker), por lo que no instala dependencias de escritorio ni
+tooling de test.
 
 ## 9. First functional check
 
