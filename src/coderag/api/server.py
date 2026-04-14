@@ -187,6 +187,22 @@ def _check_rq_worker_runtime() -> dict[str, Any]:
         return _make_check(True, False, str(exc))
 
 
+def _tdm_disabled_because_neo4j() -> bool:
+    """Return whether TDM is enabled but graph runtime is disabled."""
+    return bool(SETTINGS.enable_tdm and not SETTINGS.use_neo4j)
+
+
+def _tdm_disabled_detail() -> dict[str, Any]:
+    """Build shared diagnostics payload for TDM disabled mode."""
+    return {
+        "status": "disabled",
+        "message": "TDM is unavailable because USE_NEO4J=false.",
+        "tdm_enabled": True,
+        "neo4j_enabled": False,
+        "reason": "USE_NEO4J=false",
+    }
+
+
 @app.get(
     "/sources/ingest/readiness",
     tags=["ingestion"],
@@ -422,6 +438,14 @@ def ingest_tdm(request: IngestionRequest) -> dict[str, Any]:
             status_code=404,
             detail="TDM endpoints are disabled.",
         )
+    if _tdm_disabled_because_neo4j():
+        payload = _tdm_disabled_detail()
+        return {
+            "status": payload["status"],
+            "message": payload["message"],
+            "source_id": None,
+            "diagnostics": payload,
+        }
     try:
         return SERVICE.ingest_tdm_assets(request)
     except RuntimeError as exc:
@@ -447,6 +471,13 @@ def query_tdm(request: TdmQueryRequest) -> dict[str, Any]:
             status_code=404,
             detail="TDM endpoints are disabled.",
         )
+    if _tdm_disabled_because_neo4j():
+        payload = _tdm_disabled_detail()
+        return {
+            "answer": payload["message"],
+            "findings": [],
+            "diagnostics": payload,
+        }
     try:
         response = SERVICE.query_tdm(request)
         return response.model_dump()
@@ -473,6 +504,15 @@ def tdm_service_catalog(
             status_code=404,
             detail="TDM endpoints are disabled.",
         )
+    if _tdm_disabled_because_neo4j():
+        payload = _tdm_disabled_detail()
+        return {
+            "service_name": service_name,
+            "source_id": source_id,
+            "mappings": [],
+            "count": 0,
+            "diagnostics": payload,
+        }
     return SERVICE.get_tdm_service_catalog(
         service_name=service_name,
         source_id=source_id,
@@ -498,6 +538,16 @@ def tdm_table_catalog(
             status_code=404,
             detail="TDM endpoints are disabled.",
         )
+    if _tdm_disabled_because_neo4j():
+        payload = _tdm_disabled_detail()
+        return {
+            "table_name": table_name,
+            "source_id": source_id,
+            "tables": [],
+            "columns": [],
+            "count": 0,
+            "diagnostics": payload,
+        }
     return SERVICE.get_tdm_table_catalog(
         table_name=table_name,
         source_id=source_id,
@@ -523,6 +573,15 @@ def preview_tdm_virtualization(request: TdmQueryRequest) -> dict[str, Any]:
             status_code=404,
             detail="TDM endpoints are disabled.",
         )
+    if _tdm_disabled_because_neo4j():
+        payload = _tdm_disabled_detail()
+        return {
+            "source_id": request.source_id,
+            "service_name": request.service_name,
+            "templates": [],
+            "count": 0,
+            "diagnostics": payload,
+        }
     try:
         return SERVICE.preview_tdm_virtualization(request)
     except RuntimeError as exc:
@@ -553,6 +612,15 @@ def tdm_synthetic_profile(
             status_code=404,
             detail="TDM endpoints are disabled.",
         )
+    if _tdm_disabled_because_neo4j():
+        payload = _tdm_disabled_detail()
+        return {
+            "source_id": source_id,
+            "table_name": table_name,
+            "profile_id": None,
+            "plan": {},
+            "diagnostics": payload,
+        }
     try:
         return SERVICE.get_tdm_synthetic_profile(
             table_name=table_name,

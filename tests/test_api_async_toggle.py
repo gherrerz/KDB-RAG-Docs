@@ -228,6 +228,59 @@ def test_reset_clears_ingested_data() -> None:
         server.SERVICE.graph_store.clear_all_edges = original_clear_all_edges
 
 
+def test_core_endpoints_degrade_cleanly_when_neo4j_disabled() -> None:
+    """Keep standard ingest/query/reset operational when USE_NEO4J=false."""
+    client = TestClient(server.app)
+    original_neo4j = server.SETTINGS.use_neo4j
+    original_embed = index_chroma.embed_text
+    original_provider = server.SETTINGS.llm_provider
+    original_openai_key = server.SETTINGS.openai_api_key
+
+    server.SETTINGS.use_neo4j = False
+    server.SETTINGS.llm_provider = "openai"
+    server.SETTINGS.openai_api_key = "test-key"
+    index_chroma.embed_text = _fake_embed_text
+
+    try:
+        payload = {
+            "source": {
+                "source_type": "folder",
+                "local_path": "sample_data",
+            }
+        }
+        ingest_response = client.post("/sources/ingest", json=payload)
+        assert ingest_response.status_code == 200
+        ingest_body = ingest_response.json()
+        assert ingest_body["status"] == "completed"
+
+        query_payload = {
+            "question": "Who works on Project Atlas?",
+            "force_fallback": True,
+        }
+        query_response = client.post("/query", json=query_payload)
+        assert query_response.status_code == 200
+        query_body = query_response.json()
+        assert query_body["graph_paths"] == []
+        assert query_body.get("diagnostics", {}).get("neo4j_enabled") is False
+
+        readiness_response = client.get("/sources/ingest/readiness")
+        assert readiness_response.status_code == 200
+        readiness_body = readiness_response.json()
+        assert readiness_body["ready"] is True
+        assert readiness_body["checks"]["neo4j"]["required"] is False
+
+        reset_response = client.post("/sources/reset", json={"confirm": True})
+        assert reset_response.status_code == 200
+        reset_body = reset_response.json()
+        assert reset_body["neo4j_enabled"] is False
+        assert reset_body["neo4j_edges_deleted"] == 0
+    finally:
+        server.SETTINGS.use_neo4j = original_neo4j
+        server.SETTINGS.llm_provider = original_provider
+        server.SETTINGS.openai_api_key = original_openai_key
+        index_chroma.embed_text = original_embed
+
+
 def test_get_job_prefers_rq_status_when_local_state_is_stale() -> None:
     """Expose live RQ status when local job row is still queued."""
     client = TestClient(server.app)

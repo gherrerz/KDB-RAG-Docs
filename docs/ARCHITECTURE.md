@@ -11,7 +11,7 @@ servicios para resolver dos capacidades principales:
   evidencia.
 
 El sistema esta disenado para operar con ChromaDB activo en runtime para la
-capa vectorial y Neo4j obligatorio para capa de grafo. Componentes opcionales
+capa vectorial y Neo4j opcional para capa de grafo. Componentes opcionales
 adicionales de produccion:
 
 - Redis + RQ para ingesta asincrona.
@@ -37,7 +37,8 @@ adicionales de produccion:
 ### Principios de diseno actuales
 
 - Chroma-first: la capa vectorial requiere Chroma (`USE_CHROMA=true`).
-- Neo4j obligatorio: la capa de grafo requiere `USE_NEO4J=true` y credenciales.
+- Neo4j opcional: la capa de grafo se habilita con `USE_NEO4J=true`; con
+  `USE_NEO4J=false` el core sigue operativo sin expansion por grafo.
 - Evolutivo: interfaces internas permiten reemplazar componentes por equivalentes
   gestionados sin romper contratos API/UI.
 - Explicable: cada respuesta expone evidencias (`citations`) y rutas de grafo
@@ -78,7 +79,7 @@ flowchart TB
     subgraph L1[CAPA 1 - Datos]
         SQLite[(SQLite metadata.db)]
       Chroma[(Chroma vector store)]
-        Neo4j[(Neo4j obligatorio)]
+        Neo4j[(Neo4j opcional)]
         Redis[(Redis opcional)]
     end
 

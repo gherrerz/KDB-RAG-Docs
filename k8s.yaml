@@ -1,0 +1,82 @@
+replicaCount: 1
+epm: BDQ4
+service:
+  port: 8000
+
+appContext: /
+
+health:
+  http:
+    path: /health
+  liveness:
+    failureThreshold: 60
+
+#depdendencyCheck:
+#  - passsport
+#  - db_appeal
+
+resources:
+  limits:
+    cpu: 4000m
+    memory: 4096Mi
+  requests:
+    cpu: 500m
+    memory: 1024Mi
+
+secrets:
+#  - name: OPENAI_API_KEY:
+#  - name: GEMINI_API_KEY:
+  - name: VERTEX_SERVICE_ACCOUNT_JSON_B64
+  - name: NEO4J_USER
+  - name: NEO4J_PASSWORD
+
+vault:
+  enabled: false
+
+trafficControl:
+  enabled: true
+  egress:
+    services:
+      - copilot.external.svc
+      - copilotapi.external.svc
+      - jira-cl.external.svc.cluster.local
+      - jenkins-dev.external.svc
+      - bitbucket-cl.external.svc
+
+ingress:
+  enabled: true
+  internet_facing:
+    enabled: false
+  pathPrefix: /
+  cors:
+    envsAllowedOrigins:
+      prd: "*"
+      uat: "*"
+      ist: "*"
+      dev: "*"
+
+extraEnv:
+  OPENAI_BASE_URL: "https://api.openai.com/v1"
+  OPENAI_ANSWER_MODEL: "gpt-4.1-mini"
+  OPENAI_EMBEDDING_MODEL: "text-embedding-3-small"
+  GEMINI_ANSWER_MODEL: "gemini-2.5-flash"
+  GEMINI_EMBEDDING_MODEL: "text-embedding-004"
+  LLM_PROVIDER: "vertex"
+  LLM_EMBEDDING: "text-embedding-005"
+  VERTEX_LOCATION: "us-central1"
+  VERTEX_ANSWER_MODEL: "gemini-2.5-flash"
+  VERTEX_EMBEDDING_MODEL: "text-embedding-005"
+  VERTEX_LABEL_SERVICE: "webspec-coipo"
+  VERTEX_LABEL_SERVICE_ACCOUNT: "qa-anthos"
+  VERTEX_LABEL_MODEL_NAME: "gemini-2.5-flash"
+  VERTEX_LABEL_USE_CASE_ID: "tbd"
+  DATA_DIR: "/data"
+  WORKSPACE_DIR: "/data/workspace"
+  USE_NEO4J: "false"
+  NEO4J_URI: "bolt://localhost:7687"
+  USE_CHROMA: "true"
+  CHROMA_PERSIST_DIR: "/data/chromadb"
+  CHROMA_COLLECTION: "coderag_chunks"
+  USE_RQ: "false"
+  REDIS_URL: "redis://localhost:6379/0"
+  RQ_INGEST_JOB_TIMEOUT_SEC: "900"

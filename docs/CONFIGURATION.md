@@ -123,7 +123,9 @@ Precedencia:
 
 La aplicacion carga automaticamente variables desde `.env` en runtime.
 
-- `USE_NEO4J`: debe estar en `true` (Neo4j es obligatorio en runtime)
+- `USE_NEO4J`: habilita la capa de grafo cuando vale `true`.
+- Con `USE_NEO4J=false`, la API core sigue operativa sin expansion por grafo,
+  pero TDM queda deshabilitado en modo degradado.
 - `NEO4J_URI`
 - `NEO4J_USER`
 - `NEO4J_PASSWORD`
@@ -156,6 +158,15 @@ NEO4J_INGEST_BATCH_SIZE=500
 NEO4J_INGEST_MAX_RETRIES=2
 NEO4J_INGEST_RETRY_DELAY_MS=150
 ```
+
+Ejemplo sin Neo4j:
+
+```dotenv
+USE_NEO4J=false
+```
+
+En este modo la ingesta y query core siguen disponibles, pero los endpoints
+`/tdm/*` responden en modo degradado y no realizan operaciones TDM.
 
 ## Source payload
 

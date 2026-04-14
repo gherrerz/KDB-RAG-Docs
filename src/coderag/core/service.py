@@ -107,7 +107,6 @@ class RagApplicationService:
 
     def __init__(self) -> None:
         SETTINGS.require_chroma_enabled()
-        SETTINGS.require_neo4j_enabled()
         self.store = RUNTIME.store
         self.bm25_index = BM25Index()
         self.vector_index = LocalVectorIndex(
@@ -151,6 +150,23 @@ class RagApplicationService:
         self.graph_store.close()
         self.vector_index.close()
 
+    def is_graph_enabled(self) -> bool:
+        """Return whether graph-backed runtime features are enabled."""
+        return self.graph_store.is_enabled()
+
+    def is_tdm_graph_enabled(self) -> bool:
+        """Return whether TDM can use graph-backed capabilities."""
+        return bool(SETTINGS.enable_tdm and self.is_graph_enabled())
+
+    def _ensure_tdm_graph_enabled(self) -> None:
+        """Require both TDM feature flag and Neo4j graph runtime."""
+        self._ensure_tdm_enabled()
+        if not self.is_graph_enabled():
+            raise RuntimeError(
+                "TDM is unavailable because USE_NEO4J=false. "
+                "Enable Neo4j graph runtime to use TDM endpoints."
+            )
+
     def reset_all(self) -> ResetAllResponse:
         """Reset all persisted indexing artifacts across storage layers."""
         deleted = self.store.clear_all_data()
@@ -159,7 +175,7 @@ class RagApplicationService:
             SETTINGS.data_dir
         )
 
-        neo4j_enabled = True
+        neo4j_enabled = self.is_graph_enabled()
         neo4j_edges_deleted = self.graph_store.clear_all_edges()
 
         self.store.bump_index_version()
@@ -389,32 +405,44 @@ class RagApplicationService:
             progress_pct=65.0,
         )
 
-        edges = build_graph_edges(source_id=source_id, chunks=chunks)
-        _add_step(
-            "build_graph_edges",
-            {
-                "edges": len(edges),
-            },
-            progress_pct=75.0,
-        )
+        if self.is_graph_enabled():
+            edges = build_graph_edges(source_id=source_id, chunks=chunks)
+            _add_step(
+                "build_graph_edges",
+                {
+                    "edges": len(edges),
+                },
+                progress_pct=75.0,
+            )
 
-        self.store.replace_graph_edges(source_id=source_id, edges=edges)
-        graph_metrics = self.graph_store.replace_edges(
-            source_id=source_id,
-            edges=edges,
-        )
-        persist_graph_details: Dict[str, object] = {
-            "edges": len(edges),
-            "neo4j_enabled": self.graph_store.is_enabled(),
-        }
-        if isinstance(graph_metrics, dict):
-            for key, value in graph_metrics.items():
-                persist_graph_details[f"neo4j_{key}"] = value
-        _add_step(
-            "persist_graph",
-            persist_graph_details,
-            progress_pct=85.0,
-        )
+            self.store.replace_graph_edges(source_id=source_id, edges=edges)
+            graph_metrics = self.graph_store.replace_edges(
+                source_id=source_id,
+                edges=edges,
+            )
+            persist_graph_details: Dict[str, object] = {
+                "edges": len(edges),
+                "neo4j_enabled": True,
+            }
+            if isinstance(graph_metrics, dict):
+                for key, value in graph_metrics.items():
+                    persist_graph_details[f"neo4j_{key}"] = value
+            _add_step(
+                "persist_graph",
+                persist_graph_details,
+                progress_pct=85.0,
+            )
+        else:
+            _add_step(
+                "persist_graph",
+                {
+                    "edges": 0,
+                    "neo4j_enabled": False,
+                    "skipped": True,
+                    "reason": "USE_NEO4J=false",
+                },
+                progress_pct=85.0,
+            )
 
         self.rebuild_indexes(source_id=source_id)
         _add_step(
@@ -511,20 +539,22 @@ class RagApplicationService:
         reranked = rerank_results(request.question, hits, top_k=top_k)
         chunks = [item[0] for item in reranked]
 
-        try:
-            graph_paths = self.graph_store.expand_paths(
-                query=request.question,
-                hops=max(1, hops),
-                max_paths=6,
-                source_id=request.source_id,
-            )
-        except TypeError:
-            # Backward-compatibility for test doubles with old signature.
-            graph_paths = self.graph_store.expand_paths(
-                query=request.question,
-                hops=max(1, hops),
-                max_paths=6,
-            )
+        graph_paths: List[GraphPath] = []
+        if self.is_graph_enabled():
+            try:
+                graph_paths = self.graph_store.expand_paths(
+                    query=request.question,
+                    hops=max(1, hops),
+                    max_paths=6,
+                    source_id=request.source_id,
+                )
+            except TypeError:
+                # Backward-compatibility for test doubles with old signature.
+                graph_paths = self.graph_store.expand_paths(
+                    query=request.question,
+                    hops=max(1, hops),
+                    max_paths=6,
+                )
 
         doc_map = self.store.get_document_map(source_id=request.source_id)
 
@@ -600,6 +630,7 @@ class RagApplicationService:
                 {chunk.document_id for chunk in chunks}
             ),
             "graph_paths": len(graph_paths),
+            "neo4j_enabled": self.is_graph_enabled(),
             "requested_mode": requested_mode,
             "effective_mode": effective_mode,
             "llm_invoked": llm_invoked,
@@ -625,10 +656,7 @@ class RagApplicationService:
 
     def ingest_tdm_assets(self, request: IngestionRequest) -> Dict[str, object]:
         """Ingest TDM metadata assets into additive catalog tables."""
-        if not SETTINGS.enable_tdm:
-            raise RuntimeError(
-                "TDM ingestion is disabled. Set ENABLE_TDM=true to enable."
-            )
+        self._ensure_tdm_graph_enabled()
 
         summary = ingest_tdm_assets(
             source=request.source,
@@ -675,7 +703,7 @@ class RagApplicationService:
 
     def query_tdm(self, request: "TdmQueryRequest") -> "TdmQueryResponse":
         """Run TDM catalog query mode for agent-facing workflows."""
-        self._ensure_tdm_enabled()
+        self._ensure_tdm_graph_enabled()
 
         tables = self.store.list_tdm_tables(source_id=request.source_id)
         columns = self.store.list_tdm_columns(source_id=request.source_id)
@@ -788,7 +816,7 @@ class RagApplicationService:
         source_id: Optional[str] = None,
     ) -> Dict[str, object]:
         """Return TDM catalog data for one service name."""
-        self._ensure_tdm_enabled()
+        self._ensure_tdm_graph_enabled()
         mappings = self.store.list_tdm_service_mappings(source_id=source_id)
         selected = [
             item
@@ -809,7 +837,7 @@ class RagApplicationService:
         source_id: Optional[str] = None,
     ) -> Dict[str, object]:
         """Return TDM catalog data for one table name."""
-        self._ensure_tdm_enabled()
+        self._ensure_tdm_graph_enabled()
         tables = self.store.list_tdm_tables(source_id=source_id)
         matched_tables = [
             table
@@ -840,7 +868,7 @@ class RagApplicationService:
         request: "TdmQueryRequest",
     ) -> Dict[str, object]:
         """Build lightweight virtualization preview from TDM catalog data."""
-        self._ensure_tdm_enabled()
+        self._ensure_tdm_graph_enabled()
         if not SETTINGS.tdm_enable_virtualization:
             raise RuntimeError(
                 "TDM virtualization is disabled. Set "
@@ -880,7 +908,7 @@ class RagApplicationService:
         target_rows: int = 1000,
     ) -> Dict[str, object]:
         """Build and persist a synthetic profile plan for one table."""
-        self._ensure_tdm_enabled()
+        self._ensure_tdm_graph_enabled()
         if not SETTINGS.tdm_enable_synthetic:
             raise RuntimeError(
                 "TDM synthetic planning is disabled. Set "

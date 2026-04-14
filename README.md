@@ -44,13 +44,15 @@ Aplicacion Python para ingesta documental y consulta con RAG hibrido
 - API: FastAPI
 - Vector index: `ChromaVectorIndex` persistente en `CHROMA_PERSIST_DIR`
 - BM25: `rank-bm25`
-- Grafo: Neo4j obligatorio para persistencia y expansion de paths
+- Grafo: Neo4j opcional para persistencia y expansion de paths
 - Storage metadata: SQLite en `storage/metadata.db`
 
 ### Estado del vector store
 
 - El runtime requiere `USE_CHROMA=true`.
-- El runtime requiere `USE_NEO4J=true`.
+- `USE_NEO4J=true` habilita persistencia y expansion por grafo.
+- `USE_NEO4J=false` mantiene operativos ingest/query core con
+  `graph_paths=[]` y sin persistencia de aristas en Neo4j.
 - Los embeddings se calculan con el proveedor configurado (`openai`,
   `gemini` o `vertex`) y se guardan en ChromaDB.
 - No existe fallback a embeddings locales en memoria cuando falta
@@ -61,6 +63,9 @@ Aplicacion Python para ingesta documental y consulta con RAG hibrido
 - Extension TDM aditiva para catalogo esquema-servicio, grafo tipado,
   masking preview, virtualizacion preview y planificacion sintetica.
 - Los endpoints `/tdm/*` requieren `ENABLE_TDM=true`.
+- Los endpoints `/tdm/*` tambien requieren `USE_NEO4J=true`; si
+  `USE_NEO4J=false`, responden `HTTP 200` en modo degradado con mensaje
+  explicito de indisponibilidad.
 - Endpoints disponibles:
   - `POST /tdm/ingest`
   - `POST /tdm/query`
@@ -134,6 +139,8 @@ python src/run_ui.py
 - Usar `Perfil sintetico` para
   `GET /tdm/synthetic/profile/{table_name}`.
 - Si `ENABLE_TDM=false`, la UI mostrara mensaje explicito de TDM deshabilitado.
+- Si `USE_NEO4J=false`, la UI recibira respuestas degradadas para TDM y debe
+  tratarlas como capacidad no disponible.
 - Si una capacidad esta deshabilitada por flag (virtualization/synthetic),
   la UI mostrara el hint correspondiente para activar el flag correcto.
 - Si el backend devuelve `503`, la UI mostrara estado de indisponibilidad

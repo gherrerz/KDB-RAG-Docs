@@ -57,6 +57,7 @@ def test_vertex_provider_requires_service_account_credentials() -> None:
         llm_provider="vertex",
         vertex_project_id="project-id",
         vertex_service_account_json=None,
+        vertex_service_account_json_b64=None,
     )
     with pytest.raises(RuntimeError):
         settings.require_embedding_provider_configured()

@@ -67,11 +67,7 @@ def _normalize_token(token: str) -> str:
 
 
 class GraphStore:
-    """Bridge for graph persistence and traversal.
-
-    Neo4j is mandatory in runtime. Operations fail explicitly when
-    configuration or connectivity is invalid.
-    """
+    """Bridge for graph persistence and traversal."""
 
     def __init__(self) -> None:
         self._driver = None
@@ -169,6 +165,13 @@ class GraphStore:
         edges: Iterable[Tuple[str, str, str, str, str]],
     ) -> dict[str, int]:
         """Replace edge set for one source in Neo4j."""
+        if not self.is_enabled():
+            return {
+                "batch_size": max(1, SETTINGS.neo4j_ingest_batch_size),
+                "batches_written": 0,
+                "rows_written": 0,
+                "retries": 0,
+            }
         driver = self._get_driver()
 
         edge_rows = list(edges)
@@ -210,6 +213,8 @@ class GraphStore:
 
     def clear_all_edges(self) -> int:
         """Delete all RELATES_TO edges from Neo4j and return count."""
+        if not self.is_enabled():
+            return 0
         driver = self._get_driver()
 
         with driver.session() as session:
@@ -262,6 +267,13 @@ class GraphStore:
         typed_edges: Iterable[Tuple[str, str, str, str]],
     ) -> dict[str, int]:
         """Replace typed TDM edges for one source in Neo4j."""
+        if not self.is_enabled():
+            return {
+                "batch_size": max(1, SETTINGS.neo4j_ingest_batch_size),
+                "batches_written": 0,
+                "rows_written": 0,
+                "retries": 0,
+            }
         driver = self._get_driver()
 
         edge_rows = list(typed_edges)
@@ -318,6 +330,8 @@ class GraphStore:
         rel_types: Optional[List[str]] = None,
     ) -> List[GraphPath]:
         """Expand typed TDM graph paths using relation filters when provided."""
+        if not self.is_enabled():
+            return []
         driver = self._get_driver()
         entities = self._resolve_entities_from_query_tokens(
             driver=driver,
@@ -382,6 +396,8 @@ class GraphStore:
         source_id: Optional[str] = None,
     ) -> List[GraphPath]:
         """Expand multi-hop graph paths using Neo4j runtime."""
+        if not self.is_enabled():
+            return []
         driver = self._get_driver()
 
         entities = list(dict.fromkeys(ENTITY_PATTERN.findall(query)))
