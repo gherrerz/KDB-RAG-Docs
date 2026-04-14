@@ -71,7 +71,7 @@ extraEnv:
   VERTEX_LABEL_MODEL_NAME: "gemini-2.5-flash"
   VERTEX_LABEL_USE_CASE_ID: "tbd"
   DATA_DIR: "/app/data"
-  WORKSPACE_DIR: "/data/workspace"
+  WORKSPACE_DIR: "/app/data/workspace"
   USE_NEO4J: "false"
   NEO4J_URI: "bolt://localhost:7687"
   USE_CHROMA: "true"
