@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import os
 from typing import Any
+from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QMessageBox
 
 from coderag.ui.query_view import QueryView
 
@@ -238,3 +240,71 @@ def test_query_view_disables_picker_when_catalog_unavailable() -> None:
     assert refreshed is False
     assert view.document_picker_button.isEnabled() is False
     assert "no disponible" in view.document_catalog_label.text().casefold()
+
+
+def test_query_view_deletes_selected_documents_and_updates_state() -> None:
+    """Remove selected documents from UI state after confirmed delete."""
+    _ensure_app()
+    deleted_ids: list[str] = []
+
+    def _on_delete_document(document_id: str) -> dict[str, Any]:
+        deleted_ids.append(document_id)
+        return {
+            "status": "completed",
+            "document_id": document_id,
+        }
+
+    view = QueryView(
+        lambda payload: {"answer": "ok", "diagnostics": {}, "citations": [], "graph_paths": []},
+        on_delete_document=_on_delete_document,
+    )
+    view._available_documents = [
+        {
+            "document_id": "doc-1",
+            "title": "engineering",
+            "path_or_url": "sample_data/engineering.md",
+            "source_id": "src-1",
+        },
+        {
+            "document_id": "doc-2",
+            "title": "policy_finance",
+            "path_or_url": "sample_data/policy_finance.md",
+            "source_id": "src-1",
+        },
+    ]
+    view._set_selected_documents(view._available_documents)
+
+    with patch(
+        "coderag.ui.query_view.QMessageBox.question",
+        return_value=QMessageBox.StandardButton.Yes,
+    ):
+        view._delete_selected_documents()
+
+    assert deleted_ids == ["doc-1", "doc-2"]
+    assert view.selected_document_ids() == []
+    assert view._available_documents == []
+    assert "documentos eliminados" in view.status_message.text().casefold()
+
+
+def test_query_view_disables_delete_when_no_selection_exists() -> None:
+    """Keep delete action disabled until at least one document is selected."""
+    _ensure_app()
+
+    view = QueryView(
+        lambda payload: {"answer": "ok", "diagnostics": {}, "citations": [], "graph_paths": []},
+        on_delete_document=lambda document_id: {"status": "completed"},
+    )
+    view._available_documents = [
+        {
+            "document_id": "doc-1",
+            "title": "engineering",
+            "path_or_url": "sample_data/engineering.md",
+            "source_id": "src-1",
+        }
+    ]
+
+    view._refresh_document_catalog_state()
+    assert view.delete_documents_button.isEnabled() is False
+
+    view._set_selected_documents(view._available_documents)
+    assert view.delete_documents_button.isEnabled() is True

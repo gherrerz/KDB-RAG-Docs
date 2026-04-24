@@ -32,8 +32,9 @@ de la red puede consumirse usando la IP del host.
 | Ingestion async | POST | `/sources/ingest/async` | `ingest_source_async` | `enqueue_ingest_job` o `enqueue_local_ingest_job` | `IngestionRequest` | `{"job_id", "status", "message"}` |
 | Ingestion readiness | GET | `/sources/ingest/readiness` | `ingest_readiness` | checks runtime + Neo4j + Redis + RQ worker | N/A | `{"ready", "recommendation", "checks"}` |
 | Documents catalog | GET | `/sources/documents` | `list_documents` | `SERVICE.list_documents` | `source_id?` | `{"count", "documents"}` |
+| Delete document | DELETE | `/sources/documents/{document_id}` | `delete_document` | `SERVICE.delete_document` | `document_id` en path | `DeleteDocumentResponse` |
 | Job status | GET | `/jobs/{job_id}` | `get_job` | `SERVICE.get_job` y fallback `get_rq_job_status` | `job_id` en path | `dict` (estado + timeline) |
-| Full reset | POST | `/sources/reset` | `reset_sources` | `SERVICE.reset_all` | `ResetAllRequest` | `ResetAllResponse` |
+| Full reset | DELETE | `/sources/reset?confirm=true` | `reset_sources` | `SERVICE.reset_all` | `confirm` query param | `ResetAllResponse` |
 | Query | POST | `/query` | `query` | `SERVICE.query` | `QueryRequest` | `QueryResponse` |
 | Retrieval alias | POST | `/query/retrieval` | `retrieval_only` | `SERVICE.query` | `QueryRequest` | `QueryResponse` |
 | TDM ingest | POST | `/tdm/ingest` | `ingest_tdm` | `SERVICE.ingest_tdm_assets` | `IngestionRequest` | `dict` (resumen TDM) |
@@ -57,14 +58,6 @@ de la red puede consumirse usando la IP del host.
     "local_path": "sample_data",
     "filters": {}
   }
-}
-```
-
-### ResetAllRequest
-
-```json
-{
-  "confirm": true
 }
 ```
 
@@ -129,6 +122,25 @@ de la red puede consumirse usando la IP del host.
 
 ## Endpoints en detalle
 
+## DELETE /sources/reset
+
+Ruta canonica para reset destructivo del estado de ingesta.
+
+Request:
+
+- Query param obligatorio: `confirm=true`
+
+Comportamiento:
+
+- Borra documentos, chunks y jobs persistidos.
+- Limpia el mirror de staging local y reinicia indices runtime.
+- Elimina relaciones gestionadas de grafo y metadatos TDM persistidos.
+
+Codigos comunes:
+
+- `200`: reset completado.
+- `400`: falta confirmacion explicita.
+
 ## GET /health
 
 Valida que el servicio este en ejecucion.
@@ -166,6 +178,39 @@ Codigos comunes:
 ## POST /sources/ingest
 
 Ejecuta pipeline de ingesta e indexacion en modo sincrono.
+
+## DELETE /sources/documents/{document_id}
+
+Elimina un documento persistido puntual sin ejecutar una nueva ingesta.
+
+Comportamiento:
+
+- Elimina la fila de documento y sus chunks en SQLite.
+- Elimina los vectores asociados en Chroma usando `document_id`.
+- Si el archivo persistido apuntaba al mirror de staging bajo `DATA_DIR`,
+  intenta borrar tambien la copia fisica y podar carpetas vacias.
+- Resincroniza el grafo gestionado para el `source_id` afectado.
+- Reconstuye BM25 para que la consulta refleje el borrado inmediatamente.
+
+Response (ejemplo exitoso):
+
+```json
+{
+  "status": "completed",
+  "message": "Document was deleted from persisted metadata, vector index, and managed staging mirror.",
+  "document_id": "abc123",
+  "source_id": "f0e1d2c3b4a5",
+  "deleted_documents": 1,
+  "deleted_chunks": 3,
+  "deleted_staging_files": 1,
+  "reindexed_sources": 1
+}
+```
+
+Codigos comunes:
+
+- `200`: documento eliminado.
+- `404`: no existe documento persistido con ese `document_id`.
 
 Comportamiento adicional:
 
@@ -331,7 +376,7 @@ Response (shape):
 }
 ```
 
-## POST /sources/reset
+## DELETE /sources/reset
 
 Borra repositorios de ingesta y deja el sistema listo para primera ingesta.
 
@@ -345,11 +390,7 @@ Incluye:
 
 Request:
 
-```json
-{
-  "confirm": true
-}
-```
+- Query param obligatorio: `confirm=true`
 
 Response:
 

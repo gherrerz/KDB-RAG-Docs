@@ -648,6 +648,35 @@ class MetadataStore:
         finally:
             conn.close()
 
+    def get_document_by_id(
+        self,
+        document_id: str,
+    ) -> Optional[DocumentCatalogEntry]:
+        """Return one persisted document entry by document id."""
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                """
+                SELECT document_id, source_id, title, path_or_url,
+                       content_type, updated_at
+                FROM documents
+                WHERE document_id = ?
+                """,
+                (document_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            return DocumentCatalogEntry(
+                document_id=row["document_id"],
+                source_id=row["source_id"],
+                title=row["title"],
+                path_or_url=row["path_or_url"],
+                content_type=row["content_type"],
+                updated_at=datetime.fromisoformat(row["updated_at"]),
+            )
+        finally:
+            conn.close()
+
     def find_documents_by_title_and_content_type(
         self,
         title: str,

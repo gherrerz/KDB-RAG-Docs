@@ -12,6 +12,7 @@ from time import perf_counter
 from typing import Callable, Dict, List, Optional
 
 from coderag.core.models import (
+    DeleteDocumentResponse,
     DocumentRecord,
     DocumentCatalogEntry,
     Evidence,
@@ -205,22 +206,13 @@ class RagApplicationService:
             return edges, graph_metrics
         return edges, {}
 
-    def _deduplicate_documents_before_ingest(
+    def _delete_persisted_documents(
         self,
-        documents,
-        current_source_id: str,
+        documents: List[DocumentCatalogEntry],
+        skip_reindex_source_ids: Optional[set[str]] = None,
     ) -> Dict[str, object]:
-        """Remove older ingested documents that match title + content type."""
-        duplicates_by_id: dict[str, DocumentCatalogEntry] = {}
-        for document in documents:
-            matches = self.store.find_documents_by_title_and_content_type(
-                title=document.title,
-                content_type=document.content_type,
-            )
-            for match in matches:
-                duplicates_by_id.setdefault(match.document_id, match)
-
-        if not duplicates_by_id:
+        """Delete persisted documents across metadata, vector, staging, and graph."""
+        if not documents:
             return {
                 "matched_documents": 0,
                 "deleted_documents": 0,
@@ -238,7 +230,7 @@ class RagApplicationService:
         affected_source_ids: set[str] = set()
         staging_warnings: list[str] = []
 
-        for duplicate in duplicates_by_id.values():
+        for duplicate in documents:
             deleted_chunks += self.store.delete_chunks_by_document_id(
                 duplicate.document_id
             )
@@ -256,28 +248,55 @@ class RagApplicationService:
                 staging_warnings.append(warning)
             affected_source_ids.add(duplicate.source_id)
 
-        rebuilt_source_ids = sorted(affected_source_ids - {current_source_id})
+        skipped_source_ids = skip_reindex_source_ids or set()
+        rebuilt_source_ids = sorted(affected_source_ids - skipped_source_ids)
         for source_id in rebuilt_source_ids:
             self._sync_graph_for_source(source_id)
 
+        self.store.bump_index_version()
         self._rebuild_bm25_from_store()
 
         return {
-            "matched_documents": len(duplicates_by_id),
+            "matched_documents": len(documents),
             "deleted_documents": deleted_documents,
             "deleted_chunks": deleted_chunks,
             "deleted_staging_files": deleted_staging_files,
             "reindexed_sources": len(rebuilt_source_ids),
-            "replaced_document_ids": sorted(duplicates_by_id.keys()),
+            "replaced_document_ids": sorted(
+                duplicate.document_id for duplicate in documents
+            ),
             "replaced_paths": sorted(
                 {
                     duplicate.path_or_url
-                    for duplicate in duplicates_by_id.values()
+                    for duplicate in documents
                     if duplicate.path_or_url.strip()
                 }
             ),
             "staging_warnings": staging_warnings,
         }
+
+    def _deduplicate_documents_before_ingest(
+        self,
+        documents,
+        current_source_id: str,
+    ) -> Dict[str, object]:
+        """Remove older ingested documents that match title + content type."""
+        duplicates_by_id: dict[str, DocumentCatalogEntry] = {}
+        for document in documents:
+            matches = self.store.find_documents_by_title_and_content_type(
+                title=document.title,
+                content_type=document.content_type,
+            )
+            for match in matches:
+                duplicates_by_id.setdefault(match.document_id, match)
+
+        if not duplicates_by_id:
+            return self._delete_persisted_documents([])
+
+        return self._delete_persisted_documents(
+            list(duplicates_by_id.values()),
+            skip_reindex_source_ids={current_source_id},
+        )
 
     def _collapse_incoming_duplicate_documents(
         self,
@@ -381,6 +400,28 @@ class RagApplicationService:
             deleted_jobs=deleted["deleted_jobs"],
             neo4j_enabled=neo4j_enabled,
             neo4j_edges_deleted=neo4j_edges_deleted,
+        )
+
+    def delete_document(self, document_id: str) -> DeleteDocumentResponse:
+        """Delete one persisted document and refresh dependent indexes."""
+        document = self.store.get_document_by_id(document_id)
+        if document is None:
+            raise KeyError(document_id)
+
+        deleted = self._delete_persisted_documents([document])
+
+        return DeleteDocumentResponse(
+            status="completed",
+            message=(
+                "Document was deleted from persisted metadata, vector index, "
+                "and managed staging mirror."
+            ),
+            document_id=document.document_id,
+            source_id=document.source_id,
+            deleted_documents=int(deleted["deleted_documents"]),
+            deleted_chunks=int(deleted["deleted_chunks"]),
+            deleted_staging_files=int(deleted["deleted_staging_files"]),
+            reindexed_sources=int(deleted["reindexed_sources"]),
         )
 
     def ingest(

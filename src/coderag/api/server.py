@@ -8,9 +8,9 @@ from typing import Any
 from fastapi import FastAPI, HTTPException
 
 from coderag.core.models import (
+    DeleteDocumentResponse,
     IngestionRequest,
     QueryRequest,
-    ResetAllRequest,
     TdmQueryRequest,
 )
 from coderag.core.service import SERVICE
@@ -20,6 +20,17 @@ from coderag.jobs.queue import (
     enqueue_local_ingest_job,
     get_rq_job_status,
 )
+
+
+def _run_reset_all(confirm: bool) -> dict[str, Any]:
+    """Execute destructive reset only after explicit caller confirmation."""
+    if not confirm:
+        raise HTTPException(
+            status_code=400,
+            detail="Reset requires explicit confirmation.",
+        )
+    response = SERVICE.reset_all()
+    return response.model_dump()
 
 
 def _is_queue_connection_error(exc: Exception) -> bool:
@@ -222,6 +233,31 @@ def list_documents(source_id: str | None = None) -> dict[str, Any]:
     }
 
 
+@app.delete(
+    "/sources/documents/{document_id}",
+    tags=["ingestion"],
+    summary="Delete one ingested document",
+    description=(
+        "Delete a persisted document by document_id, including SQLite "
+        "metadata/chunks, Chroma vectors, managed staging mirror copy when "
+        "present, and graph resync for the affected source."
+    ),
+    responses={
+        404: {"description": "Document not found for the provided id."}
+    },
+)
+def delete_document(document_id: str) -> DeleteDocumentResponse:
+    """Expose one-document deletion without changing ingest dedup behavior."""
+    try:
+        response = SERVICE.delete_document(document_id)
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Document not found: {document_id}",
+        ) from exc
+    return response
+
+
 @app.get(
     "/sources/ingest/readiness",
     tags=["ingestion"],
@@ -280,28 +316,22 @@ def ingest_source(request: IngestionRequest) -> dict[str, Any]:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
-@app.post(
+@app.delete(
     "/sources/reset",
     tags=["ingestion"],
     summary="Reset all ingestion artifacts",
     description=(
         "Clear persisted ingestion state, TDM metadata, staging mirror, "
         "managed graph relationships, and reset runtime indexes. Requires "
-        "explicit confirmation in request body."
+        "explicit confirmation through the confirm query parameter."
     ),
     responses={
         400: {"description": "Missing confirmation (confirm=false)."}
     },
 )
-def reset_sources(request: ResetAllRequest) -> dict[str, Any]:
+def reset_sources(confirm: bool = False) -> dict[str, Any]:
     """Clear persisted ingestion artifacts and reset runtime indexes."""
-    if not request.confirm:
-        raise HTTPException(
-            status_code=400,
-            detail="Reset requires explicit confirmation.",
-        )
-    response = SERVICE.reset_all()
-    return response.model_dump()
+    return _run_reset_all(confirm=confirm)
 
 
 @app.post(

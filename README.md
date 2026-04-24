@@ -123,6 +123,8 @@ python src/run_ui.py
 - `Modo de ejecucion`: `Asincrono (cola + jobs)` o `Sincrono (directo)`
 - `Local Path`: [sample_data](sample_data/)
 - Click en `Ingest`
+- `Borrado puntual`: si ya conoces un `document_id`, puedes eliminarlo desde
+  el panel de Ingestion con `Eliminar documento`.
 - Si modo async no esta listo, la UI recomienda/usa modo sync para evitar bloqueo.
 - Antes de persistir, la ingesta elimina versiones previas ya ingestadas que
   coincidan por `title + content_type`, incluyendo borrado logico y limpieza
@@ -137,6 +139,9 @@ python src/run_ui.py
 - `Source ID` sigue siendo opcional para acotar por una ingesta concreta.
 - `Documentos (opcional)` permite seleccionar uno o varios documentos ya
   ingestados para limitar la consulta a ese subconjunto.
+- Tras seleccionar documentos en Query, `Eliminar seleccionados` permite
+  borrarlos de forma persistente desde la UI usando el endpoint publico
+  `DELETE /sources/documents/{document_id}`.
 
 5. En la pestaña TDM (nueva):
 - Usar `Ingerir TDM` para invocar `POST /tdm/ingest`.
@@ -173,10 +178,11 @@ python src/run_ui.py
 
 - `GET /health`
 - `POST /sources/ingest`
-- `POST /sources/reset`
+- `DELETE /sources/reset?confirm=true`
 - `POST /sources/ingest/async`
 - `GET /sources/ingest/readiness`
 - `GET /sources/documents`
+- `DELETE /sources/documents/{document_id}`
 - `GET /jobs/{id}`
 - `POST /query`
 - `POST /query/retrieval`
@@ -251,12 +257,7 @@ Respuesta:
 Nota: si `USE_RQ=false`, el backend devuelve
 `"message": "Ingestion job started (local async worker)"`.
 
-Ejemplo `POST /sources/reset`:
-
-```json
-{
-  "confirm": true
-}
+Ejemplo `DELETE /sources/reset?confirm=true`:
 ```
 
 Respuesta:

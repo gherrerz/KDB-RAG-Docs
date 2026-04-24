@@ -100,7 +100,7 @@ def test_legacy_endpoints_still_work_with_tdm_flags_enabled() -> None:
         assert "graph_paths" in query_body
         assert "diagnostics" in query_body
 
-        reset_response = client.post("/sources/reset", json={"confirm": True})
+        reset_response = client.delete("/sources/reset?confirm=true")
         assert reset_response.status_code == 200
         assert reset_response.json().get("status") == "completed"
     finally:

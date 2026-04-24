@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QMessageBox,
     QPushButton,
     QScrollArea,
     QSplitter,
@@ -182,10 +183,12 @@ class QueryView(QWidget):
         self,
         on_query: Callable[[dict], dict],
         on_list_documents: Callable[[str | None], dict] | None = None,
+        on_delete_document: Callable[[str], dict] | None = None,
     ) -> None:
         super().__init__()
         self._on_query = on_query
         self._on_list_documents = on_list_documents
+        self._on_delete_document = on_delete_document
         self._selected_documents: list[dict[str, Any]] = []
         self._available_documents: list[dict[str, Any]] = []
 
@@ -229,6 +232,12 @@ class QueryView(QWidget):
         self.document_refresh_button.clicked.connect(
             lambda: self._refresh_document_catalog(show_feedback=True)
         )
+        self.delete_documents_button = QPushButton("Eliminar seleccionados")
+        self.delete_documents_button.setMinimumHeight(34)
+        self.delete_documents_button.setProperty("variant", "danger")
+        self.delete_documents_button.clicked.connect(
+            self._delete_selected_documents
+        )
         self.clear_documents_button = QPushButton("Limpiar")
         self.clear_documents_button.setMinimumHeight(34)
         self.clear_documents_button.clicked.connect(self._clear_selected_documents)
@@ -260,6 +269,9 @@ class QueryView(QWidget):
         self.document_refresh_button.setToolTip(
             "Recarga el catalogo de documentos desde la API activa."
         )
+        self.delete_documents_button.setToolTip(
+            "Elimina de forma persistente los documentos seleccionados en el filtro actual."
+        )
         self.hops.setPlaceholderText("1-6")
         self.hops.setToolTip(
             "Profundidad de expansion del grafo. Recomendado: 2."
@@ -273,6 +285,7 @@ class QueryView(QWidget):
         document_row_layout.setSpacing(8)
         document_row_layout.addWidget(self.document_picker_button)
         document_row_layout.addWidget(self.document_refresh_button)
+        document_row_layout.addWidget(self.delete_documents_button)
         document_row_layout.addWidget(self.clear_documents_button)
         document_row_layout.addWidget(self.selected_documents_label, 1)
         document_row_layout.addWidget(self.document_catalog_label)
@@ -382,7 +395,8 @@ class QueryView(QWidget):
         QWidget.setTabOrder(self.question, self.source_id)
         QWidget.setTabOrder(self.source_id, self.document_picker_button)
         QWidget.setTabOrder(self.document_picker_button, self.document_refresh_button)
-        QWidget.setTabOrder(self.document_refresh_button, self.clear_documents_button)
+        QWidget.setTabOrder(self.document_refresh_button, self.delete_documents_button)
+        QWidget.setTabOrder(self.delete_documents_button, self.clear_documents_button)
         QWidget.setTabOrder(self.clear_documents_button, self.hops)
         QWidget.setTabOrder(self.hops, self.include_llm_answer)
         QWidget.setTabOrder(self.include_llm_answer, self.query_button)
@@ -576,6 +590,99 @@ class QueryView(QWidget):
         self._refresh_selected_documents_label()
         self._refresh_document_catalog_state()
 
+    def _delete_selected_documents(self) -> None:
+        """Delete the currently selected documents after explicit confirmation."""
+        if self._on_delete_document is None:
+            self._set_status(
+                "error",
+                "La sesion actual no expone borrado manual de documentos.",
+            )
+            return
+
+        documents = list(self._selected_documents)
+        if not documents:
+            self._set_status(
+                "error",
+                "Selecciona uno o mas documentos antes de eliminarlos.",
+            )
+            return
+
+        preview = ", ".join(
+            str(item.get("title") or item.get("document_id") or "")
+            for item in documents[:3]
+        )
+        if len(documents) > 3:
+            preview += f" y {len(documents) - 3} mas"
+
+        decision = QMessageBox.question(
+            self,
+            "Confirmar borrado de documentos",
+            (
+                "Esta accion eliminara de forma persistente los documentos "
+                f"seleccionados ({len(documents)}).\n\n{preview}\n\n"
+                "Se borraran metadatos, chunks, vectores y mirror de staging "
+                "cuando aplique."
+            ),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if decision != QMessageBox.StandardButton.Yes:
+            return
+
+        deleted_ids: list[str] = []
+        failed_documents: list[str] = []
+        for item in documents:
+            document_id = str(item.get("document_id") or "").strip()
+            if not document_id:
+                continue
+            result = self._on_delete_document(document_id)
+            if "error" in result or "detail" in result:
+                failed_documents.append(
+                    str(item.get("title") or document_id)
+                )
+                continue
+            deleted_ids.append(document_id)
+
+        if deleted_ids:
+            deleted_set = set(deleted_ids)
+            self._available_documents = [
+                item
+                for item in self._available_documents
+                if str(item.get("document_id") or "") not in deleted_set
+            ]
+            self._selected_documents = [
+                item
+                for item in self._selected_documents
+                if str(item.get("document_id") or "") not in deleted_set
+            ]
+            self._refresh_selected_documents_label()
+            if self._on_list_documents is not None:
+                self._refresh_document_catalog(show_feedback=False)
+            else:
+                self._refresh_document_catalog_state()
+
+        if deleted_ids and not failed_documents:
+            self._set_status(
+                "success",
+                f"Documentos eliminados: {len(deleted_ids)}",
+            )
+            return
+
+        if deleted_ids and failed_documents:
+            self._set_status(
+                "error",
+                (
+                    f"Se eliminaron {len(deleted_ids)} documentos, pero "
+                    f"fallaron {len(failed_documents)}."
+                ),
+            )
+            return
+
+        self._set_status(
+            "error",
+            "No se pudo eliminar ninguno de los documentos seleccionados.",
+        )
+
     def _set_selected_documents(
         self,
         documents: Sequence[dict[str, Any]],
@@ -717,6 +824,9 @@ class QueryView(QWidget):
         selected_count = len(self.selected_document_ids())
         self.document_refresh_button.setEnabled(self._on_list_documents is not None)
         self.document_picker_button.setEnabled(document_count > 0)
+        self.delete_documents_button.setEnabled(
+            self._on_delete_document is not None and selected_count > 0
+        )
 
         if document_count <= 0:
             self.document_catalog_label.setProperty("state", "idle")

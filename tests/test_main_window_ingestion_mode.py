@@ -112,3 +112,21 @@ def test_main_window_list_documents_builds_expected_path() -> None:
 
     assert result["count"] == 0
     assert captured[0][0] == "/sources/documents?source_id=src-1"
+
+
+def test_main_window_reset_uses_delete_sources_reset_endpoint() -> None:
+    """Route full reset through canonical DELETE /sources/reset endpoint."""
+    window = _build_lightweight_window()
+
+    captured: list[tuple[str, int]] = []
+
+    def _fake_delete(path: str, timeout: int) -> dict[str, Any]:
+        captured.append((path, timeout))
+        return {"status": "completed"}
+
+    window._delete_json = _fake_delete  # type: ignore[method-assign]
+
+    result = window.reset_all()
+
+    assert result["status"] == "completed"
+    assert captured[0][0] == "/sources/reset?confirm=true"

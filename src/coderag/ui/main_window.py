@@ -76,11 +76,19 @@ class MainWindow(QMainWindow):
             IngestionView(
                 self.ingest,
                 self.reset_all,
+                on_delete_document=self.delete_document,
                 on_ingestion_readiness=self.ingest_readiness,
             ),
             "Ingestion",
         )
-        tabs.addTab(QueryView(self.query, self.list_documents), "Query")
+        tabs.addTab(
+            QueryView(
+                self.query,
+                self.list_documents,
+                on_delete_document=self.delete_document,
+            ),
+            "Query",
+        )
         tabs.addTab(
             TdmView(
                 on_tdm_ingest=self.tdm_ingest,
@@ -170,11 +178,17 @@ class MainWindow(QMainWindow):
             path = f"{path}?source_id={quote(source_id, safe='')}"
         return self._get_json(path, timeout=30)
 
+    def delete_document(self, document_id: str) -> Dict[str, Any]:
+        """Delete one persisted document from the backend catalog."""
+        return self._delete_json(
+            f"/sources/documents/{quote(document_id, safe='')}",
+            timeout=60,
+        )
+
     def reset_all(self) -> Dict[str, Any]:
         """Call backend endpoint to clear all repositories and indexes."""
-        return self._post_json(
-            "/sources/reset",
-            {"confirm": True},
+        return self._delete_json(
+            "/sources/reset?confirm=true",
             timeout=180,
         )
 
@@ -255,6 +269,18 @@ class MainWindow(QMainWindow):
         """Call backend GET endpoint and parse JSON response."""
         try:
             response = requests.get(f"{self.api_base_url}{path}", timeout=timeout)
+            response.raise_for_status()
+            return response.json()
+        except requests.RequestException as exc:
+            return self._format_request_exception(exc)
+
+    def _delete_json(self, path: str, timeout: int) -> Dict[str, Any]:
+        """Call backend DELETE endpoint and parse JSON response."""
+        try:
+            response = requests.delete(
+                f"{self.api_base_url}{path}",
+                timeout=timeout,
+            )
             response.raise_for_status()
             return response.json()
         except requests.RequestException as exc:

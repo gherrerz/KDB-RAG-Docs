@@ -120,8 +120,19 @@ def test_async_ingest_uses_local_worker_when_rq_disabled() -> None:
 def test_reset_requires_confirmation() -> None:
     """Reject reset endpoint calls without explicit confirmation."""
     client = TestClient(server.app)
-    response = client.post("/sources/reset", json={"confirm": False})
+    response = client.delete("/sources/reset")
     assert response.status_code == 400
+
+
+def test_reset_openapi_exposes_only_delete_sources_reset() -> None:
+    """Publish a single reset contract in OpenAPI without deprecated aliases."""
+    client = TestClient(server.app)
+    body = client.get("/openapi.json").json()
+
+    assert "/sources/reset" in body["paths"]
+    assert "delete" in body["paths"]["/sources/reset"]
+    assert "post" not in body["paths"]["/sources/reset"]
+    assert "/sources" not in body["paths"]
 
 
 def test_async_ingest_falls_back_to_local_when_redis_unavailable() -> None:
@@ -204,7 +215,7 @@ def test_reset_clears_ingested_data() -> None:
         assert before_reset.status_code == 200
         assert len(before_reset.json().get("citations", [])) > 0
 
-        reset_response = client.post("/sources/reset", json={"confirm": True})
+        reset_response = client.delete("/sources/reset?confirm=true")
         assert reset_response.status_code == 200
         body = reset_response.json()
         assert body["status"] == "completed"
@@ -269,7 +280,7 @@ def test_core_endpoints_degrade_cleanly_when_neo4j_disabled() -> None:
         assert readiness_body["ready"] is True
         assert readiness_body["checks"]["neo4j"]["required"] is False
 
-        reset_response = client.post("/sources/reset", json={"confirm": True})
+        reset_response = client.delete("/sources/reset?confirm=true")
         assert reset_response.status_code == 200
         reset_body = reset_response.json()
         assert reset_body["neo4j_enabled"] is False
@@ -316,6 +327,137 @@ def test_list_documents_endpoint_returns_ingested_catalog() -> None:
         assert all("document_id" in item for item in body["documents"])
         assert all("title" in item for item in body["documents"])
         assert all("path_or_url" in item for item in body["documents"])
+    finally:
+        server.SETTINGS.llm_provider = original_provider
+        server.SETTINGS.openai_api_key = original_openai_key
+        server.SETTINGS.use_neo4j = original_use_neo4j
+        index_chroma.embed_text = original_embed
+
+
+def test_delete_document_endpoint_removes_one_persisted_document() -> None:
+    """Delete one persisted document without disturbing remaining catalog rows."""
+    client = TestClient(server.app)
+    original_embed = index_chroma.embed_text
+    original_provider = server.SETTINGS.llm_provider
+    original_openai_key = server.SETTINGS.openai_api_key
+    original_use_neo4j = server.SETTINGS.use_neo4j
+
+    server.SETTINGS.llm_provider = "openai"
+    server.SETTINGS.openai_api_key = "test-key"
+    server.SETTINGS.use_neo4j = False
+    index_chroma.embed_text = _fake_embed_text
+
+    try:
+        ingest_response = client.post(
+            "/sources/ingest",
+            json={
+                "source": {
+                    "source_type": "folder",
+                    "local_path": "sample_data",
+                }
+            },
+        )
+        assert ingest_response.status_code == 200
+        source_id = ingest_response.json()["source_id"]
+
+        catalog_before = client.get(f"/sources/documents?source_id={source_id}")
+        assert catalog_before.status_code == 200
+        documents_before = catalog_before.json()["documents"]
+        assert len(documents_before) >= 2
+
+        document_id = documents_before[0]["document_id"]
+
+        delete_response = client.delete(f"/sources/documents/{document_id}")
+        assert delete_response.status_code == 200
+        delete_body = delete_response.json()
+        assert delete_body["status"] == "completed"
+        assert delete_body["document_id"] == document_id
+        assert delete_body["deleted_documents"] == 1
+        assert delete_body["deleted_chunks"] >= 1
+
+        catalog_after = client.get(f"/sources/documents?source_id={source_id}")
+        assert catalog_after.status_code == 200
+        remaining_ids = {
+            item["document_id"] for item in catalog_after.json()["documents"]
+        }
+        assert document_id not in remaining_ids
+        assert len(remaining_ids) == len(documents_before) - 1
+    finally:
+        server.SETTINGS.llm_provider = original_provider
+        server.SETTINGS.openai_api_key = original_openai_key
+        server.SETTINGS.use_neo4j = original_use_neo4j
+        index_chroma.embed_text = original_embed
+
+
+def test_delete_document_endpoint_returns_404_for_unknown_document() -> None:
+    """Reject delete requests for document ids that are not persisted."""
+    client = TestClient(server.app)
+    response = client.delete("/sources/documents/missing-document")
+    assert response.status_code == 404
+
+
+def test_delete_document_endpoint_removes_citations_from_followup_query() -> None:
+    """Ensure deleted documents stop contributing citations in later queries."""
+    client = TestClient(server.app)
+    original_embed = index_chroma.embed_text
+    original_provider = server.SETTINGS.llm_provider
+    original_openai_key = server.SETTINGS.openai_api_key
+    original_use_neo4j = server.SETTINGS.use_neo4j
+
+    server.SETTINGS.llm_provider = "openai"
+    server.SETTINGS.openai_api_key = "test-key"
+    server.SETTINGS.use_neo4j = False
+    index_chroma.embed_text = _fake_embed_text
+
+    try:
+        ingest_response = client.post(
+            "/sources/ingest",
+            json={
+                "source": {
+                    "source_type": "folder",
+                    "local_path": "sample_data",
+                }
+            },
+        )
+        assert ingest_response.status_code == 200
+        source_id = ingest_response.json()["source_id"]
+
+        catalog_response = client.get(f"/sources/documents?source_id={source_id}")
+        assert catalog_response.status_code == 200
+        engineering_doc = next(
+            item
+            for item in catalog_response.json()["documents"]
+            if item["path_or_url"].replace("\\", "/").endswith("engineering.md")
+        )
+
+        before_delete = client.post(
+            "/query",
+            json={
+                "question": "Project Atlas",
+                "source_id": source_id,
+                "document_ids": [engineering_doc["document_id"]],
+                "force_fallback": True,
+            },
+        )
+        assert before_delete.status_code == 200
+        assert len(before_delete.json().get("citations", [])) > 0
+
+        delete_response = client.delete(
+            f"/sources/documents/{engineering_doc['document_id']}"
+        )
+        assert delete_response.status_code == 200
+
+        after_delete = client.post(
+            "/query",
+            json={
+                "question": "Project Atlas",
+                "source_id": source_id,
+                "document_ids": [engineering_doc["document_id"]],
+                "force_fallback": True,
+            },
+        )
+        assert after_delete.status_code == 200
+        assert len(after_delete.json().get("citations", [])) == 0
     finally:
         server.SETTINGS.llm_provider = original_provider
         server.SETTINGS.openai_api_key = original_openai_key

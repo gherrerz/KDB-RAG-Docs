@@ -65,11 +65,13 @@ class IngestionView(QWidget):
         self,
         on_ingest: Callable[[dict, Callable[[dict], None] | None], dict],
         on_reset_all: Callable[[], dict],
+        on_delete_document: Callable[[str], dict] | None = None,
         on_ingestion_readiness: Callable[[], dict] | None = None,
     ) -> None:
         super().__init__()
         self._on_ingest = on_ingest
         self._on_reset_all = on_reset_all
+        self._on_delete_document = on_delete_document
         self._on_ingestion_readiness = on_ingestion_readiness
         self._ingest_thread: QThread | None = None
         self._ingest_worker: _IngestionWorker | None = None
@@ -149,6 +151,31 @@ class IngestionView(QWidget):
         actions.addStretch(1)
         actions.addWidget(self.summary_label)
 
+        delete_group = QGroupBox("Borrado puntual")
+        delete_layout = QFormLayout(delete_group)
+        delete_layout.setHorizontalSpacing(12)
+        delete_layout.setVerticalSpacing(10)
+
+        self.delete_document_id = QLineEdit()
+        self.delete_document_id.setMinimumHeight(34)
+        self.delete_document_id.setClearButtonEnabled(True)
+        self.delete_document_id.setPlaceholderText("document_id a eliminar")
+        self.delete_document_id.setToolTip(
+            "Elimina un documento puntual ya persistido usando su document_id."
+        )
+
+        self.delete_document_button = QPushButton("Eliminar documento")
+        self.delete_document_button.setProperty("variant", "danger")
+        self.delete_document_button.clicked.connect(self._run_delete_document)
+
+        delete_row = QWidget()
+        delete_row_layout = QHBoxLayout(delete_row)
+        delete_row_layout.setContentsMargins(0, 0, 0, 0)
+        delete_row_layout.setSpacing(8)
+        delete_row_layout.addWidget(self.delete_document_id)
+        delete_row_layout.addWidget(self.delete_document_button)
+        delete_layout.addRow("Document ID", delete_row)
+
         self.progress = QProgressBar()
         self.progress.setRange(0, 100)
         self.progress.setValue(0)
@@ -166,6 +193,7 @@ class IngestionView(QWidget):
 
         layout.addWidget(form_group)
         layout.addLayout(actions)
+        layout.addWidget(delete_group)
         layout.addWidget(self.progress)
         layout.addWidget(self.show_raw)
 
@@ -187,10 +215,17 @@ class IngestionView(QWidget):
         QWidget.setTabOrder(self.local_path, self.base_url)
         QWidget.setTabOrder(self.base_url, self.token)
         QWidget.setTabOrder(self.token, self.filters)
-        QWidget.setTabOrder(self.filters, self.ingest_button)
+        QWidget.setTabOrder(self.filters, self.delete_document_id)
+        QWidget.setTabOrder(self.delete_document_id, self.delete_document_button)
+        QWidget.setTabOrder(self.delete_document_button, self.ingest_button)
         QWidget.setTabOrder(self.ingest_button, self.reset_all_button)
 
+        self.delete_document_id.textChanged.connect(
+            self._refresh_delete_document_state
+        )
+
         self._set_status("idle")
+        self._refresh_delete_document_state()
         self.summary.setPlainText(
             "Estado: inactivo\nEsperando configuracion de fuente."
         )
@@ -245,6 +280,7 @@ class IngestionView(QWidget):
         self._set_status("running")
         self.ingest_button.setEnabled(False)
         self.reset_all_button.setEnabled(False)
+        self.delete_document_button.setEnabled(False)
 
         thread = QThread(self)
         worker = _IngestionWorker(self._on_ingest, payload)
@@ -285,6 +321,7 @@ class IngestionView(QWidget):
         self._set_status(final_state)
         self.ingest_button.setEnabled(True)
         self.reset_all_button.setEnabled(True)
+        self._refresh_delete_document_state()
 
     @Slot(str)
     def _handle_ingestion_failed(self, error: str) -> None:
@@ -301,6 +338,7 @@ class IngestionView(QWidget):
         )
         self.ingest_button.setEnabled(True)
         self.reset_all_button.setEnabled(True)
+        self._refresh_delete_document_state()
 
     @Slot()
     def _on_ingestion_thread_finished(self) -> None:
@@ -339,6 +377,106 @@ class IngestionView(QWidget):
         rendered = self._format_ingestion_result(result, include_raw=True)
         self.output.setPlainText(rendered)
         self._set_status(self._status_to_badge(result.get("status")))
+
+    def _run_delete_document(self) -> None:
+        """Run one-document deletion after explicit user confirmation."""
+        if self._on_delete_document is None:
+            self._set_status("error")
+            self.summary.setPlainText(
+                "Estado: fallido\n"
+                "El backend configurado no expone borrado puntual de documentos."
+            )
+            return
+
+        document_id = (self.delete_document_id.text() or "").strip()
+        if not document_id:
+            self._set_status("error")
+            self.summary.setPlainText(
+                "Estado: fallido\n"
+                "Debes indicar un document_id antes de eliminar."
+            )
+            self._refresh_delete_document_state()
+            return
+
+        decision = QMessageBox.question(
+            self,
+            "Confirmar borrado puntual",
+            (
+                "Esta accion eliminara de forma persistente el documento "
+                f"'{document_id}'.\n\n"
+                "Se borraran metadatos, chunks, vectores y mirror de staging "
+                "cuando aplique."
+            ),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if decision != QMessageBox.StandardButton.Yes:
+            self._set_status("idle")
+            self.summary.setPlainText(
+                "Estado: inactivo\nBorrado puntual cancelado por el usuario."
+            )
+            return
+
+        self._set_status("running")
+        self.summary.setPlainText(
+            f"Estado: en curso\nEliminando document_id: {document_id}"
+        )
+        self.progress.setValue(0)
+        QApplication.processEvents()
+
+        result = self._on_delete_document(document_id)
+        self._render_delete_document_result(result, document_id)
+
+    def _render_delete_document_result(
+        self,
+        result: dict,
+        requested_document_id: str,
+    ) -> None:
+        """Render operator-facing status for one-document delete actions."""
+        self._update_progress(result)
+        status = str(result.get("status") or "failed").strip().lower()
+        if status in {"completed", "finished"}:
+            self.progress.setValue(100)
+
+        message = str(result.get("message") or result.get("detail") or "")
+        source_id = str(result.get("source_id") or "-")
+        deleted_documents = result.get("deleted_documents", 0)
+        deleted_chunks = result.get("deleted_chunks", 0)
+        deleted_staging = result.get("deleted_staging_files", 0)
+        reindexed_sources = result.get("reindexed_sources", 0)
+
+        self.summary.setPlainText(
+            "\n".join(
+                [
+                    f"Estado: {self._localize_status(status)}",
+                    f"Mensaje: {message or 'Sin mensaje'}",
+                    f"Document ID: {requested_document_id}",
+                    f"Source ID: {source_id}",
+                    f"Documentos eliminados: {deleted_documents}",
+                    f"Chunks eliminados: {deleted_chunks}",
+                    f"Staging eliminado: {deleted_staging}",
+                    f"Sources resincronizados: {reindexed_sources}",
+                ]
+            )
+        )
+        self.output.setPlainText(
+            self._format_ingestion_result(result, include_raw=True)
+        )
+        self._set_status(self._status_to_badge(status))
+        if status in {"completed", "finished"}:
+            self.delete_document_id.clear()
+        self._refresh_delete_document_state()
+
+    def _refresh_delete_document_state(self) -> None:
+        """Keep one-document delete action enabled only when usable."""
+        can_delete = self._on_delete_document is not None
+        has_document_id = bool((self.delete_document_id.text() or "").strip())
+        is_ingesting = bool(
+            self._ingest_thread is not None and self._ingest_thread.isRunning()
+        )
+        self.delete_document_button.setEnabled(
+            can_delete and has_document_id and not is_ingesting
+        )
 
     @staticmethod
     def _format_deduplication_paths(
