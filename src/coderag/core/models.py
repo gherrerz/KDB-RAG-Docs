@@ -57,6 +57,17 @@ class DocumentRecord(BaseModel):
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
+class DocumentCatalogEntry(BaseModel):
+    """Lightweight document metadata exposed to UI selectors."""
+
+    document_id: str
+    source_id: str
+    title: str
+    path_or_url: str
+    content_type: str
+    updated_at: datetime
+
+
 class ChunkRecord(BaseModel):
     """Semantic chunk used by retrieval indexes."""
 
@@ -97,6 +108,7 @@ class QueryRequest(BaseModel):
 
     question: str
     source_id: Optional[str] = None
+    document_ids: List[str] = Field(default_factory=list)
     hops: Optional[int] = None
     llm_provider: Optional[str] = None
     force_fallback: bool = False

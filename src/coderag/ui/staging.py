@@ -8,9 +8,15 @@ import time
 from pathlib import Path
 from typing import Dict, Tuple
 
+from coderag.core.settings import SETTINGS
+
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-STAGING_ROOT = REPO_ROOT / "storage" / "ingestion_staging"
+
+
+def _staging_root() -> Path:
+    """Resolve the shared staging root from runtime settings."""
+    return SETTINGS.data_dir / "ingestion_staging"
 
 
 def _resolve_source_path(local_path: str) -> Path:
@@ -23,7 +29,7 @@ def _resolve_source_path(local_path: str) -> Path:
 
 def _ensure_not_inside_staging(source_path: Path) -> None:
     """Prevent recursive copy loops when users pick staging folders."""
-    staging_root = STAGING_ROOT.resolve(strict=False)
+    staging_root = _staging_root().resolve(strict=False)
     resolved_source = source_path.resolve(strict=False)
     try:
         resolved_source.relative_to(staging_root)
@@ -45,11 +51,12 @@ def _stage_target_name(source_path: Path) -> str:
 
 def _cleanup_old_staging_dirs(limit: int = 20) -> None:
     """Keep staging storage bounded to avoid unbounded disk growth."""
-    if not STAGING_ROOT.exists() or limit < 1:
+    staging_root = _staging_root()
+    if not staging_root.exists() or limit < 1:
         return
     candidates = [
         item
-        for item in STAGING_ROOT.iterdir()
+        for item in staging_root.iterdir()
         if item.is_dir()
     ]
     if len(candidates) <= limit:
@@ -73,16 +80,17 @@ def stage_folder_source(local_path: str) -> Tuple[str, Dict[str, str]]:
         raise NotADirectoryError(f"Selected path is not a folder: {source_path}")
 
     _ensure_not_inside_staging(source_path)
-    STAGING_ROOT.mkdir(parents=True, exist_ok=True)
+    staging_root = _staging_root()
+    staging_root.mkdir(parents=True, exist_ok=True)
 
-    target = STAGING_ROOT / _stage_target_name(source_path)
+    target = staging_root / _stage_target_name(source_path)
     shutil.copytree(source_path, target)
     _cleanup_old_staging_dirs(limit=20)
 
-    relative_target = target.relative_to(REPO_ROOT).as_posix()
+    runtime_local_path = str(target)
     metadata = {
         "source_path": str(source_path),
         "staged_path": str(target),
-        "runtime_local_path": relative_target,
+        "runtime_local_path": runtime_local_path,
     }
-    return relative_target, metadata
+    return runtime_local_path, metadata

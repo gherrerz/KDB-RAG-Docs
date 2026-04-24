@@ -31,6 +31,7 @@ de la red puede consumirse usando la IP del host.
 | Ingestion sync | POST | `/sources/ingest` | `ingest_source` | `SERVICE.ingest` | `IngestionRequest` | `dict` (estado de job + metricas) |
 | Ingestion async | POST | `/sources/ingest/async` | `ingest_source_async` | `enqueue_ingest_job` o `enqueue_local_ingest_job` | `IngestionRequest` | `{"job_id", "status", "message"}` |
 | Ingestion readiness | GET | `/sources/ingest/readiness` | `ingest_readiness` | checks runtime + Neo4j + Redis + RQ worker | N/A | `{"ready", "recommendation", "checks"}` |
+| Documents catalog | GET | `/sources/documents` | `list_documents` | `SERVICE.list_documents` | `source_id?` | `{"count", "documents"}` |
 | Job status | GET | `/jobs/{job_id}` | `get_job` | `SERVICE.get_job` y fallback `get_rq_job_status` | `job_id` en path | `dict` (estado + timeline) |
 | Full reset | POST | `/sources/reset` | `reset_sources` | `SERVICE.reset_all` | `ResetAllRequest` | `ResetAllResponse` |
 | Query | POST | `/query` | `query` | `SERVICE.query` | `QueryRequest` | `QueryResponse` |
@@ -73,6 +74,7 @@ de la red puede consumirse usando la IP del host.
 {
   "question": "Who works on Project Atlas?",
   "source_id": null,
+  "document_ids": [],
   "hops": 2,
   "llm_provider": "openai",
   "force_fallback": false,
@@ -165,6 +167,18 @@ Codigos comunes:
 
 Ejecuta pipeline de ingesta e indexacion en modo sincrono.
 
+Comportamiento adicional:
+
+- Antes de persistir cada lote, el servicio busca documentos ya ingestados que
+  coincidan globalmente por `title + content_type`.
+- Si el lote actual contiene duplicados con esa misma clave, conserva solo una
+  version antes de tocar almacenamiento persistente.
+- Si encuentra coincidencias, elimina la version previa de SQLite, Chroma y del
+  mirror local en `storage/ingestion_staging` cuando el archivo reemplazado
+  provenia de staging.
+- Si la coincidencia pertenecia a otro `source_id`, el grafo gestionado de esa
+  fuente se reconstruye para evitar duplicados residuales.
+
 Request:
 
 ```json
@@ -202,7 +216,25 @@ Response (ejemplo exitoso):
     "elapsed_hhmmss": "00:00:34",
     "discovered_files": 2,
     "parsed_documents": 2,
-    "skipped_empty": 0
+    "skipped_empty": 0,
+    "incoming_duplicates_skipped": 0,
+    "existing_duplicates_replaced": 1,
+    "staging_files_deleted": 1
+  },
+  "deduplication": {
+    "incoming_batch": {
+      "input_documents": 2,
+      "kept_documents": 2,
+      "skipped_documents": 0,
+      "resolution": "keep_last_by_sorted_path"
+    },
+    "replaced_existing": {
+      "matched_documents": 1,
+      "deleted_documents": 1,
+      "deleted_chunks": 3,
+      "deleted_staging_files": 1,
+      "reindexed_sources": 1
+    }
   }
 }
 ```
@@ -306,9 +338,10 @@ Borra repositorios de ingesta y deja el sistema listo para primera ingesta.
 Incluye:
 
 - documentos/chunks/aristas/jobs en SQLite
+- metadatos TDM aditivos en SQLite
 - reset de indices en memoria
-- limpieza de staging espejo local en `storage/ingestion_staging`
-- limpieza de relaciones de grafo en Neo4j
+- limpieza de staging espejo local en `DATA_DIR/ingestion_staging`
+- limpieza de relaciones administradas y nodos huerfanos en Neo4j
 
 Request:
 
@@ -348,6 +381,7 @@ Request:
 {
   "question": "Who works on Project Atlas?",
   "source_id": null,
+  "document_ids": [],
   "hops": 2,
   "llm_provider": "openai",
   "force_fallback": false,
@@ -365,6 +399,37 @@ Notas operativas:
 - `include_llm_answer=false` ejecuta retrieval+grafo sin invocar LLM.
 - `force_fallback=true` fuerza respuesta extractiva local.
 - Si `source_id` existe, retrieval y expansion de grafo se restringen a esa fuente.
+- Si `document_ids` contiene uno o mas ids, retrieval se restringe a esos
+  documentos; puede combinarse con `source_id` para acotar a una ingesta y un
+  subconjunto de archivos concretos.
+
+## GET /sources/documents
+
+Retorna metadata liviana de documentos ya ingestados para poblar selectores UI
+o diagnostico operativo.
+
+Query params opcionales:
+
+- `source_id`: limita el catalogo a una fuente/lote de ingesta.
+
+Response shape:
+
+```json
+{
+  "source_id": "abc123def456",
+  "count": 2,
+  "documents": [
+    {
+      "document_id": "7f0a...",
+      "source_id": "abc123def456",
+      "title": "engineering",
+      "path_or_url": "sample_data/engineering.md",
+      "content_type": "md",
+      "updated_at": "2026-04-23T15:00:00+00:00"
+    }
+  ]
+}
+```
 
 Codigos comunes:
 

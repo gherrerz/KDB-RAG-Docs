@@ -143,7 +143,7 @@ La aplicacion carga automaticamente variables desde `.env` en runtime.
   timeout de worker.
 
 Para ingesta `folder`, la UI hace staging automatico del directorio elegido
-por el usuario hacia `storage/ingestion_staging` dentro del repositorio.
+por el usuario hacia `DATA_DIR/ingestion_staging`.
 El backend consume esa ruta staged, visible tanto para `api` como `worker`
 en Docker Compose por el montaje del repo (`./:/app`).
 

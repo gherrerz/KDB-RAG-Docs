@@ -83,7 +83,7 @@ Para ejecutar API/UI locales, levanta primero la infraestructura.
 
 Imagenes usadas por `docker-compose.yml`:
 
-- `neo4j:5.24.0` (obligatorio)
+- `neo4j:5` (obligatorio)
 - `redis:7.2.4-alpine` (opcional, solo async con RQ)
 
 Antes de levantar compose, define password de Neo4j (evita defaults inseguros):

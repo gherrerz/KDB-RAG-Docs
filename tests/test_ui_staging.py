@@ -7,28 +7,32 @@ from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from coderag.core.settings import SETTINGS
 from coderag.ui import main_window
 from coderag.ui import staging
 
 
-def test_stage_folder_source_returns_repo_relative_path(tmp_path: Path) -> None:
-    """Stage selected folder and return runtime path relative to repo root."""
+def test_stage_folder_source_returns_data_dir_backed_runtime_path(
+    tmp_path: Path,
+) -> None:
+    """Stage selected folder and return runtime path rooted in data_dir."""
     source = tmp_path / "docs"
     source.mkdir(parents=True, exist_ok=True)
     (source / "a.md").write_text("content", encoding="utf-8")
 
     original_root = staging.REPO_ROOT
-    original_staging_root = staging.STAGING_ROOT
+    original_data_dir = SETTINGS.data_dir
     staging.REPO_ROOT = tmp_path
-    staging.STAGING_ROOT = tmp_path / "storage" / "ingestion_staging"
+    SETTINGS.data_dir = tmp_path / "runtime-storage"
+    expected_staging_root = SETTINGS.data_dir / "ingestion_staging"
     try:
         runtime_path, metadata = staging.stage_folder_source("docs")
     finally:
         staging.REPO_ROOT = original_root
-        staging.STAGING_ROOT = original_staging_root
+        SETTINGS.data_dir = original_data_dir
 
-    staged_dir = tmp_path / runtime_path
-    assert runtime_path.startswith("storage/ingestion_staging/")
+    staged_dir = Path(runtime_path)
+    assert staged_dir.parent == expected_staging_root
     assert staged_dir.exists()
     assert (staged_dir / "a.md").exists()
     assert metadata["runtime_local_path"] == runtime_path
@@ -51,7 +55,7 @@ def test_prepare_ingestion_payload_stages_folder(monkeypatch) -> None:
     payload = {
         "source": {
             "source_type": "folder",
-            "local_path": "C:/data/example",
+            "local_path": "C:/storage/example",
             "filters": {},
         }
     }
@@ -61,7 +65,7 @@ def test_prepare_ingestion_payload_stages_folder(monkeypatch) -> None:
     assert prepared["source"]["local_path"] == "storage/ingestion_staging/test_case"
     assert isinstance(update, dict)
     assert update.get("status") == "running"
-    assert payload["source"]["local_path"] == "C:/data/example"
+    assert payload["source"]["local_path"] == "C:/storage/example"
 
 
 def test_prepare_ingestion_payload_keeps_confluence_unchanged() -> None:

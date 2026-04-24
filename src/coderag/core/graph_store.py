@@ -212,15 +212,22 @@ class GraphStore:
             return metrics
 
     def clear_all_edges(self) -> int:
-        """Delete all RELATES_TO edges from Neo4j and return count."""
+        """Delete all managed graph relationships and orphan Entity nodes."""
         if not self.is_enabled():
             return 0
         driver = self._get_driver()
 
         with driver.session() as session:
-            result = session.run("MATCH ()-[r:RELATES_TO]-() DELETE r")
-            summary = result.consume()
-            return int(summary.counters.relationships_deleted)
+            relationships_result = session.run(
+                "MATCH ()-[r:RELATES_TO|TDM_REL]-() DELETE r"
+            )
+            relationships_summary = relationships_result.consume()
+            session.run(
+                "MATCH (n:Entity) WHERE NOT (n)--() DELETE n"
+            ).consume()
+            return int(
+                relationships_summary.counters.relationships_deleted
+            )
 
     @staticmethod
     def _write_tdm_batch(tx_or_session, rows: List[dict[str, str]]) -> None:

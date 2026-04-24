@@ -15,6 +15,8 @@ Checklist operativo para validar la experiencia UI antes de publicar una version
   - Ingestion: `Ctrl+I` (ingerir), `Ctrl+T` (mostrar/ocultar tecnico).
   - Query: `Ctrl+Enter`/`Ctrl+Return` (consultar), `Ctrl+D` (diagnosticos), `Ctrl+J` (JSON crudo).
 - Validar foco inicial en campo de pregunta al abrir Query.
+- Confirmar que Query permite abrir el selector de documentos, seleccionar
+  multiples documentos y limpiar el filtro sin perder el `source_id` opcional.
 - Confirmar mensajes de validacion en espanol y accion sugerida en errores.
 
 ## 3. Flujo funcional
@@ -23,6 +25,8 @@ Checklist operativo para validar la experiencia UI antes de publicar una version
 - Ingestion confluence valida URL base y token obligatorios.
 - Filtros JSON invalidos se bloquean antes de enviar request.
 - Query valida pregunta obligatoria y hops entre 1 y 6.
+- Query mantiene `Source ID` como filtro opcional de ingesta y permite sumar
+  filtro multi-documento con documentos ya ingestados.
 - Evidencia ordena por `score` descendente y muestra detalle al seleccionar fila.
 
 ## 4. Diagnostico tecnico

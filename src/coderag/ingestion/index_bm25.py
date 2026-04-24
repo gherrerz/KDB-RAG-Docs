@@ -27,10 +27,16 @@ class BM25Index:
         query: str,
         top_n: int,
         source_id: Optional[str] = None,
+        document_ids: Optional[Sequence[str]] = None,
     ) -> List[Tuple[ChunkRecord, float]]:
         """Return BM25 results sorted by score."""
         if self._bm25 is None:
             return []
+        allowed_document_ids = {
+            document_id
+            for document_id in (document_ids or [])
+            if document_id
+        }
         scores = self._bm25.get_scores(query.lower().split())
         ranked = sorted(
             enumerate(scores),
@@ -41,6 +47,11 @@ class BM25Index:
         for idx, score in ranked[:top_n]:
             chunk = self._chunks[idx]
             if source_id and chunk.source_id != source_id:
+                continue
+            if (
+                allowed_document_ids
+                and chunk.document_id not in allowed_document_ids
+            ):
                 continue
             results.append((chunk, float(score)))
             if len(results) >= top_n:

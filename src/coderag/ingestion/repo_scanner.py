@@ -59,6 +59,8 @@ def scan_folder_with_diagnostics(
             discovered.append(file_path)
             stats["supported_files"] = int(stats["supported_files"]) + 1
 
+    discovered.sort(key=lambda item: item.as_posix().casefold())
+
     stats["scan_error_count"] = len(scan_errors)
     stats["scan_error_examples"] = scan_errors[:3]
     return discovered, stats

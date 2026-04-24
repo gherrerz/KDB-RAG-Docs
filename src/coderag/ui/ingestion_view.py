@@ -341,6 +341,35 @@ class IngestionView(QWidget):
         self._set_status(self._status_to_badge(result.get("status")))
 
     @staticmethod
+    def _format_deduplication_paths(
+        deduplication: dict,
+        limit: int = 2,
+    ) -> str:
+        """Build a short UI summary for discarded and replaced document paths."""
+        incoming = deduplication.get("incoming_batch", {})
+        replaced = deduplication.get("replaced_existing", {})
+        if not isinstance(incoming, dict) or not isinstance(replaced, dict):
+            return "-"
+
+        skipped_paths = incoming.get("kept_paths", [])
+        replaced_paths = replaced.get("replaced_paths", [])
+
+        fragments: list[str] = []
+        if isinstance(skipped_paths, list) and skipped_paths:
+            shown = ", ".join(str(path) for path in skipped_paths[:limit])
+            extra = max(0, len(skipped_paths) - limit)
+            suffix = f" (+{extra})" if extra else ""
+            fragments.append(f"conservados: {shown}{suffix}")
+
+        if isinstance(replaced_paths, list) and replaced_paths:
+            shown = ", ".join(str(path) for path in replaced_paths[:limit])
+            extra = max(0, len(replaced_paths) - limit)
+            suffix = f" (+{extra})" if extra else ""
+            fragments.append(f"reemplazados: {shown}{suffix}")
+
+        return " | ".join(fragments) if fragments else "-"
+
+    @staticmethod
     def _format_ingestion_result(result: dict, include_raw: bool) -> str:
         """Return a readable ingestion trace for the UI text panel."""
         lines: list[str] = []
@@ -370,6 +399,16 @@ class IngestionView(QWidget):
             lines.append("\nMetrics:")
             for key, value in metrics.items():
                 lines.append(f"- {key}: {value}")
+
+        deduplication = result.get("deduplication")
+        if isinstance(deduplication, dict) and deduplication:
+            lines.append("\nDeduplication:")
+            for section_name, section in deduplication.items():
+                if not isinstance(section, dict):
+                    continue
+                lines.append(f"- {section_name}:")
+                for key, value in section.items():
+                    lines.append(f"  - {key}: {value}")
 
         steps = result.get("steps")
         if isinstance(steps, list) and steps:
@@ -434,6 +473,20 @@ class IngestionView(QWidget):
         documents = result.get("documents", "-")
         chunks = result.get("chunks", "-")
         elapsed = "-"
+        dedup_summary = "-"
+        dedup_paths = "-"
+
+        deduplication = result.get("deduplication")
+        if isinstance(deduplication, dict):
+            incoming = deduplication.get("incoming_batch", {})
+            replaced = deduplication.get("replaced_existing", {})
+            if isinstance(incoming, dict) and isinstance(replaced, dict):
+                incoming_skipped = incoming.get("skipped_documents", 0)
+                replaced_deleted = replaced.get("deleted_documents", 0)
+                dedup_summary = (
+                    f"lote={incoming_skipped} | reemplazos={replaced_deleted}"
+                )
+            dedup_paths = self._format_deduplication_paths(deduplication)
 
         steps = result.get("steps")
         if isinstance(steps, list) and steps:
@@ -452,6 +505,8 @@ class IngestionView(QWidget):
                     f"Mensaje: {message}",
                     f"Documentos: {documents}",
                     f"Chunks: {chunks}",
+                    f"Deduplicacion: {dedup_summary}",
+                    f"Detalle deduplicacion: {dedup_paths}",
                     f"Duracion: {elapsed}",
                 ]
             )

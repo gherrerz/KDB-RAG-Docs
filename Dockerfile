@@ -45,8 +45,8 @@ ENV PATH="/opt/venv/bin:${PATH}"
 COPY src ./src
 COPY .env.example ./.env.example
 
-RUN mkdir -p /data /data/chromadb /data/workspace /data/cache \
-	&& chown -R app:app /app /data
+RUN mkdir -p /storage /storage/chromadb /storage/workspace /storage/cache \
+	&& chown -R app:app /app /storage
 
 USER app
 

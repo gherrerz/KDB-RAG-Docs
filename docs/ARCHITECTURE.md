@@ -188,6 +188,10 @@ sequenceDiagram
         SVC->>DB: touch_job(failed)
         SVC-->>API: status=failed + steps
     else Con documentos
+      SVC->>DB: buscar duplicados por title + content_type
+      SVC->>DB: borrar documentos/chunks previos coincidentes
+      SVC->>IDX: borrar vectores del document_id previo en Chroma
+      SVC->>GS: reconstruir fuentes afectadas si hubo reemplazos previos
         loop por documento
             SVC->>SVC: build_chunks(doc)
         end
@@ -197,7 +201,7 @@ sequenceDiagram
         SVC->>DB: replace_graph_edges(source_id, edges)
         SVC->>GS: replace_edges(source_id, edges)
         Note over SVC,GS: UNWIND por bloques + transaccion por lote + retry acotado
-        SVC->>IDX: rebuild indexes
+        SVC->>IDX: rebuild BM25 global + vector del source actual
         IDX->>EMB: embeddings en paralelo por lote
         EMB-->>IDX: vectors
         IDX->>IDX: upsert por lotes en Chroma
@@ -208,6 +212,12 @@ sequenceDiagram
 
     API-->>User: JSON de estado de ingesta
 ```
+
+  La deduplicacion previa es global: si un documento nuevo coincide por
+  `title + content_type` con uno ya persistido, la version previa se elimina de
+  SQLite, Chroma y del mirror local de staging antes de indexar la nueva.
+  Cuando el documento reemplazado pertenecia a otra fuente, el grafo gestionado se
+  reconstruye para ese `source_id` afectado.
 
 ## Secuencia principal: consulta
 
@@ -235,9 +245,9 @@ sequenceDiagram
         Note over SVC,VEC: API evita reindexacion vectorial global
     end
 
-    SVC->>RET: hybrid_search(question)
-    RET->>BM25: search(top_n)
-    RET->>VEC: search(top_n)
+    SVC->>RET: hybrid_search(question, source_id?, document_ids?)
+    RET->>BM25: search(top_n, source_id?, document_ids?)
+    RET->>VEC: search(top_n, source_id?, document_ids?)
     VEC->>EMB: embed(question)
     EMB-->>VEC: query vector
     RET-->>SVC: candidatos fusionados
@@ -260,6 +270,14 @@ sequenceDiagram
     SVC-->>API: QueryResponse
     API-->>User: answer y citations y graph_paths y diagnostics
 ```
+
+Notas del filtro de Query:
+
+- `source_id` mantiene semantica de fuente/lote de ingesta.
+- `document_ids` permite acotar retrieval a uno o mas documentos ya
+  persistidos en SQLite.
+- La UI obtiene el catalogo de documentos via `GET /sources/documents` y envia
+  `document_ids` solo cuando el usuario selecciona archivos concretos.
 
 ## Consideraciones de despliegue
 

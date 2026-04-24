@@ -6,7 +6,7 @@ metadata:
 data:
   PYTHONUNBUFFERED: "1"
   USE_CHROMA: "true"
-  CHROMA_PERSIST_DIR: /data/chromadb
+  CHROMA_PERSIST_DIR: /storage/chromadb
   CHROMA_COLLECTION: coderag_chunks
   USE_NEO4J: "true"
   NEO4J_URI: bolt://neo4j.default.svc.cluster.local:7687
@@ -14,8 +14,8 @@ data:
   USE_RQ: "true"
   REDIS_URL: redis://redis.default.svc.cluster.local:6379/0
   RQ_INGEST_JOB_TIMEOUT_SEC: "900"
-  DATA_DIR: /data
-  WORKSPACE_DIR: /data/workspace
+  DATA_DIR: /storage
+  WORKSPACE_DIR: /storage/workspace
   LLM_PROVIDER: openai
   OPENAI_BASE_URL: https://api.openai.com/v1
   OPENAI_ANSWER_MODEL: gpt-4.1-mini

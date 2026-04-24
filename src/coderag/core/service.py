@@ -12,6 +12,8 @@ from time import perf_counter
 from typing import Callable, Dict, List, Optional
 
 from coderag.core.models import (
+    DocumentRecord,
+    DocumentCatalogEntry,
     Evidence,
     GraphPath,
     IngestionRequest,
@@ -36,6 +38,9 @@ from coderag.retrieval.reranker import rerank_results
 from coderag.tdm.masking_engine import apply_masking_rules_to_row
 from coderag.tdm.synthetic_planner import build_synthetic_profile_plan
 from coderag.tdm.virtualization_export import build_virtualization_templates
+
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 def _on_rmtree_error(func, path, _exc_info) -> None:
@@ -68,6 +73,55 @@ def _clear_local_staging_mirror(data_dir: Path) -> tuple[int, list[str]]:
             )
 
     return deleted_entries, warnings
+
+
+def _delete_staged_document_copy(
+    data_dir: Path,
+    path_or_url: str,
+) -> tuple[bool, Optional[str]]:
+    """Delete one staged document copy and prune empty parent folders."""
+    if not path_or_url.strip():
+        return False, None
+
+    staging_dir = (data_dir / "ingestion_staging").resolve(strict=False)
+    candidate = Path(path_or_url).expanduser()
+    if not candidate.is_absolute():
+        candidate = (REPO_ROOT / candidate).resolve(strict=False)
+    else:
+        candidate = candidate.resolve(strict=False)
+
+    try:
+        candidate.relative_to(staging_dir)
+    except ValueError:
+        return False, None
+
+    if not candidate.exists() or candidate.is_dir():
+        return False, None
+
+    try:
+        candidate.unlink()
+    except PermissionError as exc:
+        return False, f"Could not fully remove staged document '{candidate}': {exc}"
+    except OSError as exc:
+        return False, f"Could not remove staged document '{candidate}': {exc}"
+
+    parent = candidate.parent
+    while parent != staging_dir:
+        try:
+            parent.rmdir()
+        except OSError:
+            break
+        parent = parent.parent
+
+    return True, None
+
+
+def _document_dedup_key(document: DocumentRecord) -> tuple[str, str]:
+    """Normalize the document identity used by pre-ingest deduplication."""
+    return (
+        document.title.strip().casefold(),
+        document.content_type.strip().casefold(),
+    )
 
 
 def _format_elapsed_hhmmss(elapsed_ms: float) -> str:
@@ -125,6 +179,131 @@ class RagApplicationService:
         self.bm25_index.rebuild(chunks)
         self.vector_index.rebuild(chunks)
         self._loaded_index_version = self.store.get_index_version()
+
+    def _rebuild_bm25_from_store(self) -> None:
+        """Refresh BM25 from all persisted chunks without re-embedding all data."""
+        self.bm25_index.rebuild(self.store.list_chunks())
+        self._loaded_index_version = self.store.get_index_version()
+
+    def _sync_graph_for_source(
+        self,
+        source_id: str,
+    ) -> tuple[list[tuple[str, str, str, str]], Dict[str, object]]:
+        """Recompute persisted graph state for one source from current chunks."""
+        chunks = self.store.list_chunks(source_id=source_id)
+        edges = build_graph_edges(source_id=source_id, chunks=chunks)
+        self.store.replace_graph_edges(source_id=source_id, edges=edges)
+
+        if not self.is_graph_enabled():
+            return edges, {"neo4j_enabled": False, "skipped": True}
+
+        graph_metrics = self.graph_store.replace_edges(
+            source_id=source_id,
+            edges=edges,
+        )
+        if isinstance(graph_metrics, dict):
+            return edges, graph_metrics
+        return edges, {}
+
+    def _deduplicate_documents_before_ingest(
+        self,
+        documents,
+        current_source_id: str,
+    ) -> Dict[str, object]:
+        """Remove older ingested documents that match title + content type."""
+        duplicates_by_id: dict[str, DocumentCatalogEntry] = {}
+        for document in documents:
+            matches = self.store.find_documents_by_title_and_content_type(
+                title=document.title,
+                content_type=document.content_type,
+            )
+            for match in matches:
+                duplicates_by_id.setdefault(match.document_id, match)
+
+        if not duplicates_by_id:
+            return {
+                "matched_documents": 0,
+                "deleted_documents": 0,
+                "deleted_chunks": 0,
+                "deleted_staging_files": 0,
+                "reindexed_sources": 0,
+                "replaced_document_ids": [],
+                "replaced_paths": [],
+                "staging_warnings": [],
+            }
+
+        deleted_documents = 0
+        deleted_chunks = 0
+        deleted_staging_files = 0
+        affected_source_ids: set[str] = set()
+        staging_warnings: list[str] = []
+
+        for duplicate in duplicates_by_id.values():
+            deleted_chunks += self.store.delete_chunks_by_document_id(
+                duplicate.document_id
+            )
+            deleted_documents += self.store.delete_document_by_id(
+                duplicate.document_id
+            )
+            self.vector_index.delete_document(duplicate.document_id)
+            deleted_file, warning = _delete_staged_document_copy(
+                SETTINGS.data_dir,
+                duplicate.path_or_url,
+            )
+            if deleted_file:
+                deleted_staging_files += 1
+            if warning:
+                staging_warnings.append(warning)
+            affected_source_ids.add(duplicate.source_id)
+
+        rebuilt_source_ids = sorted(affected_source_ids - {current_source_id})
+        for source_id in rebuilt_source_ids:
+            self._sync_graph_for_source(source_id)
+
+        self._rebuild_bm25_from_store()
+
+        return {
+            "matched_documents": len(duplicates_by_id),
+            "deleted_documents": deleted_documents,
+            "deleted_chunks": deleted_chunks,
+            "deleted_staging_files": deleted_staging_files,
+            "reindexed_sources": len(rebuilt_source_ids),
+            "replaced_document_ids": sorted(duplicates_by_id.keys()),
+            "replaced_paths": sorted(
+                {
+                    duplicate.path_or_url
+                    for duplicate in duplicates_by_id.values()
+                    if duplicate.path_or_url.strip()
+                }
+            ),
+            "staging_warnings": staging_warnings,
+        }
+
+    def _collapse_incoming_duplicate_documents(
+        self,
+        documents: List[DocumentRecord],
+    ) -> tuple[List[DocumentRecord], Dict[str, object]]:
+        """Collapse duplicate documents within one ingestion batch."""
+        kept_by_key: dict[tuple[str, str], DocumentRecord] = {}
+        skipped_documents: list[str] = []
+
+        for document in documents:
+            key = _document_dedup_key(document)
+            previous = kept_by_key.get(key)
+            if previous is not None:
+                skipped_documents.append(previous.document_id)
+            kept_by_key[key] = document
+
+        collapsed = list(kept_by_key.values())
+        return collapsed, {
+            "input_documents": len(documents),
+            "kept_documents": len(collapsed),
+            "skipped_documents": len(skipped_documents),
+            "skipped_document_ids": skipped_documents,
+            "kept_document_ids": [document.document_id for document in collapsed],
+            "kept_paths": [document.path_or_url for document in collapsed],
+            "resolution": "keep_last_by_sorted_path",
+        }
 
     def _refresh_indexes_after_external_update(self) -> None:
         """Refresh in-memory retrieval state after external ingestion.
@@ -357,7 +536,26 @@ class RagApplicationService:
                 "progress_pct": 100.0,
             }
 
+        documents, incoming_dedup_stats = (
+            self._collapse_incoming_duplicate_documents(documents)
+        )
+        _add_step(
+            "deduplicate_incoming_batch",
+            incoming_dedup_stats,
+            progress_pct=35.0,
+        )
+
         source_id = documents[0].source_id
+        dedup_stats = self._deduplicate_documents_before_ingest(
+            documents=documents,
+            current_source_id=source_id,
+        )
+        _add_step(
+            "deduplicate_documents",
+            dedup_stats,
+            progress_pct=42.0,
+        )
+
         chunks = []
         total_characters = 0
         total_documents = len(documents)
@@ -372,7 +570,7 @@ class RagApplicationService:
                         "total_documents": total_documents,
                         "generated_chunks": len(chunks),
                     },
-                    progress_pct=30.0 + (index / total_documents) * 20.0,
+                    progress_pct=42.0 + (index / total_documents) * 13.0,
                 )
 
         persisted_documents = self.store.upsert_documents(documents)
@@ -382,7 +580,7 @@ class RagApplicationService:
                 "documents": persisted_documents,
                 "source_id": source_id,
             },
-            progress_pct=52.0,
+            progress_pct=58.0,
         )
 
         _add_step(
@@ -392,7 +590,7 @@ class RagApplicationService:
                 "chunks": len(chunks),
                 "total_characters": total_characters,
             },
-            progress_pct=55.0,
+            progress_pct=62.0,
         )
 
         self.store.replace_chunks(source_id=source_id, chunks=chunks)
@@ -402,20 +600,20 @@ class RagApplicationService:
                 "source_id": source_id,
                 "chunks": len(chunks),
             },
-            progress_pct=65.0,
+            progress_pct=70.0,
         )
 
-        if self.is_graph_enabled():
-            edges = build_graph_edges(source_id=source_id, chunks=chunks)
-            _add_step(
-                "build_graph_edges",
-                {
-                    "edges": len(edges),
-                },
-                progress_pct=75.0,
-            )
+        edges = build_graph_edges(source_id=source_id, chunks=chunks)
+        _add_step(
+            "build_graph_edges",
+            {
+                "edges": len(edges),
+            },
+            progress_pct=78.0,
+        )
 
-            self.store.replace_graph_edges(source_id=source_id, edges=edges)
+        self.store.replace_graph_edges(source_id=source_id, edges=edges)
+        if self.is_graph_enabled():
             graph_metrics = self.graph_store.replace_edges(
                 source_id=source_id,
                 edges=edges,
@@ -427,33 +625,37 @@ class RagApplicationService:
             if isinstance(graph_metrics, dict):
                 for key, value in graph_metrics.items():
                     persist_graph_details[f"neo4j_{key}"] = value
-            _add_step(
-                "persist_graph",
-                persist_graph_details,
-                progress_pct=85.0,
-            )
         else:
-            _add_step(
-                "persist_graph",
-                {
-                    "edges": 0,
-                    "neo4j_enabled": False,
-                    "skipped": True,
-                    "reason": "USE_NEO4J=false",
-                },
-                progress_pct=85.0,
-            )
+            persist_graph_details = {
+                "edges": len(edges),
+                "neo4j_enabled": False,
+                "skipped": True,
+                "reason": "USE_NEO4J=false",
+            }
+        _add_step(
+            "persist_graph",
+            persist_graph_details,
+            progress_pct=86.0,
+        )
 
-        self.rebuild_indexes(source_id=source_id)
+        self._rebuild_bm25_from_store()
+        self.vector_index.rebuild(chunks)
+        self._loaded_index_version = self.store.get_index_version()
         _add_step(
             "rebuild_indexes",
             {
                 "source_id": source_id,
+                "bm25_scope": "global",
+                "vector_scope": "source",
             },
             progress_pct=95.0,
         )
 
         elapsed_ms = round((perf_counter() - started_at) * 1000.0, 2)
+        deduplication_summary = {
+            "incoming_batch": incoming_dedup_stats,
+            "replaced_existing": dedup_stats,
+        }
         _add_step(
             "ingestion_completed",
             {
@@ -481,7 +683,17 @@ class RagApplicationService:
                 "discovered_files": load_stats.get("discovered_files", 0),
                 "parsed_documents": load_stats.get("parsed_documents", 0),
                 "skipped_empty": load_stats.get("skipped_empty", 0),
+                "incoming_duplicates_skipped": incoming_dedup_stats.get(
+                    "skipped_documents", 0
+                ),
+                "existing_duplicates_replaced": dedup_stats.get(
+                    "deleted_documents", 0
+                ),
+                "staging_files_deleted": dedup_stats.get(
+                    "deleted_staging_files", 0
+                ),
             },
+            "deduplication": deduplication_summary,
         }
 
     def get_job(self, job_id: str) -> Optional[Dict[str, object]]:
@@ -512,6 +724,13 @@ class RagApplicationService:
             "steps": public_events,
         }
 
+    def list_documents(
+        self,
+        source_id: Optional[str] = None,
+    ) -> List[DocumentCatalogEntry]:
+        """Return document catalog entries for optional source filter."""
+        return self.store.list_documents(source_id=source_id)
+
     def query(self, request: QueryRequest) -> QueryResponse:
         """Run hybrid retrieval + graph expansion + grounded answering."""
         try:
@@ -535,6 +754,7 @@ class RagApplicationService:
             vector_index=self.vector_index,
             top_n=top_n,
             source_id=request.source_id,
+            document_ids=request.document_ids,
         )
         reranked = rerank_results(request.question, hits, top_k=top_k)
         chunks = [item[0] for item in reranked]
@@ -629,6 +849,7 @@ class RagApplicationService:
             "reranked_unique_documents": len(
                 {chunk.document_id for chunk in chunks}
             ),
+            "document_filter_count": len(request.document_ids),
             "graph_paths": len(graph_paths),
             "neo4j_enabled": self.is_graph_enabled(),
             "requested_mode": requested_mode,

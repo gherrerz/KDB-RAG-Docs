@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import hashlib
+from pathlib import Path
 
+from coderag.core.runtime import RUNTIME
 from coderag.core.models import IngestionRequest, QueryRequest, SourceConfig
 from coderag.core.service import RagApplicationService
 from coderag.core.settings import SETTINGS
 from coderag.ingestion import index_chroma
+from coderag.storage.metadata_store import MetadataStore
 
 
 def _looks_like_hhmmss(value: object) -> bool:
@@ -33,6 +36,13 @@ def _fake_embed_text(
         digest = hashlib.sha256(prefix + b"::" + token.encode("utf-8")).digest()
         buckets[digest[0] % len(buckets)] += 1.0
     return buckets
+
+
+def _set_runtime_store_for_tests(data_dir: Path):
+    """Point the shared runtime store to an isolated test database."""
+    original_store = RUNTIME.store
+    RUNTIME.store = MetadataStore(data_dir / "metadata.db")
+    return original_store
 
 
 def test_ingest_and_query_roundtrip() -> None:
@@ -76,6 +86,10 @@ def test_ingest_and_query_roundtrip() -> None:
         assert isinstance(metrics, dict)
         assert "elapsed_ms" not in metrics
         assert _looks_like_hhmmss(metrics.get("elapsed_hhmmss"))
+        deduplication = result.get("deduplication", {})
+        assert isinstance(deduplication, dict)
+        assert isinstance(deduplication.get("incoming_batch"), dict)
+        assert isinstance(deduplication.get("replaced_existing"), dict)
 
         first_step = result.get("steps", [])[0]
         assert isinstance(first_step, dict)
@@ -103,7 +117,7 @@ def test_ingest_and_query_roundtrip() -> None:
         SETTINGS.neo4j_password = original_neo4j_password
 
 
-def test_reset_all_clears_repositories() -> None:
+def test_reset_all_clears_repositories(tmp_path) -> None:
     """Ensure reset operation clears persisted and in-memory retrieval data."""
     original_embed = index_chroma.embed_text
     original_provider = SETTINGS.llm_provider
@@ -112,6 +126,8 @@ def test_reset_all_clears_repositories() -> None:
     original_neo4j_uri = SETTINGS.neo4j_uri
     original_neo4j_user = SETTINGS.neo4j_user
     original_neo4j_password = SETTINGS.neo4j_password
+    original_data_dir = SETTINGS.data_dir
+    original_chroma_persist_dir = SETTINGS.chroma_persist_dir
     index_chroma.embed_text = _fake_embed_text
     SETTINGS.llm_provider = "openai"
     SETTINGS.openai_api_key = "test-key"
@@ -119,6 +135,9 @@ def test_reset_all_clears_repositories() -> None:
     SETTINGS.neo4j_uri = "bolt://test-neo4j:7687"
     SETTINGS.neo4j_user = "neo4j"
     SETTINGS.neo4j_password = "password"
+    SETTINGS.data_dir = tmp_path / "storage"
+    SETTINGS.chroma_persist_dir = SETTINGS.data_dir / "chromadb"
+    original_store = _set_runtime_store_for_tests(SETTINGS.data_dir)
 
     service = RagApplicationService()
     service.graph_store.replace_edges = lambda source_id, edges: None
@@ -167,6 +186,9 @@ def test_reset_all_clears_repositories() -> None:
         SETTINGS.neo4j_uri = original_neo4j_uri
         SETTINGS.neo4j_user = original_neo4j_user
         SETTINGS.neo4j_password = original_neo4j_password
+        SETTINGS.data_dir = original_data_dir
+        SETTINGS.chroma_persist_dir = original_chroma_persist_dir
+        RUNTIME.store = original_store
 
 
 def test_ingest_job_status_includes_steps_and_progress() -> None:
@@ -306,6 +328,191 @@ def test_query_refreshes_stale_indexes_after_external_ingestion() -> None:
         SETTINGS.neo4j_password = original_neo4j_password
 
 
+def test_ingest_replaces_previous_duplicate_documents_globally(tmp_path) -> None:
+    """Re-ingesting a title/type match should delete the older version first."""
+    original_embed = index_chroma.embed_text
+    original_provider = SETTINGS.llm_provider
+    original_openai_key = SETTINGS.openai_api_key
+    original_use_neo4j = SETTINGS.use_neo4j
+    original_neo4j_uri = SETTINGS.neo4j_uri
+    original_neo4j_user = SETTINGS.neo4j_user
+    original_neo4j_password = SETTINGS.neo4j_password
+    original_data_dir = SETTINGS.data_dir
+    original_chroma_persist_dir = SETTINGS.chroma_persist_dir
+    index_chroma.embed_text = _fake_embed_text
+    SETTINGS.llm_provider = "openai"
+    SETTINGS.openai_api_key = "test-key"
+    SETTINGS.use_neo4j = True
+    SETTINGS.neo4j_uri = "bolt://test-neo4j:7687"
+    SETTINGS.neo4j_user = "neo4j"
+    SETTINGS.neo4j_password = "password"
+    SETTINGS.data_dir = tmp_path / "storage"
+    SETTINGS.chroma_persist_dir = SETTINGS.data_dir / "chromadb"
+    original_store = _set_runtime_store_for_tests(SETTINGS.data_dir)
+
+    old_root = SETTINGS.data_dir / "ingestion_staging" / "old-copy"
+    new_root = SETTINGS.data_dir / "ingestion_staging" / "new-copy"
+    old_root.mkdir(parents=True, exist_ok=True)
+    new_root.mkdir(parents=True, exist_ok=True)
+    old_file = old_root / "atlas.md"
+    new_file = new_root / "atlas.md"
+    old_file.write_text("Project Atlas is led by Alice.", encoding="utf-8")
+    new_file.write_text("Project Atlas is led by Bob.", encoding="utf-8")
+
+    service = RagApplicationService()
+    graph_calls: list[tuple[str, int]] = []
+    service.graph_store.replace_edges = (
+        lambda source_id, edges: graph_calls.append((source_id, len(edges)))
+        or {"relationships_created": len(edges)}
+    )
+    service.graph_store.expand_paths = (
+        lambda query, hops, max_paths, source_id=None: []
+    )
+    service.graph_store.clear_all_edges = lambda: 0
+    service.graph_store.close = lambda: None
+    try:
+        first = service.ingest(
+            IngestionRequest(
+                source=SourceConfig(
+                    source_type="folder",
+                    local_path=str(old_root),
+                )
+            )
+        )
+        first_source_id = str(first.get("source_id", ""))
+        assert first.get("status") == "completed"
+        assert old_file.exists()
+
+        second = service.ingest(
+            IngestionRequest(
+                source=SourceConfig(
+                    source_type="folder",
+                    local_path=str(new_root),
+                )
+            )
+        )
+        second_source_id = str(second.get("source_id", ""))
+        assert second.get("status") == "completed"
+        assert first_source_id != second_source_id
+
+        documents = service.list_documents()
+        chunks = service.store.list_chunks()
+        dedup_step = next(
+            step
+            for step in second.get("steps", [])
+            if isinstance(step, dict)
+            and step.get("name") == "deduplicate_documents"
+        )
+
+        assert len(documents) == 1
+        assert documents[0].source_id == second_source_id
+        assert Path(documents[0].path_or_url).resolve(strict=False) == new_file
+        assert len(chunks) >= 1
+        assert all(chunk.source_id == second_source_id for chunk in chunks)
+        assert not old_file.exists()
+        assert dedup_step.get("details", {}).get("deleted_documents") == 1
+        assert dedup_step.get("details", {}).get("deleted_staging_files") == 1
+        assert second.get("deduplication", {}).get(
+            "replaced_existing", {}
+        ).get("replaced_paths") == [str(old_file)]
+        assert any(source_id == first_source_id for source_id, _ in graph_calls)
+        assert any(source_id == second_source_id for source_id, _ in graph_calls)
+    finally:
+        service.close()
+        index_chroma.embed_text = original_embed
+        SETTINGS.llm_provider = original_provider
+        SETTINGS.openai_api_key = original_openai_key
+        SETTINGS.use_neo4j = original_use_neo4j
+        SETTINGS.neo4j_uri = original_neo4j_uri
+        SETTINGS.neo4j_user = original_neo4j_user
+        SETTINGS.neo4j_password = original_neo4j_password
+        SETTINGS.data_dir = original_data_dir
+        SETTINGS.chroma_persist_dir = original_chroma_persist_dir
+        RUNTIME.store = original_store
+
+
+def test_ingest_collapses_duplicate_documents_within_same_batch(tmp_path) -> None:
+    """A single folder ingest should keep one document per title/type key."""
+    original_embed = index_chroma.embed_text
+    original_provider = SETTINGS.llm_provider
+    original_openai_key = SETTINGS.openai_api_key
+    original_use_neo4j = SETTINGS.use_neo4j
+    original_neo4j_uri = SETTINGS.neo4j_uri
+    original_neo4j_user = SETTINGS.neo4j_user
+    original_neo4j_password = SETTINGS.neo4j_password
+    original_data_dir = SETTINGS.data_dir
+    original_chroma_persist_dir = SETTINGS.chroma_persist_dir
+    index_chroma.embed_text = _fake_embed_text
+    SETTINGS.llm_provider = "openai"
+    SETTINGS.openai_api_key = "test-key"
+    SETTINGS.use_neo4j = True
+    SETTINGS.neo4j_uri = "bolt://test-neo4j:7687"
+    SETTINGS.neo4j_user = "neo4j"
+    SETTINGS.neo4j_password = "password"
+    SETTINGS.data_dir = tmp_path / "storage"
+    SETTINGS.chroma_persist_dir = SETTINGS.data_dir / "chromadb"
+    original_store = _set_runtime_store_for_tests(SETTINGS.data_dir)
+
+    batch_root = tmp_path / "incoming"
+    first_copy = batch_root / "a" / "atlas.md"
+    second_copy = batch_root / "b" / "atlas.md"
+    first_copy.parent.mkdir(parents=True, exist_ok=True)
+    second_copy.parent.mkdir(parents=True, exist_ok=True)
+    first_copy.write_text("Project Atlas is led by Alice.", encoding="utf-8")
+    second_copy.write_text("Project Atlas is led by Bob.", encoding="utf-8")
+
+    service = RagApplicationService()
+    service.graph_store.replace_edges = (
+        lambda source_id, edges: {"relationships_created": len(edges)}
+    )
+    service.graph_store.expand_paths = (
+        lambda query, hops, max_paths, source_id=None: []
+    )
+    service.graph_store.clear_all_edges = lambda: 0
+    service.graph_store.close = lambda: None
+    try:
+        result = service.ingest(
+            IngestionRequest(
+                source=SourceConfig(
+                    source_type="folder",
+                    local_path=str(batch_root),
+                )
+            )
+        )
+
+        documents = service.list_documents()
+        doc_map = service.store.get_document_map()
+        batch_step = next(
+            step
+            for step in result.get("steps", [])
+            if isinstance(step, dict)
+            and step.get("name") == "deduplicate_incoming_batch"
+        )
+
+        assert result.get("status") == "completed"
+        assert len(documents) == 1
+        assert Path(documents[0].path_or_url).resolve(strict=False) == second_copy
+        assert len(doc_map) == 1
+        assert next(iter(doc_map.values())).get("title") == "atlas"
+        assert batch_step.get("details", {}).get("skipped_documents") == 1
+        assert batch_step.get("details", {}).get("kept_documents") == 1
+        assert result.get("deduplication", {}).get("incoming_batch", {}).get(
+            "kept_paths"
+        ) == [str(second_copy)]
+    finally:
+        service.close()
+        index_chroma.embed_text = original_embed
+        SETTINGS.llm_provider = original_provider
+        SETTINGS.openai_api_key = original_openai_key
+        SETTINGS.use_neo4j = original_use_neo4j
+        SETTINGS.neo4j_uri = original_neo4j_uri
+        SETTINGS.neo4j_user = original_neo4j_user
+        SETTINGS.neo4j_password = original_neo4j_password
+        SETTINGS.data_dir = original_data_dir
+        SETTINGS.chroma_persist_dir = original_chroma_persist_dir
+        RUNTIME.store = original_store
+
+
 def test_stale_query_refresh_does_not_rebuild_vector_embeddings() -> None:
     """Avoid expensive vector re-embedding on first query after async ingest."""
     original_embed = index_chroma.embed_text
@@ -437,6 +644,92 @@ def test_query_source_id_filters_out_other_sources() -> None:
             )
         )
         assert len(missing.citations) == 0
+    finally:
+        service.close()
+        index_chroma.embed_text = original_embed
+        SETTINGS.llm_provider = original_provider
+        SETTINGS.openai_api_key = original_openai_key
+        SETTINGS.use_neo4j = original_use_neo4j
+        SETTINGS.neo4j_uri = original_neo4j_uri
+        SETTINGS.neo4j_user = original_neo4j_user
+        SETTINGS.neo4j_password = original_neo4j_password
+
+
+def test_query_document_ids_filter_to_selected_documents() -> None:
+    """Ensure document_ids narrows retrieval to the selected documents only."""
+    original_embed = index_chroma.embed_text
+    original_provider = SETTINGS.llm_provider
+    original_openai_key = SETTINGS.openai_api_key
+    original_use_neo4j = SETTINGS.use_neo4j
+    original_neo4j_uri = SETTINGS.neo4j_uri
+    original_neo4j_user = SETTINGS.neo4j_user
+    original_neo4j_password = SETTINGS.neo4j_password
+    index_chroma.embed_text = _fake_embed_text
+    SETTINGS.llm_provider = "openai"
+    SETTINGS.openai_api_key = "test-key"
+    SETTINGS.use_neo4j = True
+    SETTINGS.neo4j_uri = "bolt://test-neo4j:7687"
+    SETTINGS.neo4j_user = "neo4j"
+    SETTINGS.neo4j_password = "password"
+
+    service = RagApplicationService()
+    service.graph_store.replace_edges = lambda source_id, edges: None
+    service.graph_store.expand_paths = (
+        lambda query, hops, max_paths: []
+    )
+    service.graph_store.clear_all_edges = lambda: 0
+    service.graph_store.close = lambda: None
+    try:
+        service.reset_all()
+        result = service.ingest(
+            IngestionRequest(
+                source=SourceConfig(
+                    source_type="folder",
+                    local_path="sample_data",
+                )
+            )
+        )
+        source_id = str(result.get("source_id", ""))
+        assert source_id
+
+        documents = service.list_documents(source_id=source_id)
+        engineering_doc = next(
+            item
+            for item in documents
+            if item.path_or_url.replace("\\", "/").endswith("engineering.md")
+        )
+        finance_doc = next(
+            item
+            for item in documents
+            if item.path_or_url.replace("\\", "/").endswith("policy_finance.md")
+        )
+
+        filtered = service.query(
+            QueryRequest(
+                question="Project Atlas",
+                source_id=source_id,
+                document_ids=[engineering_doc.document_id],
+                force_fallback=True,
+            )
+        )
+        assert len(filtered.citations) > 0
+        assert {
+            citation.document_id for citation in filtered.citations
+        } == {engineering_doc.document_id}
+        assert filtered.diagnostics.get("document_filter_count") == 1
+
+        missing = service.query(
+            QueryRequest(
+                question="Project Atlas",
+                source_id=source_id,
+                document_ids=[finance_doc.document_id, "missing-doc-id"],
+                force_fallback=True,
+            )
+        )
+        assert len(missing.citations) > 0
+        assert {
+            citation.document_id for citation in missing.citations
+        } == {finance_doc.document_id}
     finally:
         service.close()
         index_chroma.embed_text = original_embed

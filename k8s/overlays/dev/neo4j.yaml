@@ -34,6 +34,8 @@ spec:
                   key: NEO4J_PASSWORD
             - name: NEO4J_AUTH
               value: neo4j/$(NEO4J_PASSWORD)
+            - name: NEO4J_server_directories_data
+              value: /storage
           startupProbe:
             tcpSocket:
               port: bolt
@@ -64,7 +66,7 @@ spec:
               memory: 3Gi
           volumeMounts:
             - name: neo4j-data
-              mountPath: /data
+              mountPath: /storage
       volumes:
         - name: neo4j-data
           emptyDir: {}

@@ -124,10 +124,19 @@ python src/run_ui.py
 - `Local Path`: [sample_data](sample_data/)
 - Click en `Ingest`
 - Si modo async no esta listo, la UI recomienda/usa modo sync para evitar bloqueo.
+- Antes de persistir, la ingesta elimina versiones previas ya ingestadas que
+  coincidan por `title + content_type`, incluyendo borrado logico y limpieza
+  fisica del mirror en `storage/ingestion_staging` cuando aplica.
+- Si el mismo lote trae varias copias con igual `title + content_type`, se
+  conserva una sola version de forma determinista y se descartan las demas
+  antes de indexar.
 
 4. En la pestaña Query, preguntar por ejemplo:
 - `Who works on Project Atlas?`
 - `Which procedure depends on Policy FIN-001?`
+- `Source ID` sigue siendo opcional para acotar por una ingesta concreta.
+- `Documentos (opcional)` permite seleccionar uno o varios documentos ya
+  ingestados para limitar la consulta a ese subconjunto.
 
 5. En la pestaña TDM (nueva):
 - Usar `Ingerir TDM` para invocar `POST /tdm/ingest`.
@@ -167,6 +176,7 @@ python src/run_ui.py
 - `POST /sources/reset`
 - `POST /sources/ingest/async`
 - `GET /sources/ingest/readiness`
+- `GET /sources/documents`
 - `GET /jobs/{id}`
 - `POST /query`
 - `POST /query/retrieval`
@@ -404,8 +414,7 @@ Variables relevantes de entorno:
   RQ (`USE_RQ=true`). Default: `900`.
 
 Para ingesta `folder`, la UI realiza staging automatico de la carpeta
-seleccionada hacia [storage/ingestion_staging](storage/ingestion_staging/)
-dentro del repositorio.
+seleccionada hacia `DATA_DIR/ingestion_staging`.
 Luego envia esa ruta al backend (`api`/`worker`) para que funcione igual
 en runtime local y en Docker/Rancher, sin configurar mapeos por carpeta.
 

@@ -94,3 +94,21 @@ def test_main_window_ingest_readiness_calls_expected_endpoint() -> None:
 
     assert result["ready"] is True
     assert captured[0][0] == "/sources/ingest/readiness"
+
+
+def test_main_window_list_documents_builds_expected_path() -> None:
+    """Fetch document catalog through dedicated GET route with source filter."""
+    window = _build_lightweight_window()
+
+    captured: list[tuple[str, int]] = []
+
+    def _fake_get(path: str, timeout: int) -> dict[str, Any]:
+        captured.append((path, timeout))
+        return {"count": 0, "documents": []}
+
+    window._get_json = _fake_get  # type: ignore[method-assign]
+
+    result = window.list_documents("src-1")
+
+    assert result["count"] == 0
+    assert captured[0][0] == "/sources/documents?source_id=src-1"

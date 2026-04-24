@@ -281,6 +281,48 @@ def test_core_endpoints_degrade_cleanly_when_neo4j_disabled() -> None:
         index_chroma.embed_text = original_embed
 
 
+def test_list_documents_endpoint_returns_ingested_catalog() -> None:
+    """Expose ingested document metadata for UI-side optional selectors."""
+    client = TestClient(server.app)
+    original_embed = index_chroma.embed_text
+    original_provider = server.SETTINGS.llm_provider
+    original_openai_key = server.SETTINGS.openai_api_key
+    original_use_neo4j = server.SETTINGS.use_neo4j
+
+    server.SETTINGS.llm_provider = "openai"
+    server.SETTINGS.openai_api_key = "test-key"
+    server.SETTINGS.use_neo4j = False
+    index_chroma.embed_text = _fake_embed_text
+
+    try:
+        ingest_response = client.post(
+            "/sources/ingest",
+            json={
+                "source": {
+                    "source_type": "folder",
+                    "local_path": "sample_data",
+                }
+            },
+        )
+        assert ingest_response.status_code == 200
+        source_id = ingest_response.json()["source_id"]
+
+        response = client.get(f"/sources/documents?source_id={source_id}")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["source_id"] == source_id
+        assert body["count"] > 0
+        assert all("document_id" in item for item in body["documents"])
+        assert all("title" in item for item in body["documents"])
+        assert all("path_or_url" in item for item in body["documents"])
+    finally:
+        server.SETTINGS.llm_provider = original_provider
+        server.SETTINGS.openai_api_key = original_openai_key
+        server.SETTINGS.use_neo4j = original_use_neo4j
+        index_chroma.embed_text = original_embed
+
+
 def test_get_job_prefers_rq_status_when_local_state_is_stale() -> None:
     """Expose live RQ status when local job row is still queued."""
     client = TestClient(server.app)

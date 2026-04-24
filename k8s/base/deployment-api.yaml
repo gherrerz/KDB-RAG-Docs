@@ -63,7 +63,7 @@ spec:
                   key: NEO4J_PASSWORD
           volumeMounts:
             - name: app-data
-              mountPath: /data
+              mountPath: /storage
           startupProbe:
             httpGet:
               path: /health

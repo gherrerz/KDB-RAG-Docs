@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+import gc
 import json
+import os
+import shutil
+import stat
 from concurrent.futures import ThreadPoolExecutor
-from typing import List, Optional, Sequence, Tuple
+from pathlib import Path
+from typing import Any, List, Optional, Sequence, Tuple
 
 import chromadb
 from chromadb.api.models.Collection import Collection
@@ -38,17 +43,50 @@ class ChromaVectorIndex:
         self.embedding_model = model or SETTINGS.llm_embedding
         self.embedding_workers = max(1, SETTINGS.ingest_embedding_workers)
         self.upsert_batch_size = max(1, SETTINGS.chroma_upsert_batch_size)
-        persist_dir = SETTINGS.chroma_persist_dir
-        persist_dir.mkdir(parents=True, exist_ok=True)
-        self._client = chromadb.PersistentClient(path=str(persist_dir))
+        self._persist_dir = SETTINGS.chroma_persist_dir
+        self._client = self._create_client(self._persist_dir)
         self._collection = self._get_or_create_collection()
+
+    @staticmethod
+    def _create_client(persist_dir: Path):
+        """Create one Chroma persistent client rooted at persist_dir."""
+        persist_dir.mkdir(parents=True, exist_ok=True)
+        return chromadb.PersistentClient(path=str(persist_dir))
+
+    @staticmethod
+    def _on_rmtree_error(func, path, _exc_info) -> None:
+        """Retry physical deletion after clearing read-only flags."""
+        os.chmod(path, stat.S_IWRITE | stat.S_IREAD)
+        func(path)
+
+    @staticmethod
+    def _dispose_client(client: Any) -> None:
+        """Release client-side Chroma resources before filesystem reset."""
+        close = getattr(client, "close", None)
+        if callable(close):
+            close()
+        clear_cache = getattr(client, "clear_system_cache", None)
+        if callable(clear_cache):
+            clear_cache()
 
     def _get_or_create_collection(self) -> Collection:
         """Return active Chroma collection with cosine distance config."""
-        return self._client.get_or_create_collection(
+        return self._ensure_client().get_or_create_collection(
             name=SETTINGS.chroma_collection,
             metadata={"hnsw:space": "cosine"},
         )
+
+    def _ensure_client(self):
+        """Recover the persistent client when another flow cleared it."""
+        if self._client is None:
+            self._client = self._create_client(self._persist_dir)
+        return self._client
+
+    def _ensure_collection(self) -> Collection:
+        """Recover the active collection handle when another flow cleared it."""
+        if self._collection is None:
+            self._collection = self._get_or_create_collection()
+        return self._collection
 
     @staticmethod
     def _as_metadata(chunk: ChunkRecord) -> dict[str, object]:
@@ -95,11 +133,19 @@ class ChromaVectorIndex:
     def _clear_source(self, source_id: str) -> None:
         """Delete existing vectors belonging to one source."""
         try:
-            self._collection.delete(where={"source_id": source_id})
+            self._ensure_collection().delete(where={"source_id": source_id})
         except InvalidCollectionException:
             # Another process may recreate the collection (e.g. reset).
             self._collection = self._get_or_create_collection()
             self._collection.delete(where={"source_id": source_id})
+
+    def delete_document(self, document_id: str) -> None:
+        """Delete existing vectors belonging to one document."""
+        try:
+            self._ensure_collection().delete(where={"document_id": document_id})
+        except InvalidCollectionException:
+            self._collection = self._get_or_create_collection()
+            self._collection.delete(where={"document_id": document_id})
 
     def _embed_chunks(self, chunks: Sequence[ChunkRecord]) -> List[List[float]]:
         """Generate embeddings with bounded parallelism for I/O providers."""
@@ -146,7 +192,7 @@ class ChromaVectorIndex:
                 documents = [chunk.text for chunk in batch]
                 metadatas = [self._as_metadata(chunk) for chunk in batch]
                 embeddings = self._embed_chunks(batch)
-                self._collection.upsert(
+                self._ensure_collection().upsert(
                     ids=ids,
                     documents=documents,
                     metadatas=metadatas,
@@ -177,12 +223,18 @@ class ChromaVectorIndex:
         query: str,
         top_n: int,
         source_id: Optional[str] = None,
+        document_ids: Optional[Sequence[str]] = None,
     ) -> List[Tuple[ChunkRecord, float]]:
         """Search similar chunks in Chroma using query embeddings."""
         if top_n <= 0:
             return []
+        allowed_document_ids = {
+            document_id
+            for document_id in (document_ids or [])
+            if document_id
+        }
         try:
-            if self._collection.count() == 0:
+            if self._ensure_collection().count() == 0:
                 return []
         except InvalidCollectionException:
             self._collection = self._get_or_create_collection()
@@ -195,21 +247,51 @@ class ChromaVectorIndex:
             provider=self.embedding_provider,
             model=self.embedding_model,
         )
+
+        where_clause: dict[str, Any] | None = None
+        if source_id and allowed_document_ids:
+            where_clause = {
+                "$and": [
+                    {"source_id": source_id},
+                    {"document_id": {"$in": sorted(allowed_document_ids)}},
+                ]
+            }
+        elif source_id:
+            where_clause = {"source_id": source_id}
+        elif allowed_document_ids:
+            if len(allowed_document_ids) == 1:
+                where_clause = {"document_id": next(iter(allowed_document_ids))}
+            else:
+                where_clause = {
+                    "document_id": {"$in": sorted(allowed_document_ids)}
+                }
+
         try:
             params = {
                 "query_embeddings": [query_vec],
-                "n_results": top_n,
+                "n_results": max(top_n, len(allowed_document_ids) or top_n),
                 "include": ["documents", "metadatas", "distances"],
             }
-            if source_id:
-                params["where"] = {"source_id": source_id}
+            if where_clause is not None:
+                params["where"] = where_clause
             payload = self._collection.query(**params)
         except (
             InvalidDimensionException,
             InvalidArgumentError,
             InvalidCollectionException,
         ):
-            return []
+            try:
+                payload = self._collection.query(
+                    query_embeddings=[query_vec],
+                    n_results=max(top_n * 5, len(allowed_document_ids) * 5, top_n),
+                    include=["documents", "metadatas", "distances"],
+                )
+            except (
+                InvalidDimensionException,
+                InvalidArgumentError,
+                InvalidCollectionException,
+            ):
+                return []
 
         ids = payload.get("ids", [[]])
         documents = payload.get("documents", [[]])
@@ -232,18 +314,37 @@ class ChromaVectorIndex:
                 text=str(document),
                 metadata=metadata,
             )
+            if source_id and chunk.source_id != source_id:
+                continue
+            if (
+                allowed_document_ids
+                and chunk.document_id not in allowed_document_ids
+            ):
+                continue
             score = max(0.0, 1.0 - float(distance))
             results.append((chunk, score))
+            if len(results) >= top_n:
+                break
         return results
 
     def clear_all(self) -> None:
-        """Delete and recreate active collection to reset dimensionality."""
+        """Delete persisted Chroma data on disk and recreate clean state."""
         try:
-            self._client.delete_collection(name=SETTINGS.chroma_collection)
+            self._ensure_client().delete_collection(name=SETTINGS.chroma_collection)
         except (ValueError, InvalidCollectionException):
             # Chroma raises when the collection is already missing; reset must
             # stay idempotent for API/UI flows.
             pass
+        self._collection = None
+        self._dispose_client(self._client)
+        self._client = None
+        gc.collect()
+        if self._persist_dir.exists():
+            shutil.rmtree(
+                self._persist_dir,
+                onerror=self._on_rmtree_error,
+            )
+        self._client = self._create_client(self._persist_dir)
         self._collection = self._get_or_create_collection()
 
     def close(self) -> None:

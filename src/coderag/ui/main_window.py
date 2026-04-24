@@ -6,6 +6,7 @@ import sys
 import time
 from copy import deepcopy
 from typing import Any, Callable, Dict, Optional
+from urllib.parse import quote
 
 import requests
 from requests import Response
@@ -79,7 +80,7 @@ class MainWindow(QMainWindow):
             ),
             "Ingestion",
         )
-        tabs.addTab(QueryView(self.query), "Query")
+        tabs.addTab(QueryView(self.query, self.list_documents), "Query")
         tabs.addTab(
             TdmView(
                 on_tdm_ingest=self.tdm_ingest,
@@ -161,6 +162,13 @@ class MainWindow(QMainWindow):
     def query(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Call backend query endpoint."""
         return self._post_json("/query", payload, timeout=180)
+
+    def list_documents(self, source_id: str | None = None) -> Dict[str, Any]:
+        """Fetch ingested document catalog for optional source filter."""
+        path = "/sources/documents"
+        if source_id:
+            path = f"{path}?source_id={quote(source_id, safe='')}"
+        return self._get_json(path, timeout=30)
 
     def reset_all(self) -> Dict[str, Any]:
         """Call backend endpoint to clear all repositories and indexes."""

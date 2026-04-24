@@ -89,6 +89,16 @@ def test_ingestion_view_updates_progress_and_summary_from_live_update() -> None:
         "message": "indexing",
         "documents": 8,
         "chunks": 120,
+        "deduplication": {
+            "incoming_batch": {
+                "skipped_documents": 1,
+                "kept_paths": ["storage/ingestion_staging/new/atlas.md"],
+            },
+            "replaced_existing": {
+                "deleted_documents": 2,
+                "replaced_paths": ["storage/ingestion_staging/old/atlas.md"],
+            },
+        },
         "steps": [{"elapsed_hhmmss": "00:01:12"}],
     }
 
@@ -99,6 +109,60 @@ def test_ingestion_view_updates_progress_and_summary_from_live_update() -> None:
     assert "Estado: en curso" in summary
     assert "Documentos: 8" in summary
     assert "Chunks: 120" in summary
+    assert "Deduplicacion: lote=1 | reemplazos=2" in summary
+    assert "Detalle deduplicacion:" in summary
+    assert "storage/ingestion_staging/old/atlas.md" in summary
+
+
+def test_ingestion_view_formats_deduplication_details() -> None:
+    """Render deduplication sections in the technical ingestion output."""
+    rendered = IngestionView._format_ingestion_result(
+        {
+            "status": "completed",
+            "documents": 1,
+            "chunks": 2,
+            "deduplication": {
+                "incoming_batch": {
+                    "skipped_documents": 1,
+                    "kept_paths": ["storage/ingestion_staging/new/atlas.md"],
+                },
+                "replaced_existing": {
+                    "deleted_documents": 2,
+                    "replaced_paths": ["storage/ingestion_staging/old/atlas.md"],
+                },
+            },
+        },
+        include_raw=False,
+    )
+
+    assert "Deduplication:" in rendered
+    assert "incoming_batch" in rendered
+    assert "replaced_existing" in rendered
+    assert "storage/ingestion_staging/old/atlas.md" in rendered
+
+
+def test_ingestion_view_formats_short_deduplication_path_summary() -> None:
+    """Build a concise path summary for the ingestion status card."""
+    summary = IngestionView._format_deduplication_paths(
+        {
+            "incoming_batch": {
+                "kept_paths": [
+                    "storage/ingestion_staging/new/atlas.md",
+                    "storage/ingestion_staging/new/policy.md",
+                    "storage/ingestion_staging/new/extra.md",
+                ]
+            },
+            "replaced_existing": {
+                "replaced_paths": [
+                    "storage/ingestion_staging/old/atlas.md",
+                ]
+            },
+        }
+    )
+
+    assert "conservados:" in summary
+    assert "reemplazados:" in summary
+    assert "(+1)" in summary
 
 
 def test_ingestion_view_toggles_raw_output_visibility() -> None:

@@ -9,7 +9,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-from coderag.core.models import ChunkRecord, DocumentRecord, JobStatus
+from coderag.core.models import (
+    ChunkRecord,
+    DocumentCatalogEntry,
+    DocumentRecord,
+    JobStatus,
+)
 
 
 class MetadataStore:
@@ -602,6 +607,106 @@ class MetadataStore:
         finally:
             conn.close()
 
+    def list_documents(
+        self,
+        source_id: Optional[str] = None,
+    ) -> List[DocumentCatalogEntry]:
+        """Return lightweight document metadata for UI/API catalog views."""
+        conn = self._connect()
+        try:
+            if source_id:
+                rows = conn.execute(
+                    """
+                    SELECT document_id, source_id, title, path_or_url,
+                           content_type, updated_at
+                    FROM documents
+                    WHERE source_id = ?
+                    ORDER BY lower(title) ASC, lower(path_or_url) ASC
+                    """,
+                    (source_id,),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT document_id, source_id, title, path_or_url,
+                           content_type, updated_at
+                    FROM documents
+                    ORDER BY lower(title) ASC, lower(path_or_url) ASC
+                    """
+                ).fetchall()
+            return [
+                DocumentCatalogEntry(
+                    document_id=row["document_id"],
+                    source_id=row["source_id"],
+                    title=row["title"],
+                    path_or_url=row["path_or_url"],
+                    content_type=row["content_type"],
+                    updated_at=datetime.fromisoformat(row["updated_at"]),
+                )
+                for row in rows
+            ]
+        finally:
+            conn.close()
+
+    def find_documents_by_title_and_content_type(
+        self,
+        title: str,
+        content_type: str,
+    ) -> List[DocumentCatalogEntry]:
+        """Return ingested documents matching title and content type."""
+        conn = self._connect()
+        try:
+            rows = conn.execute(
+                """
+                SELECT document_id, source_id, title, path_or_url,
+                       content_type, updated_at
+                FROM documents
+                WHERE lower(title) = lower(?)
+                  AND lower(content_type) = lower(?)
+                ORDER BY updated_at DESC, lower(path_or_url) ASC
+                """,
+                (title, content_type),
+            ).fetchall()
+            return [
+                DocumentCatalogEntry(
+                    document_id=row["document_id"],
+                    source_id=row["source_id"],
+                    title=row["title"],
+                    path_or_url=row["path_or_url"],
+                    content_type=row["content_type"],
+                    updated_at=datetime.fromisoformat(row["updated_at"]),
+                )
+                for row in rows
+            ]
+        finally:
+            conn.close()
+
+    def delete_document_by_id(self, document_id: str) -> int:
+        """Delete one document row by document id."""
+        conn = self._connect()
+        try:
+            deleted = conn.execute(
+                "DELETE FROM documents WHERE document_id = ?",
+                (document_id,),
+            ).rowcount
+            conn.commit()
+            return max(0, int(deleted))
+        finally:
+            conn.close()
+
+    def delete_chunks_by_document_id(self, document_id: str) -> int:
+        """Delete all chunk rows belonging to one document id."""
+        conn = self._connect()
+        try:
+            deleted = conn.execute(
+                "DELETE FROM chunks WHERE document_id = ?",
+                (document_id,),
+            ).rowcount
+            conn.commit()
+            return max(0, int(deleted))
+        finally:
+            conn.close()
+
     def clear_all_data(self) -> Dict[str, int]:
         """Delete all persisted rows while keeping schema intact."""
         conn = self._connect()
@@ -619,6 +724,13 @@ class MetadataStore:
                 "DELETE FROM jobs"
             ).rowcount
             conn.execute("DELETE FROM job_events")
+            conn.execute("DELETE FROM tdm_schemas")
+            conn.execute("DELETE FROM tdm_tables")
+            conn.execute("DELETE FROM tdm_columns")
+            conn.execute("DELETE FROM tdm_service_mappings")
+            conn.execute("DELETE FROM tdm_masking_rules")
+            conn.execute("DELETE FROM tdm_virtualization_artifacts")
+            conn.execute("DELETE FROM tdm_synthetic_profiles")
             conn.commit()
             return {
                 "deleted_documents": max(0, int(deleted_documents)),

@@ -204,6 +204,25 @@ def _tdm_disabled_detail() -> dict[str, Any]:
 
 
 @app.get(
+    "/sources/documents",
+    tags=["ingestion"],
+    summary="List ingested documents",
+    description=(
+        "Return lightweight metadata for documents currently persisted in the "
+        "local catalog, optionally filtered by source_id."
+    ),
+)
+def list_documents(source_id: str | None = None) -> dict[str, Any]:
+    """Expose ingested document metadata for UI selectors and diagnostics."""
+    documents = SERVICE.list_documents(source_id=source_id)
+    return {
+        "source_id": source_id,
+        "count": len(documents),
+        "documents": [item.model_dump(mode="json") for item in documents],
+    }
+
+
+@app.get(
     "/sources/ingest/readiness",
     tags=["ingestion"],
     summary="Get ingestion readiness diagnostics",
@@ -266,15 +285,16 @@ def ingest_source(request: IngestionRequest) -> dict[str, Any]:
     tags=["ingestion"],
     summary="Reset all ingestion artifacts",
     description=(
-        "Clear documents/chunks/graph/job history and reset runtime indexes. "
-        "Requires explicit confirmation in request body."
+        "Clear persisted ingestion state, TDM metadata, staging mirror, "
+        "managed graph relationships, and reset runtime indexes. Requires "
+        "explicit confirmation in request body."
     ),
     responses={
         400: {"description": "Missing confirmation (confirm=false)."}
     },
 )
 def reset_sources(request: ResetAllRequest) -> dict[str, Any]:
-    """Clear all ingestion artifacts and reset indexes."""
+    """Clear persisted ingestion artifacts and reset runtime indexes."""
     if not request.confirm:
         raise HTTPException(
             status_code=400,

@@ -152,8 +152,8 @@ Luego:
 
 ## Persistencia
 
-- Se monta PVC `coderag-data-pvc` en `/data`.
-- `DATA_DIR=/data` y `CHROMA_PERSIST_DIR=/data/chromadb`.
+- Se monta PVC `coderag-data-pvc` en `/storage`.
+- `DATA_DIR=/storage` y `CHROMA_PERSIST_DIR=/storage/chromadb`.
 
 ## Notas operativas
 
