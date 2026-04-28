@@ -198,6 +198,26 @@ def test_ingestion_view_mode_selector_defaults_to_async() -> None:
     assert view.execution_mode.count() == 2
 
 
+def test_ingestion_view_channel_selector_defaults_to_json_folder() -> None:
+    """Default ingestion channel should preserve existing folder JSON flow."""
+    view = _build_view()
+
+    assert str(view.ingestion_channel.currentData()) == "json_folder"
+    assert view.ingestion_channel.count() == 2
+
+
+def test_ingestion_view_upload_channel_requires_folder_source_type() -> None:
+    """Reject upload channel when source type is not folder."""
+    view = _build_view()
+    view.ingestion_channel.setCurrentIndex(1)
+    view.source_type.setText("confluence")
+    view.local_path.setText("sample_data/file.md")
+
+    error = view._validate_inputs()
+
+    assert "upload por archivo" in str(error).lower()
+
+
 def test_ingestion_view_async_readiness_helpers() -> None:
     """Format readiness payload and detect not-ready async conditions."""
     payload = {

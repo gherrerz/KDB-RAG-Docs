@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 import threading
 import uuid
 from typing import Any, Dict, Optional
@@ -15,6 +16,13 @@ from coderag.core.settings import SETTINGS
 _LOCAL_THREADS: dict[str, threading.Thread] = {}
 
 
+def _cleanup_staging_dir(staging_dir: Optional[str]) -> None:
+    """Best-effort cleanup for staged upload directories."""
+    if not staging_dir:
+        return
+    shutil.rmtree(staging_dir, ignore_errors=True)
+
+
 def _load_rq_modules():
     """Load rq and redis lazily to keep optional dependency behavior."""
     from redis import Redis
@@ -24,7 +32,11 @@ def _load_rq_modules():
     return Redis, Queue, Job
 
 
-def ingest_task(job_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+def ingest_task(
+    job_id: str,
+    payload: Dict[str, Any],
+    cleanup_staging_dir: Optional[str] = None,
+) -> Dict[str, Any]:
     """Background task entrypoint executed by RQ worker."""
     try:
         request = IngestionRequest.model_validate(payload)
@@ -37,9 +49,15 @@ def ingest_task(job_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
             f"FAILED | rq worker: {exc}",
         )
         raise
+    finally:
+        _cleanup_staging_dir(cleanup_staging_dir)
 
 
-def _run_local_ingest_job(job_id: str, payload: Dict[str, Any]) -> None:
+def _run_local_ingest_job(
+    job_id: str,
+    payload: Dict[str, Any],
+    cleanup_staging_dir: Optional[str] = None,
+) -> None:
     """Execute local background ingestion and persist terminal job state."""
     request = IngestionRequest.model_validate(payload)
     from coderag.core.service import SERVICE
@@ -53,17 +71,21 @@ def _run_local_ingest_job(job_id: str, payload: Dict[str, Any]) -> None:
             f"FAILED | local worker: {exc}",
         )
     finally:
+        _cleanup_staging_dir(cleanup_staging_dir)
         _LOCAL_THREADS.pop(job_id, None)
 
 
-def enqueue_local_ingest_job(payload: Dict[str, Any]) -> str:
+def enqueue_local_ingest_job(
+    payload: Dict[str, Any],
+    cleanup_staging_dir: Optional[str] = None,
+) -> str:
     """Enqueue ingestion in a local background thread and return job id."""
     job_id = uuid.uuid4().hex[:12]
     RUNTIME.store.touch_job(job_id, "queued", "Ingestion job queued")
 
     thread = threading.Thread(
         target=_run_local_ingest_job,
-        args=(job_id, payload),
+        args=(job_id, payload, cleanup_staging_dir),
         daemon=True,
     )
     _LOCAL_THREADS[job_id] = thread
@@ -71,7 +93,10 @@ def enqueue_local_ingest_job(payload: Dict[str, Any]) -> str:
     return job_id
 
 
-def enqueue_ingest_job(payload: Dict[str, Any]) -> str:
+def enqueue_ingest_job(
+    payload: Dict[str, Any],
+    cleanup_staging_dir: Optional[str] = None,
+) -> str:
     """Enqueue ingestion task and return RQ job id."""
     Redis, Queue, _ = _load_rq_modules()
     redis_conn = Redis.from_url(SETTINGS.redis_url)
@@ -81,6 +106,7 @@ def enqueue_ingest_job(payload: Dict[str, Any]) -> str:
         ingest_task,
         job_id,
         payload,
+        cleanup_staging_dir,
         job_id=job_id,
         job_timeout=SETTINGS.rq_ingest_job_timeout_sec,
     )

@@ -87,6 +87,17 @@ class IngestionView(QWidget):
 
         self.source_type = QLineEdit("folder")
         self.source_type.setMinimumHeight(34)
+        self.ingestion_channel = QComboBox()
+        self.ingestion_channel.setMinimumHeight(34)
+        self.ingestion_channel.addItem(
+            "Carpeta (JSON)",
+            "json_folder",
+        )
+        self.ingestion_channel.addItem(
+            "Archivo (multipart upload)",
+            "upload_file",
+        )
+        self.ingestion_channel.setCurrentIndex(0)
         self.execution_mode = QComboBox()
         self.execution_mode.setMinimumHeight(34)
         self.execution_mode.addItem("Asincrono (cola + jobs)", "async")
@@ -107,6 +118,10 @@ class IngestionView(QWidget):
         self.source_type.setToolTip(
             "Use 'folder' para archivos locales o 'confluence' para ingesta API."
         )
+        self.ingestion_channel.setToolTip(
+            "Selecciona JSON tradicional por carpeta o upload multipart para "
+            "probar el endpoint /sources/ingest/file*."
+        )
         self.execution_mode.setToolTip(
             "Asincrono requiere cola operativa; Sincrono ejecuta ingesta en "
             "la llamada HTTP sin polling de jobs."
@@ -125,6 +140,7 @@ class IngestionView(QWidget):
         self.source_type.setValidator(QRegularExpressionValidator(source_pattern))
 
         form_layout.addRow("Tipo de fuente", self.source_type)
+        form_layout.addRow("Canal de envio", self.ingestion_channel)
         form_layout.addRow("Modo de ejecucion", self.execution_mode)
         form_layout.addRow("Ruta local", self.local_path)
         form_layout.addRow("URL base", self.base_url)
@@ -211,7 +227,9 @@ class IngestionView(QWidget):
         self._toggle_raw_shortcut = QShortcut(QKeySequence("Ctrl+T"), self)
         self._toggle_raw_shortcut.activated.connect(self.show_raw.toggle)
 
-        QWidget.setTabOrder(self.source_type, self.local_path)
+        QWidget.setTabOrder(self.source_type, self.ingestion_channel)
+        QWidget.setTabOrder(self.ingestion_channel, self.execution_mode)
+        QWidget.setTabOrder(self.execution_mode, self.local_path)
         QWidget.setTabOrder(self.local_path, self.base_url)
         QWidget.setTabOrder(self.base_url, self.token)
         QWidget.setTabOrder(self.token, self.filters)
@@ -255,6 +273,9 @@ class IngestionView(QWidget):
                 "token": self.token.text().strip() or None,
                 "filters": self._safe_json(self.filters.text().strip()),
             },
+            "_ingestion_channel": str(
+                self.ingestion_channel.currentData() or "json_folder"
+            ),
             "_ingestion_mode": str(self.execution_mode.currentData() or "async"),
         }
 
@@ -270,9 +291,14 @@ class IngestionView(QWidget):
                 )
                 self.output.setPlainText(self._format_async_readiness(readiness))
         selected_mode = str(payload.get("_ingestion_mode") or "async")
+        channel = str(payload.get("_ingestion_channel") or "json_folder")
         dispatch_message = "Enviando job de ingesta..."
         if selected_mode == "sync":
             dispatch_message = "Ejecutando ingesta sincrona..."
+        if channel == "upload_file":
+            dispatch_message = "Subiendo archivo para ingesta..."
+            if selected_mode == "sync":
+                dispatch_message = "Subiendo archivo y ejecutando ingesta sincrona..."
         self.summary.setPlainText(
             f"Estado: en curso\n{dispatch_message}"
         )
@@ -730,6 +756,9 @@ class IngestionView(QWidget):
     def _validate_inputs(self) -> str | None:
         """Validate source-specific fields before dispatching ingestion."""
         source_type = (self.source_type.text() or "").strip().lower()
+        ingestion_channel = str(
+            self.ingestion_channel.currentData() or "json_folder"
+        )
         filters_raw = (self.filters.text() or "").strip()
 
         if not source_type:
@@ -747,6 +776,12 @@ class IngestionView(QWidget):
                 return "La ruta local es obligatoria cuando el tipo es folder."
             self.local_path.setProperty("invalid", False)
             self._refresh_input_style(self.local_path)
+
+        if ingestion_channel == "upload_file" and source_type != "folder":
+            return (
+                "El canal de upload por archivo requiere tipo de fuente "
+                "'folder'."
+            )
 
         if source_type == "confluence":
             has_base_url = bool((self.base_url.text() or "").strip())

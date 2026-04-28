@@ -73,6 +73,16 @@ def _set_vertex_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
         None,
     )
     monkeypatch.setattr(SETTINGS, "vertex_location", "us-central1")
+    monkeypatch.setattr(
+        SETTINGS,
+        "vertex_auth_token_url",
+        "https://oauth2.googleapis.com/token",
+    )
+    monkeypatch.setattr(
+        SETTINGS,
+        "vertex_api_base_url",
+        "aiplatform.googleapis.com",
+    )
     monkeypatch.setattr(SETTINGS, "vertex_answer_model", "gemini-2.0-flash")
     monkeypatch.setattr(SETTINGS, "vertex_label_service", "webspec-coipo")
     monkeypatch.setattr(
@@ -173,6 +183,79 @@ def test_vertex_embedding_uses_bearer_headers_without_api_key(
         model_name="text-embedding-005",
     )
     assert captured["labels_from_headers"] == expected_labels
+
+
+def test_vertex_embedding_uses_configured_api_base_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Build Vertex embedding URL from configurable base domain."""
+    _set_vertex_defaults(monkeypatch)
+    monkeypatch.setattr(SETTINGS, "vertex_api_base_url", "alt.example.com")
+    captured: dict = {}
+
+    def _fake_headers(labels: dict[str, str]) -> dict[str, str]:
+        _ = labels
+        return {
+            "Authorization": "Bearer fake-token",
+            "Content-Type": "application/json",
+        }
+
+    def _fake_post(url: str, headers: dict, json: dict, timeout: int):
+        captured["url"] = url
+        _ = headers, json, timeout
+        return _FakeEmbeddingResponse()
+
+    monkeypatch.setattr(
+        "coderag.ingestion.embedding.build_vertex_request_headers",
+        _fake_headers,
+    )
+    monkeypatch.setattr(
+        "coderag.ingestion.embedding.requests.post",
+        _fake_post,
+    )
+
+    _embed_text_vertex("hola", "text-embedding-005")
+
+    assert captured["url"].startswith("https://us-central1-alt.example.com")
+
+
+def test_get_vertex_access_token_uses_configured_token_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Use VERTEX_AUTH_TOKEN_URL when building OAuth credentials."""
+    _set_vertex_defaults(monkeypatch)
+    monkeypatch.setattr(
+        SETTINGS,
+        "vertex_auth_token_url",
+        "https://oauth2-alt.example.com/token",
+    )
+
+    captured: dict = {}
+
+    class _FakeCredentials:
+        def __init__(self) -> None:
+            self.token = None
+            self.expiry = None
+
+        def refresh(self, _request) -> None:
+            self.token = "token-xyz"
+
+    def _fake_from_service_account_info(info: dict, scopes: list[str]):
+        captured["token_uri"] = info.get("token_uri")
+        captured["scopes"] = scopes
+        return _FakeCredentials()
+
+    monkeypatch.setattr(
+        "coderag.core.vertex_auth.service_account.Credentials"
+        ".from_service_account_info",
+        _fake_from_service_account_info,
+    )
+    reset_vertex_credentials_cache()
+
+    token = get_vertex_access_token()
+
+    assert token == "token-xyz"
+    assert captured["token_uri"] == "https://oauth2-alt.example.com/token"
 
 
 def test_get_vertex_access_token_requires_service_account_json(

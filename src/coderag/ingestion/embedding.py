@@ -82,7 +82,7 @@ def _embed_text_vertex(text: str, model: str) -> List[float]:
     location = SETTINGS.vertex_location
     labels = SETTINGS.resolve_vertex_labels(model_name=model)
     url = (
-        f"https://{location}-aiplatform.googleapis.com/v1/projects/"
+        f"https://{location}-{SETTINGS.vertex_api_base_url}/v1/projects/"
         f"{SETTINGS.vertex_project_id}/locations/{location}/publishers/google/"
         f"models/{model}:predict"
     )

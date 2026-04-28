@@ -53,6 +53,8 @@ La configuracion principal se define en `src/coderag/core/settings.py`.
 - `VERTEX_SERVICE_ACCOUNT_JSON_B64` (JSON de service account en base64)
 - `VERTEX_PROJECT_ID`
 - `VERTEX_LOCATION`
+- `VERTEX_AUTH_TOKEN_URL` (default `https://oauth2.googleapis.com/token`)
+- `VERTEX_API_BASE_URL` (default `aiplatform.googleapis.com`)
 - `VERTEX_ANSWER_MODEL`
 - `VERTEX_EMBEDDING_MODEL` (default `text-embedding-005`)
 - `VERTEX_LABEL_SERVICE` (default `webspec-coipo`)
@@ -97,6 +99,11 @@ Precedencia:
 - En pruebas locales puedes cargarlo desde archivo con PowerShell:
   `$env:VERTEX_SERVICE_ACCOUNT_JSON_B64 = (Get-Content gcp_credentials_vertex.base64.txt -Raw)`.
 - `VERTEX_PROJECT_ID` es obligatorio para llamadas de answer y embeddings.
+- `VERTEX_AUTH_TOKEN_URL` permite configurar el endpoint OAuth para emitir
+  bearer tokens de Vertex (default `https://oauth2.googleapis.com/token`).
+- `VERTEX_API_BASE_URL` define el dominio base para invocaciones Vertex y se
+  combina con `VERTEX_LOCATION` para formar hosts como
+  `https://us-central1-aiplatform.googleapis.com`.
 - Compatibilidad: `VERTEX_SERVICE_ACCOUNT_JSON` (raw JSON) se mantiene como
   fallback legacy, pero el formato recomendado es base64.
 - No se usa `VERTEX_AI_API_KEY` en este runtime.
@@ -141,11 +148,19 @@ La aplicacion carga automaticamente variables desde `.env` en runtime.
 - `RQ_INGEST_JOB_TIMEOUT_SEC`: timeout (segundos) para jobs de ingesta en
   RQ. Default `900`. Aumentar en ingestas largas para evitar errores por
   timeout de worker.
+- `UPLOAD_STAGING_SHARED`: habilita uploads async con RQ cuando `api` y
+  `worker` comparten el mismo volumen/ruta de staging de archivos.
+- `UPLOAD_MAX_BYTES`: limite maximo por archivo para endpoints de upload
+  multipart (`/sources/ingest/file*`). Default `26214400` (25 MB).
 
 Para ingesta `folder`, la UI hace staging automatico del directorio elegido
 por el usuario hacia `DATA_DIR/ingestion_staging`.
 El backend consume esa ruta staged, visible tanto para `api` como `worker`
 en Docker Compose por el montaje del repo (`./:/app`).
+
+Para upload async (`POST /sources/ingest/file/async`) con `USE_RQ=true`,
+requiere `UPLOAD_STAGING_SHARED=true` para asegurar que el worker puede leer
+la ruta staged creada por el API.
 
 Ejemplo rapido Neo4j local:
 

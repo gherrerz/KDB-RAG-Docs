@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from coderag.ui.main_window import MainWindow
@@ -130,3 +131,88 @@ def test_main_window_reset_uses_delete_sources_reset_endpoint() -> None:
 
     assert result["status"] == "completed"
     assert captured[0][0] == "/sources/reset?confirm=true"
+
+
+def test_main_window_upload_sync_uses_multipart_endpoint(
+    tmp_path: Path,
+) -> None:
+    """Route upload sync mode to /sources/ingest/file without polling."""
+    window = _build_lightweight_window()
+    upload_file = tmp_path / "sample.md"
+    upload_file.write_text("hello", encoding="utf-8")
+
+    captured: list[tuple[str, Path, str, dict[str, Any], int]] = []
+
+    def _fake_post_multipart(
+        path: str,
+        file_path: Path,
+        source_type: str,
+        filters: dict[str, Any],
+        timeout: int,
+    ) -> dict[str, Any]:
+        captured.append((path, file_path, source_type, filters, timeout))
+        return {"status": "completed", "path": path}
+
+    window._post_multipart = _fake_post_multipart  # type: ignore[method-assign]
+
+    result = window.ingest(
+        {
+            "_ingestion_channel": "upload_file",
+            "_ingestion_mode": "sync",
+            "source": {
+                "source_type": "folder",
+                "local_path": str(upload_file),
+                "filters": {"domain": "qa"},
+            },
+        }
+    )
+
+    assert result["status"] == "completed"
+    assert captured[0][0] == "/sources/ingest/file"
+    assert captured[0][1] == upload_file
+    assert captured[0][2] == "folder"
+
+
+def test_main_window_upload_async_uses_multipart_endpoint_and_polling(
+    tmp_path: Path,
+) -> None:
+    """Route upload async mode to /sources/ingest/file/async and poll job."""
+    window = _build_lightweight_window()
+    upload_file = tmp_path / "sample.md"
+    upload_file.write_text("hello", encoding="utf-8")
+
+    captured: list[tuple[str, Path, str, dict[str, Any], int]] = []
+
+    def _fake_post_multipart(
+        path: str,
+        file_path: Path,
+        source_type: str,
+        filters: dict[str, Any],
+        timeout: int,
+    ) -> dict[str, Any]:
+        captured.append((path, file_path, source_type, filters, timeout))
+        return {"status": "queued", "job_id": "upload-job-1"}
+
+    window._post_multipart = _fake_post_multipart  # type: ignore[method-assign]
+    window._poll_job = (  # type: ignore[method-assign]
+        lambda job_id, timeout_seconds, on_update=None: {
+            "status": "completed",
+            "job_id": job_id,
+        }
+    )
+
+    result = window.ingest(
+        {
+            "_ingestion_channel": "upload_file",
+            "_ingestion_mode": "async",
+            "source": {
+                "source_type": "folder",
+                "local_path": str(upload_file),
+                "filters": {},
+            },
+        }
+    )
+
+    assert result["status"] == "completed"
+    assert result["job_id"] == "upload-job-1"
+    assert captured[0][0] == "/sources/ingest/file/async"

@@ -1,5 +1,41 @@
 # Changelog
 
+## [0.3.6] - 2026-04-28
+
+### Changed
+- Invocaciones Vertex ya no dependen de dominios hardcodeados:
+	- `VERTEX_AUTH_TOKEN_URL` controla el endpoint OAuth de token
+		(default `https://oauth2.googleapis.com/token`).
+	- `VERTEX_API_BASE_URL` controla el dominio base API de Vertex
+		(default `aiplatform.googleapis.com`, combinado con `VERTEX_LOCATION`).
+- Capa de autenticacion Vertex fuerza `token_uri` desde configuracion para
+	evitar dependencia del valor embebido en credenciales.
+
+## [0.3.5] - 2026-04-27
+
+### Added
+- Nuevo endpoint `POST /sources/ingest/file` para ingesta sincrona por
+	`multipart/form-data` con archivo adjunto (`file`) y soporte opcional de
+	`filters` JSON en formulario.
+- Nuevo endpoint `POST /sources/ingest/file/async` para ingesta asincrona por
+	`multipart/form-data` con soporte de encolado local o RQ.
+- Capa dedicada `UploadIngestionAdapter` en
+	`src/coderag/api/upload_ingestion.py` para staging, validacion y limpieza de
+	uploads.
+- Cobertura de pruebas para upload endpoint en
+	`tests/test_ingest_upload_endpoint.py`.
+
+### Changed
+- Dependencias runtime actualizadas para incluir `python-multipart` como
+	requisito de FastAPI para endpoints `File/Form`.
+- Configuracion extendida con `UPLOAD_STAGING_SHARED` y
+	`UPLOAD_MAX_BYTES` para controlar uploads async y limites de tamano.
+- Cola async (`src/coderag/jobs/queue.py`) ahora soporta limpieza best-effort
+	de staging de uploads al finalizar jobs locales o RQ.
+- UI de Ingestion ahora permite seleccionar canal de envio
+	`Carpeta (JSON)` o `Archivo (multipart upload)` para probar desde
+	interfaz los endpoints `/sources/ingest/file*`.
+
 ## [0.3.4] - 2026-04-10
 
 ### Added

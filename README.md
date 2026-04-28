@@ -120,8 +120,10 @@ python src/run_ui.py
 
 3. En la UI, pestaña Ingestion:
 - `Source Type`: `folder`
+- `Canal de envio`: `Carpeta (JSON)` o `Archivo (multipart upload)`
 - `Modo de ejecucion`: `Asincrono (cola + jobs)` o `Sincrono (directo)`
-- `Local Path`: [sample_data](sample_data/)
+- `Local Path`: carpeta cuando usas `Carpeta (JSON)` o archivo individual
+  cuando usas `Archivo (multipart upload)`
 - Click en `Ingest`
 - `Borrado puntual`: si ya conoces un `document_id`, puedes eliminarlo desde
   el panel de Ingestion con `Eliminar documento`.
@@ -178,6 +180,8 @@ python src/run_ui.py
 
 - `GET /health`
 - `POST /sources/ingest`
+- `POST /sources/ingest/file`
+- `POST /sources/ingest/file/async`
 - `DELETE /sources/reset?confirm=true`
 - `POST /sources/ingest/async`
 - `GET /sources/ingest/readiness`
@@ -210,6 +214,27 @@ Ejemplo `POST /sources/ingest` para Confluence:
   }
 }
 ```
+
+Ejemplo `POST /sources/ingest/file` (multipart upload):
+
+```bash
+curl -X POST http://127.0.0.1:8000/sources/ingest/file \
+  -F "file=@sample_data/engineering.md" \
+  -F "source_type=folder" \
+  -F 'filters={"domain":"qa"}'
+```
+
+Ejemplo `POST /sources/ingest/file/async` (multipart upload async):
+
+```bash
+curl -X POST http://127.0.0.1:8000/sources/ingest/file/async \
+  -F "file=@sample_data/engineering.md" \
+  -F "source_type=folder" \
+  -F 'filters={"domain":"qa"}'
+```
+
+Nota: si `USE_RQ=true`, activa `UPLOAD_STAGING_SHARED=true` solo cuando
+`api` y `worker` comparten el mismo volumen de staging de uploads.
 
 Ejemplo `POST /query`:
 
@@ -394,6 +419,10 @@ Variables relevantes de entorno:
   (`openai`/`gemini`/`vertex`); `local` aplica a respuesta extractiva.
 - Para `vertex`, el runtime usa `VERTEX_SERVICE_ACCOUNT_JSON_B64` +
   `VERTEX_PROJECT_ID` (sin API keys).
+- `VERTEX_AUTH_TOKEN_URL`: endpoint OAuth para obtener bearer token
+  (default `https://oauth2.googleapis.com/token`).
+- `VERTEX_API_BASE_URL`: dominio base para llamadas Vertex
+  (default `aiplatform.googleapis.com`; se combina con `VERTEX_LOCATION`).
 - `LLM_EMBEDDING`: override global opcional para modelo de embedding
 - `INGEST_EMBED_WORKERS`: workers para generar embeddings en paralelo
 - `CHROMA_UPSERT_BATCH_SIZE`: tamano de lote por escritura en Chroma

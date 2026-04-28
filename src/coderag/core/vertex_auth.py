@@ -40,7 +40,7 @@ def _parse_service_account_info(raw_json: str) -> Dict[str, Any]:
             "Decoded Vertex service account payload must be an object."
         )
 
-    required_keys = {"client_email", "private_key", "token_uri"}
+    required_keys = {"client_email", "private_key"}
     missing = sorted(key for key in required_keys if not payload.get(key))
     if missing:
         missing_str = ", ".join(missing)
@@ -57,6 +57,8 @@ def _build_service_account_credentials(
 ) -> service_account.Credentials:
     """Build credential object with Vertex-compatible OAuth scope."""
     info = _parse_service_account_info(raw_json)
+    # Prefer explicit env configuration for token endpoint resolution.
+    info["token_uri"] = SETTINGS.vertex_auth_token_url
     return service_account.Credentials.from_service_account_info(
         info,
         scopes=[_VERTEX_SCOPE],

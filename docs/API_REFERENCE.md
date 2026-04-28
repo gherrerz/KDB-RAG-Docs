@@ -29,6 +29,8 @@ de la red puede consumirse usando la IP del host.
 | Health | GET | `/health` | `health` | N/A | N/A | `{"status": "ok"}` |
 | Readiness | GET | `/readiness` | `readiness` | `SERVICE.store.get_index_version` | N/A | `{"status": "ready"}` |
 | Ingestion sync | POST | `/sources/ingest` | `ingest_source` | `SERVICE.ingest` | `IngestionRequest` | `dict` (estado de job + metricas) |
+| Ingestion upload sync | POST | `/sources/ingest/file` | `ingest_source_file` | `UploadIngestionAdapter` + `SERVICE.ingest` | `multipart/form-data` (`file`, `source_type?`, `filters?`) | `dict` (estado de job + metricas) |
+| Ingestion upload async | POST | `/sources/ingest/file/async` | `ingest_source_file_async` | `UploadIngestionAdapter` + `enqueue_ingest_job/enqueue_local_ingest_job` | `multipart/form-data` (`file`, `source_type?`, `filters?`) | `{"job_id", "status", "message"}` |
 | Ingestion async | POST | `/sources/ingest/async` | `ingest_source_async` | `enqueue_ingest_job` o `enqueue_local_ingest_job` | `IngestionRequest` | `{"job_id", "status", "message"}` |
 | Ingestion readiness | GET | `/sources/ingest/readiness` | `ingest_readiness` | checks runtime + Neo4j + Redis + RQ worker | N/A | `{"ready", "recommendation", "checks"}` |
 | Documents catalog | GET | `/sources/documents` | `list_documents` | `SERVICE.list_documents` | `source_id?` | `{"count", "documents"}` |
@@ -288,6 +290,79 @@ Codigos comunes:
 
 - `200`: ingesta terminada (tambien puede retornar `status=failed` de negocio).
 - `503`: runtime estricto no disponible (por ejemplo, Chroma/provider).
+
+## POST /sources/ingest/file
+
+Ejecuta ingesta sincrona a partir de un archivo subido por
+`multipart/form-data`.
+
+Campos del formulario:
+
+- `file` (requerido): archivo a ingerir.
+- `source_type` (opcional): actualmente solo acepta `folder`.
+- `filters` (opcional): texto JSON con objeto de filtros.
+
+Extensiones soportadas en `file`:
+
+- `.md`, `.txt`, `.html`, `.htm`, `.pdf`, `.docx`, `.doc`, `.pptx`, `.xlsx`
+
+Ejemplo `curl`:
+
+```bash
+curl -X POST http://127.0.0.1:8000/sources/ingest/file \
+  -F "file=@sample_data/engineering.md" \
+  -F "source_type=folder" \
+  -F 'filters={"domain":"qa"}'
+```
+
+Codigos comunes:
+
+- `200`: ingesta terminada (tambien puede retornar `status=failed` de negocio).
+- `422`: formulario invalido, extension no soportada o `filters` no parseable.
+- `503`: runtime estricto no disponible (por ejemplo, Chroma/provider).
+
+## POST /sources/ingest/file/async
+
+Encola una ingesta asincrona a partir de un archivo subido por
+`multipart/form-data`.
+
+Campos del formulario:
+
+- `file` (requerido): archivo a ingerir.
+- `source_type` (opcional): actualmente solo acepta `folder`.
+- `filters` (opcional): texto JSON con objeto de filtros.
+
+Comportamiento segun modo async:
+
+- Con `USE_RQ=false`: crea worker local en background y encola el job.
+- Con `USE_RQ=true`: requiere `UPLOAD_STAGING_SHARED=true` para garantizar
+  que `api` y `worker` leen el mismo staging de upload.
+
+Ejemplo `curl`:
+
+```bash
+curl -X POST http://127.0.0.1:8000/sources/ingest/file/async \
+  -F "file=@sample_data/engineering.md" \
+  -F "source_type=folder" \
+  -F 'filters={"domain":"qa"}'
+```
+
+Response (shape):
+
+```json
+{
+  "job_id": "job-id",
+  "status": "queued",
+  "message": "Upload ingestion job enqueued"
+}
+```
+
+Codigos comunes:
+
+- `200`: job aceptado.
+- `409`: `USE_RQ=true` sin staging compartido (`UPLOAD_STAGING_SHARED=false`).
+- `422`: formulario invalido, extension no soportada o `filters` no parseable.
+- `500`: error al encolar o iniciar worker.
 
 ## POST /sources/ingest/async
 

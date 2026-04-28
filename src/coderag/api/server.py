@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 
+from coderag.api.upload_ingestion import (
+    UploadIngestionAdapter,
+    UploadIngestionError,
+)
 from coderag.core.models import (
     DeleteDocumentResponse,
     IngestionRequest,
@@ -19,6 +24,12 @@ from coderag.jobs.queue import (
     enqueue_ingest_job,
     enqueue_local_ingest_job,
     get_rq_job_status,
+)
+
+
+UPLOAD_INGESTION = UploadIngestionAdapter(
+    base_dir=Path(SETTINGS.data_dir) / "upload_staging",
+    max_upload_bytes=SETTINGS.upload_max_bytes,
 )
 
 
@@ -314,6 +325,156 @@ def ingest_source(request: IngestionRequest) -> dict[str, Any]:
         return SERVICE.ingest(request)
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.post(
+    "/sources/ingest/file",
+    tags=["ingestion"],
+    summary="Run synchronous ingestion from uploaded file",
+    description=(
+        "Upload one supported document via multipart/form-data, stage it "
+        "server-side, and execute the same synchronous ingestion pipeline."
+    ),
+    responses={
+        422: {
+            "description": (
+                "Invalid multipart payload, unsupported extension, "
+                "or malformed filters JSON."
+            )
+        },
+        503: {
+            "description": (
+                "Strict runtime unavailable (for example Chroma disabled, "
+                "missing embedding provider credentials, or provider error)."
+            )
+        },
+    },
+)
+def ingest_source_file(
+    file: UploadFile = File(...),
+    source_type: str = Form("folder"),
+    filters: str | None = Form(None),
+) -> dict[str, Any]:
+    """Trigger ingestion pipeline from one uploaded file."""
+    staged_dir: Path | None = None
+    try:
+        staged_dir = UPLOAD_INGESTION.stage_upload(file)
+        parsed_filters = UPLOAD_INGESTION.parse_filters(filters)
+        request = UPLOAD_INGESTION.build_request(
+            staged_dir=staged_dir,
+            source_type=source_type,
+            filters=parsed_filters,
+        )
+        return SERVICE.ingest(request)
+    except UploadIngestionError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    finally:
+        if staged_dir is not None:
+            UPLOAD_INGESTION.cleanup(staged_dir)
+
+
+@app.post(
+    "/sources/ingest/file/async",
+    tags=["ingestion"],
+    summary="Enqueue asynchronous ingestion from uploaded file",
+    description=(
+        "Upload one supported document via multipart/form-data and enqueue "
+        "asynchronous ingestion. When USE_RQ=true, enable "
+        "UPLOAD_STAGING_SHARED=true only if API and worker share the same "
+        "staging volume path."
+    ),
+    responses={
+        409: {
+            "description": (
+                "USE_RQ requires UPLOAD_STAGING_SHARED=true for upload async "
+                "because workers must read the staged file path."
+            )
+        },
+        422: {
+            "description": (
+                "Invalid multipart payload, unsupported extension, "
+                "or malformed filters JSON."
+            )
+        },
+        500: {
+            "description": "Queue or local async worker startup error."
+        },
+    },
+)
+def ingest_source_file_async(
+    file: UploadFile = File(...),
+    source_type: str = Form("folder"),
+    filters: str | None = Form(None),
+) -> dict[str, str]:
+    """Enqueue async ingestion pipeline from one uploaded file."""
+    staged_dir: Path | None = None
+    try:
+        staged_dir = UPLOAD_INGESTION.stage_upload(file)
+        parsed_filters = UPLOAD_INGESTION.parse_filters(filters)
+        request = UPLOAD_INGESTION.build_request(
+            staged_dir=staged_dir,
+            source_type=source_type,
+            filters=parsed_filters,
+        )
+        payload = request.model_dump()
+        cleanup_staging_dir = str(staged_dir)
+
+        if SETTINGS.use_rq and not SETTINGS.upload_staging_shared:
+            UPLOAD_INGESTION.cleanup(staged_dir)
+            staged_dir = None
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Upload async with USE_RQ=true requires "
+                    "UPLOAD_STAGING_SHARED=true and a shared volume between "
+                    "API and worker pods."
+                ),
+            )
+
+        if SETTINGS.use_rq:
+            try:
+                job_id = enqueue_ingest_job(
+                    payload,
+                    cleanup_staging_dir=cleanup_staging_dir,
+                )
+                message = "Upload ingestion job enqueued"
+            except Exception as exc:
+                if not _is_queue_connection_error(exc):
+                    UPLOAD_INGESTION.cleanup(staged_dir)
+                    staged_dir = None
+                    raise
+                job_id = enqueue_local_ingest_job(
+                    payload,
+                    cleanup_staging_dir=cleanup_staging_dir,
+                )
+                message = (
+                    "RQ unavailable; upload ingestion job started "
+                    "(local async worker fallback)"
+                )
+        else:
+            job_id = enqueue_local_ingest_job(
+                payload,
+                cleanup_staging_dir=cleanup_staging_dir,
+            )
+            message = "Upload ingestion job started (local async worker)"
+
+        staged_dir = None
+        return {
+            "job_id": job_id,
+            "status": "queued",
+            "message": message,
+        }
+    except UploadIngestionError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    finally:
+        if staged_dir is not None:
+            UPLOAD_INGESTION.cleanup(staged_dir)
 
 
 @app.delete(

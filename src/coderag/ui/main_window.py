@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import json
+import mimetypes
 import sys
 import time
 from copy import deepcopy
+from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 from urllib.parse import quote
 
@@ -113,6 +116,13 @@ class MainWindow(QMainWindow):
         on_update: Optional[Callable[[Dict[str, Any]], None]] = None,
     ) -> Dict[str, Any]:
         """Run ingestion in selected mode and poll when async is used."""
+        ingestion_channel = str(
+            payload.get("_ingestion_channel", "json_folder")
+        ).strip().lower()
+
+        if ingestion_channel == "upload_file":
+            return self._ingest_via_upload(payload, on_update=on_update)
+
         try:
             prepared_payload, preflight_update = _prepare_ingestion_payload(payload)
         except (ValueError, FileNotFoundError, NotADirectoryError, OSError) as exc:
@@ -153,6 +163,98 @@ class MainWindow(QMainWindow):
         job_id = async_response.get("job_id")
         if not isinstance(job_id, str) or not job_id:
             return async_response
+
+        poll_result = self._poll_job(
+            job_id,
+            timeout_seconds=3600,
+            on_update=on_update,
+        )
+        if isinstance(poll_result, dict):
+            poll_result.setdefault("job_id", job_id)
+        return poll_result
+
+    def _ingest_via_upload(
+        self,
+        payload: Dict[str, Any],
+        on_update: Optional[Callable[[Dict[str, Any]], None]] = None,
+    ) -> Dict[str, Any]:
+        """Run ingestion using multipart upload endpoints for one local file."""
+        candidate = deepcopy(payload)
+        source = candidate.get("source")
+        if not isinstance(source, dict):
+            return {
+                "status": "failed",
+                "message": "Upload ingestion requires a 'source' object.",
+            }
+
+        execution_mode = str(
+            candidate.pop("_ingestion_mode", "async")
+        ).strip().lower()
+        if execution_mode not in {"async", "sync"}:
+            execution_mode = "async"
+
+        source_type = str(source.get("source_type") or "folder").strip().lower()
+        local_path_raw = source.get("local_path")
+        filters_raw = source.get("filters", {})
+
+        if source_type != "folder":
+            return {
+                "status": "failed",
+                "message": "Upload ingestion supports source_type 'folder' only.",
+            }
+        if not isinstance(local_path_raw, str) or not local_path_raw.strip():
+            return {
+                "status": "failed",
+                "message": "Upload ingestion requires a local file path.",
+            }
+        if not isinstance(filters_raw, dict):
+            return {
+                "status": "failed",
+                "message": "Upload ingestion expects source.filters as JSON object.",
+            }
+
+        file_path = Path(local_path_raw).expanduser()
+        if not file_path.is_absolute():
+            file_path = (Path.cwd() / file_path).resolve(strict=False)
+
+        if not file_path.exists():
+            return {
+                "status": "failed",
+                "message": f"Upload file does not exist: {file_path}",
+            }
+        if not file_path.is_file():
+            return {
+                "status": "failed",
+                "message": (
+                    "Upload ingestion expects a single file path. "
+                    "Use channel 'Carpeta (JSON)' for directory ingestion."
+                ),
+            }
+
+        endpoint = "/sources/ingest/file"
+        timeout = 3600
+        if execution_mode == "async":
+            endpoint = "/sources/ingest/file/async"
+            timeout = 15
+
+        response = self._post_multipart(
+            endpoint,
+            file_path=file_path,
+            source_type=source_type,
+            filters=filters_raw,
+            timeout=timeout,
+        )
+        if execution_mode == "sync":
+            return response
+        if "error" in response or "detail" in response:
+            return response
+
+        if on_update is not None:
+            on_update(response)
+
+        job_id = response.get("job_id")
+        if not isinstance(job_id, str) or not job_id:
+            return response
 
         poll_result = self._poll_job(
             job_id,
@@ -281,6 +383,39 @@ class MainWindow(QMainWindow):
                 f"{self.api_base_url}{path}",
                 timeout=timeout,
             )
+            response.raise_for_status()
+            return response.json()
+        except requests.RequestException as exc:
+            return self._format_request_exception(exc)
+
+    def _post_multipart(
+        self,
+        path: str,
+        file_path: Path,
+        source_type: str,
+        filters: Dict[str, Any],
+        timeout: int,
+    ) -> Dict[str, Any]:
+        """Call backend multipart upload endpoint and parse JSON response."""
+        guessed_mime, _ = mimetypes.guess_type(str(file_path))
+        mime_type = guessed_mime or "application/octet-stream"
+        try:
+            with file_path.open("rb") as file_handle:
+                response = requests.post(
+                    f"{self.api_base_url}{path}",
+                    data={
+                        "source_type": source_type,
+                        "filters": json.dumps(filters, ensure_ascii=False),
+                    },
+                    files={
+                        "file": (
+                            file_path.name,
+                            file_handle,
+                            mime_type,
+                        )
+                    },
+                    timeout=timeout,
+                )
             response.raise_for_status()
             return response.json()
         except requests.RequestException as exc:

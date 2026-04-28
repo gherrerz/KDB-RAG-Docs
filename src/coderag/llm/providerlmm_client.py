@@ -334,7 +334,8 @@ class ProviderLlmClient:
         labels = SETTINGS.resolve_vertex_labels(model_name=model)
         url = (
             "https://"
-            f"{location}-aiplatform.googleapis.com/v1/projects/{project_id}"
+            f"{location}-{SETTINGS.vertex_api_base_url}/v1/projects/"
+            f"{project_id}"
             "/locations/"
             f"{location}/publishers/google/models/{model}:generateContent"
         )

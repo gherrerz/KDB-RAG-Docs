@@ -148,6 +148,21 @@ class Settings(BaseModel):
             or "us-central1"
         )
     )
+    vertex_auth_token_url: str = Field(
+        default_factory=lambda: (
+            _env_str(
+                "VERTEX_AUTH_TOKEN_URL",
+                "https://oauth2.googleapis.com/token",
+            )
+            or "https://oauth2.googleapis.com/token"
+        )
+    )
+    vertex_api_base_url: str = Field(
+        default_factory=lambda: (
+            _env_str("VERTEX_API_BASE_URL", "aiplatform.googleapis.com")
+            or "aiplatform.googleapis.com"
+        )
+    )
     vertex_answer_model: str = Field(
         default_factory=lambda: (
             _env_str("VERTEX_ANSWER_MODEL", "gemini-2.5-flash")
@@ -211,6 +226,12 @@ class Settings(BaseModel):
     )
 
     use_rq: bool = Field(default_factory=lambda: _env_bool("USE_RQ", False))
+    upload_staging_shared: bool = Field(
+        default_factory=lambda: _env_bool("UPLOAD_STAGING_SHARED", False)
+    )
+    upload_max_bytes: int = Field(
+        default_factory=lambda: _env_int("UPLOAD_MAX_BYTES", 25 * 1024 * 1024)
+    )
     enable_tdm: bool = Field(
         default_factory=lambda: _env_bool("ENABLE_TDM", False)
     )
@@ -245,6 +266,14 @@ class Settings(BaseModel):
         """Ensure RQ ingest timeout is a positive integer."""
         if value <= 0:
             raise ValueError("RQ_INGEST_JOB_TIMEOUT_SEC must be > 0")
+        return value
+
+    @field_validator("upload_max_bytes")
+    @classmethod
+    def validate_upload_max_bytes(cls, value: int) -> int:
+        """Ensure upload max size is a positive integer."""
+        if value <= 0:
+            raise ValueError("UPLOAD_MAX_BYTES must be > 0")
         return value
 
     @staticmethod
