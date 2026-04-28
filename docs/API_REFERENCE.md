@@ -319,7 +319,15 @@ Codigos comunes:
 
 - `200`: ingesta terminada (tambien puede retornar `status=failed` de negocio).
 - `422`: formulario invalido, extension no soportada o `filters` no parseable.
+- `500`: excepcion no controlada. El campo `detail` ahora retorna payload
+  estructurado con `operation`, `error_type`, `error` y `context`.
 - `503`: runtime estricto no disponible (por ejemplo, Chroma/provider).
+
+Nota operativa:
+
+- Si Neo4j esta habilitado pero falla durante persistencia de grafo, la
+  ingesta continua con SQLite + Chroma y marca degradacion en pasos/metricas
+  (`persist_graph.status=warning`, `metrics.neo4j_degraded=true`).
 
 ## POST /sources/ingest/file/async
 

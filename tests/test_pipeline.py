@@ -254,6 +254,67 @@ def test_ingest_job_status_includes_steps_and_progress() -> None:
         SETTINGS.neo4j_password = original_neo4j_password
 
 
+def test_ingest_continues_when_neo4j_persist_fails() -> None:
+    """Keep ingestion successful when Neo4j edge persistence is degraded."""
+    original_embed = index_chroma.embed_text
+    original_provider = SETTINGS.llm_provider
+    original_openai_key = SETTINGS.openai_api_key
+    original_use_neo4j = SETTINGS.use_neo4j
+    original_neo4j_uri = SETTINGS.neo4j_uri
+    original_neo4j_user = SETTINGS.neo4j_user
+    original_neo4j_password = SETTINGS.neo4j_password
+    index_chroma.embed_text = _fake_embed_text
+    SETTINGS.llm_provider = "openai"
+    SETTINGS.openai_api_key = "test-key"
+    SETTINGS.use_neo4j = True
+    SETTINGS.neo4j_uri = "bolt://test-neo4j:7687"
+    SETTINGS.neo4j_user = "neo4j"
+    SETTINGS.neo4j_password = "password"
+
+    service = RagApplicationService()
+    service.graph_store.replace_edges = (  # type: ignore[method-assign]
+        lambda source_id, edges: (_ for _ in ()).throw(
+            RuntimeError("neo4j unavailable")
+        )
+    )
+    service.graph_store.expand_paths = (
+        lambda query, hops, max_paths: []
+    )
+    service.graph_store.clear_all_edges = lambda: 0
+    service.graph_store.close = lambda: None
+    try:
+        result = service.ingest(
+            IngestionRequest(
+                source=SourceConfig(
+                    source_type="folder",
+                    local_path="sample_data",
+                )
+            )
+        )
+
+        assert result["status"] == "completed"
+        metrics = result.get("metrics", {})
+        assert isinstance(metrics, dict)
+        assert metrics.get("neo4j_degraded") is True
+        assert "RuntimeError" in str(metrics.get("neo4j_error", ""))
+
+        steps = result.get("steps", [])
+        persist_graph_step = next(
+            step for step in steps
+            if isinstance(step, dict) and step.get("name") == "persist_graph"
+        )
+        assert persist_graph_step.get("status") == "warning"
+    finally:
+        service.close()
+        index_chroma.embed_text = original_embed
+        SETTINGS.llm_provider = original_provider
+        SETTINGS.openai_api_key = original_openai_key
+        SETTINGS.use_neo4j = original_use_neo4j
+        SETTINGS.neo4j_uri = original_neo4j_uri
+        SETTINGS.neo4j_user = original_neo4j_user
+        SETTINGS.neo4j_password = original_neo4j_password
+
+
 def test_query_refreshes_stale_indexes_after_external_ingestion() -> None:
     """Ensure query refreshes indexes when ingestion happened in another service."""
     original_embed = index_chroma.embed_text

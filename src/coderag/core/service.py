@@ -198,10 +198,20 @@ class RagApplicationService:
         if not self.is_graph_enabled():
             return edges, {"neo4j_enabled": False, "skipped": True}
 
-        graph_metrics = self.graph_store.replace_edges(
-            source_id=source_id,
-            edges=edges,
-        )
+        try:
+            graph_metrics = self.graph_store.replace_edges(
+                source_id=source_id,
+                edges=edges,
+            )
+        except Exception as exc:
+            return edges, {
+                "neo4j_enabled": True,
+                "neo4j_degraded": True,
+                "neo4j_error": (
+                    f"{exc.__class__.__name__}: {exc}"
+                ),
+            }
+
         if isinstance(graph_metrics, dict):
             return edges, graph_metrics
         return edges, {}
@@ -655,17 +665,25 @@ class RagApplicationService:
 
         self.store.replace_graph_edges(source_id=source_id, edges=edges)
         if self.is_graph_enabled():
-            graph_metrics = self.graph_store.replace_edges(
-                source_id=source_id,
-                edges=edges,
-            )
             persist_graph_details: Dict[str, object] = {
                 "edges": len(edges),
                 "neo4j_enabled": True,
             }
-            if isinstance(graph_metrics, dict):
-                for key, value in graph_metrics.items():
-                    persist_graph_details[f"neo4j_{key}"] = value
+            persist_graph_status = "ok"
+            try:
+                graph_metrics = self.graph_store.replace_edges(
+                    source_id=source_id,
+                    edges=edges,
+                )
+                if isinstance(graph_metrics, dict):
+                    for key, value in graph_metrics.items():
+                        persist_graph_details[f"neo4j_{key}"] = value
+            except Exception as exc:
+                persist_graph_status = "warning"
+                persist_graph_details["neo4j_degraded"] = True
+                persist_graph_details["neo4j_error"] = (
+                    f"{exc.__class__.__name__}: {exc}"
+                )
         else:
             persist_graph_details = {
                 "edges": len(edges),
@@ -673,9 +691,11 @@ class RagApplicationService:
                 "skipped": True,
                 "reason": "USE_NEO4J=false",
             }
+            persist_graph_status = "ok"
         _add_step(
             "persist_graph",
             persist_graph_details,
+            status=persist_graph_status,
             progress_pct=86.0,
         )
 
@@ -732,6 +752,12 @@ class RagApplicationService:
                 ),
                 "staging_files_deleted": dedup_stats.get(
                     "deleted_staging_files", 0
+                ),
+                "neo4j_degraded": bool(
+                    persist_graph_details.get("neo4j_degraded", False)
+                ),
+                "neo4j_error": str(
+                    persist_graph_details.get("neo4j_error", "")
                 ),
             },
             "deduplication": deduplication_summary,

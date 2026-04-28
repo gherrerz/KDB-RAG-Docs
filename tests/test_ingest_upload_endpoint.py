@@ -198,3 +198,28 @@ def test_upload_async_uses_rq_when_staging_is_shared() -> None:
     assert body.get("status") == "queued"
     assert body.get("job_id") == "upload-rq-job-1"
     assert captured["local_path"] == captured["cleanup"]
+
+
+def test_upload_ingest_returns_structured_500_details() -> None:
+    """Return structured diagnostics when sync upload ingestion crashes."""
+    client = TestClient(server.app)
+    original_ingest = server.SERVICE.ingest
+
+    def _fake_ingest(_request):  # type: ignore[no-untyped-def]
+        raise ValueError("simulated failure")
+
+    server.SERVICE.ingest = _fake_ingest  # type: ignore[assignment]
+    try:
+        response = client.post(
+            "/sources/ingest/file",
+            files={"file": ("notes.md", b"hello", "text/markdown")},
+            data={"source_type": "folder", "filters": ""},
+        )
+    finally:
+        server.SERVICE.ingest = original_ingest  # type: ignore[assignment]
+
+    assert response.status_code == 500
+    detail = response.json().get("detail", {})
+    assert detail.get("operation") == "ingest_source_file"
+    assert detail.get("error_type") == "ValueError"
+    assert detail.get("context", {}).get("filename") == "notes.md"

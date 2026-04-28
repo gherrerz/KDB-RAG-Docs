@@ -63,6 +63,22 @@ def _is_queue_connection_error(exc: Exception) -> bool:
     )
 
 
+def _format_exception_detail(
+    exc: Exception,
+    operation: str,
+    context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build structured exception payload for API diagnostics."""
+    payload: dict[str, Any] = {
+        "operation": operation,
+        "error_type": exc.__class__.__name__,
+        "error": str(exc),
+    }
+    if context:
+        payload["context"] = context
+    return payload
+
+
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
     """Release service resources when application shuts down."""
@@ -324,7 +340,29 @@ def ingest_source(request: IngestionRequest) -> dict[str, Any]:
     try:
         return SERVICE.ingest(request)
     except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=503,
+            detail=_format_exception_detail(
+                exc,
+                operation="ingest_source",
+                context={
+                    "source_type": request.source.source_type,
+                    "has_local_path": bool(request.source.local_path),
+                },
+            ),
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=_format_exception_detail(
+                exc,
+                operation="ingest_source",
+                context={
+                    "source_type": request.source.source_type,
+                    "has_local_path": bool(request.source.local_path),
+                },
+            ),
+        ) from exc
 
 
 @app.post(
@@ -369,7 +407,32 @@ def ingest_source_file(
     except UploadIngestionError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=503,
+            detail=_format_exception_detail(
+                exc,
+                operation="ingest_source_file",
+                context={
+                    "filename": file.filename,
+                    "source_type": source_type,
+                    "has_filters": bool(filters and filters.strip()),
+                },
+            ),
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=_format_exception_detail(
+                exc,
+                operation="ingest_source_file",
+                context={
+                    "filename": file.filename,
+                    "source_type": source_type,
+                    "has_filters": bool(filters and filters.strip()),
+                    "staged_dir": str(staged_dir) if staged_dir else None,
+                },
+            ),
+        ) from exc
     finally:
         if staged_dir is not None:
             UPLOAD_INGESTION.cleanup(staged_dir)
@@ -471,7 +534,20 @@ def ingest_source_file_async(
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=500,
+            detail=_format_exception_detail(
+                exc,
+                operation="ingest_source_file_async",
+                context={
+                    "filename": file.filename,
+                    "source_type": source_type,
+                    "has_filters": bool(filters and filters.strip()),
+                    "staged_dir": str(staged_dir) if staged_dir else None,
+                    "use_rq": SETTINGS.use_rq,
+                },
+            ),
+        ) from exc
     finally:
         if staged_dir is not None:
             UPLOAD_INGESTION.cleanup(staged_dir)
