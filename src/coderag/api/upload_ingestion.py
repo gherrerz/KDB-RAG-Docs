@@ -36,28 +36,39 @@ class UploadIngestionAdapter:
 
     def stage_upload(self, file: UploadFile) -> Path:
         """Persist uploaded file into an isolated temporary directory."""
-        raw_name = file.filename or "upload.txt"
-        safe_name = self._sanitize_filename(raw_name)
-        extension = Path(safe_name).suffix.lower()
-        if extension not in ALLOWED_EXTENSIONS:
-            allowed = ", ".join(sorted(ALLOWED_EXTENSIONS))
+        return self.stage_uploads_batch([file])
+
+    def stage_uploads_batch(self, files: list[UploadFile]) -> Path:
+        """Persist uploaded files into one isolated temporary directory."""
+        if not files:
             raise UploadIngestionError(
-                "Unsupported file extension for ingestion upload. "
-                f"Allowed: {allowed}"
+                "Upload ingestion requires at least one file."
             )
 
         upload_dir = self.base_dir / uuid.uuid4().hex
         upload_dir.mkdir(parents=True, exist_ok=False)
-        destination = upload_dir / safe_name
 
-        payload = file.file.read(self.max_upload_bytes + 1)
-        if len(payload) > self.max_upload_bytes:
-            raise UploadIngestionError(
-                "Uploaded file exceeds maximum size "
-                f"({self.max_upload_bytes} bytes)."
-            )
+        used_names: set[str] = set()
+        try:
+            for upload in files:
+                raw_name = upload.filename or "upload.txt"
+                safe_base_name = self._sanitize_filename(raw_name)
+                safe_name = self._dedupe_filename(safe_base_name, used_names)
+                self._validate_extension(safe_name)
 
-        destination.write_bytes(payload)
+                payload = upload.file.read(self.max_upload_bytes + 1)
+                if len(payload) > self.max_upload_bytes:
+                    raise UploadIngestionError(
+                        "Uploaded file exceeds maximum size "
+                        f"({self.max_upload_bytes} bytes): {safe_name}"
+                    )
+
+                destination = upload_dir / safe_name
+                destination.write_bytes(payload)
+        except Exception:
+            shutil.rmtree(upload_dir, ignore_errors=True)
+            raise
+
         return upload_dir
 
     def parse_filters(self, filters_raw: str | None) -> Dict[str, Any]:
@@ -100,6 +111,31 @@ class UploadIngestionAdapter:
     def cleanup(self, staged_dir: Path) -> None:
         """Remove staged upload directory after ingestion completes."""
         shutil.rmtree(staged_dir, ignore_errors=True)
+
+    @staticmethod
+    def _validate_extension(filename: str) -> None:
+        """Ensure upload file extension is supported by ingestion scanner."""
+        extension = Path(filename).suffix.lower()
+        if extension in ALLOWED_EXTENSIONS:
+            return
+        allowed = ", ".join(sorted(ALLOWED_EXTENSIONS))
+        raise UploadIngestionError(
+            "Unsupported file extension for ingestion upload. "
+            f"Allowed: {allowed}"
+        )
+
+    @staticmethod
+    def _dedupe_filename(filename: str, used_names: set[str]) -> str:
+        """Avoid collisions inside one upload batch after sanitization."""
+        stem = Path(filename).stem
+        suffix = Path(filename).suffix
+        candidate = filename
+        counter = 2
+        while candidate.casefold() in used_names:
+            candidate = f"{stem}_{counter}{suffix}"
+            counter += 1
+        used_names.add(candidate.casefold())
+        return candidate
 
     @staticmethod
     def _sanitize_filename(filename: str) -> str:

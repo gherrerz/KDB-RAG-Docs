@@ -122,8 +122,8 @@ python src/run_ui.py
 - `Source Type`: `folder`
 - `Canal de envio`: `Carpeta (JSON)` o `Archivo (multipart upload)`
 - `Modo de ejecucion`: `Asincrono (cola + jobs)` o `Sincrono (directo)`
-- `Local Path`: carpeta cuando usas `Carpeta (JSON)` o archivo individual
-  cuando usas `Archivo (multipart upload)`
+- `Local Path`: carpeta cuando usas `Carpeta (JSON)` o uno/multiples
+  archivos cuando usas `Archivo (multipart upload)` (separados por `;`).
 - Click en `Ingest`
 - `Borrado puntual`: si ya conoces un `document_id`, puedes eliminarlo desde
   el panel de Ingestion con `Eliminar documento`.
@@ -182,6 +182,8 @@ python src/run_ui.py
 - `POST /sources/ingest`
 - `POST /sources/ingest/file`
 - `POST /sources/ingest/file/async`
+- `POST /sources/ingest/files`
+- `POST /sources/ingest/files/async`
 - `DELETE /sources/reset?confirm=true`
 - `POST /sources/ingest/async`
 - `GET /sources/ingest/readiness`
@@ -229,6 +231,26 @@ Ejemplo `POST /sources/ingest/file/async` (multipart upload async):
 ```bash
 curl -X POST http://127.0.0.1:8000/sources/ingest/file/async \
   -F "file=@sample_data/engineering.md" \
+  -F "source_type=folder" \
+  -F 'filters={"domain":"qa"}'
+```
+
+Ejemplo `POST /sources/ingest/files` (multipart upload batch sync):
+
+```bash
+curl -X POST http://127.0.0.1:8000/sources/ingest/files \
+  -F "files=@sample_data/engineering.md" \
+  -F "files=@sample_data/policy_finance.md" \
+  -F "source_type=folder" \
+  -F 'filters={"domain":"qa"}'
+```
+
+Ejemplo `POST /sources/ingest/files/async` (multipart upload batch async):
+
+```bash
+curl -X POST http://127.0.0.1:8000/sources/ingest/files/async \
+  -F "files=@sample_data/engineering.md" \
+  -F "files=@sample_data/policy_finance.md" \
   -F "source_type=folder" \
   -F 'filters={"domain":"qa"}'
 ```

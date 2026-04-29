@@ -31,6 +31,8 @@ de la red puede consumirse usando la IP del host.
 | Ingestion sync | POST | `/sources/ingest` | `ingest_source` | `SERVICE.ingest` | `IngestionRequest` | `dict` (estado de job + metricas) |
 | Ingestion upload sync | POST | `/sources/ingest/file` | `ingest_source_file` | `UploadIngestionAdapter` + `SERVICE.ingest` | `multipart/form-data` (`file`, `source_type?`, `filters?`) | `dict` (estado de job + metricas) |
 | Ingestion upload async | POST | `/sources/ingest/file/async` | `ingest_source_file_async` | `UploadIngestionAdapter` + `enqueue_ingest_job/enqueue_local_ingest_job` | `multipart/form-data` (`file`, `source_type?`, `filters?`) | `{"job_id", "status", "message"}` |
+| Ingestion uploads batch sync | POST | `/sources/ingest/files` | `ingest_source_files` | `UploadIngestionAdapter` + `SERVICE.ingest` | `multipart/form-data` (`files`, `source_type?`, `filters?`) | `dict` (estado de job + metricas) |
+| Ingestion uploads batch async | POST | `/sources/ingest/files/async` | `ingest_source_files_async` | `UploadIngestionAdapter` + `enqueue_ingest_job/enqueue_local_ingest_job` | `multipart/form-data` (`files`, `source_type?`, `filters?`) | `{"job_id", "status", "message"}` |
 | Ingestion async | POST | `/sources/ingest/async` | `ingest_source_async` | `enqueue_ingest_job` o `enqueue_local_ingest_job` | `IngestionRequest` | `{"job_id", "status", "message"}` |
 | Ingestion readiness | GET | `/sources/ingest/readiness` | `ingest_readiness` | checks runtime + Neo4j + Redis + RQ worker | N/A | `{"ready", "recommendation", "checks"}` |
 | Documents catalog | GET | `/sources/documents` | `list_documents` | `SERVICE.list_documents` | `source_id?` | `{"count", "documents"}` |
@@ -351,6 +353,83 @@ Ejemplo `curl`:
 ```bash
 curl -X POST http://127.0.0.1:8000/sources/ingest/file/async \
   -F "file=@sample_data/engineering.md" \
+  -F "source_type=folder" \
+  -F 'filters={"domain":"qa"}'
+```
+
+Response (shape):
+
+```json
+{
+  "job_id": "job-id",
+  "status": "queued",
+  "message": "Upload ingestion job enqueued"
+}
+```
+
+Codigos comunes:
+
+- `200`: job aceptado.
+- `409`: `USE_RQ=true` sin staging compartido (`UPLOAD_STAGING_SHARED=false`).
+- `422`: formulario invalido, extension no soportada o `filters` no parseable.
+- `500`: error al encolar o iniciar worker.
+
+## POST /sources/ingest/files
+
+Ejecuta ingesta sincrona a partir de varios archivos subidos por
+`multipart/form-data` en un solo lote.
+
+Campos del formulario:
+
+- `files` (requerido): una o mas partes de archivo con el mismo nombre de campo.
+- `source_type` (opcional): actualmente solo acepta `folder`.
+- `filters` (opcional): texto JSON con objeto de filtros.
+
+Comportamiento:
+
+- El backend stagea todos los archivos en un solo directorio temporal.
+- La ingesta usa el mismo pipeline `folder` sobre ese staging de lote.
+
+Ejemplo `curl`:
+
+```bash
+curl -X POST http://127.0.0.1:8000/sources/ingest/files \
+  -F "files=@sample_data/engineering.md" \
+  -F "files=@sample_data/policy_finance.md" \
+  -F "source_type=folder" \
+  -F 'filters={"domain":"qa"}'
+```
+
+Codigos comunes:
+
+- `200`: ingesta terminada (tambien puede retornar `status=failed` de negocio).
+- `422`: formulario invalido, extension no soportada o `filters` no parseable.
+- `500`: excepcion no controlada con payload de diagnostico estructurado.
+- `503`: runtime estricto no disponible (por ejemplo, Chroma/provider).
+
+## POST /sources/ingest/files/async
+
+Encola una ingesta asincrona a partir de varios archivos subidos por
+`multipart/form-data` en un solo lote.
+
+Campos del formulario:
+
+- `files` (requerido): una o mas partes de archivo con el mismo nombre de campo.
+- `source_type` (opcional): actualmente solo acepta `folder`.
+- `filters` (opcional): texto JSON con objeto de filtros.
+
+Comportamiento segun modo async:
+
+- Con `USE_RQ=false`: crea worker local en background y encola el job del lote.
+- Con `USE_RQ=true`: requiere `UPLOAD_STAGING_SHARED=true` para garantizar
+  que `api` y `worker` leen el mismo staging del lote.
+
+Ejemplo `curl`:
+
+```bash
+curl -X POST http://127.0.0.1:8000/sources/ingest/files/async \
+  -F "files=@sample_data/engineering.md" \
+  -F "files=@sample_data/policy_finance.md" \
   -F "source_type=folder" \
   -F 'filters={"domain":"qa"}'
 ```

@@ -188,7 +188,22 @@ tooling de test.
 3. Source Type: `folder`
 4. Local Path: `sample_data`
 5. Ejecutar ingest.
-6. Query: ejecutar una pregunta simple y validar `citations`.
+
+Prueba opcional de upload multipart desde la UI:
+
+1. En `Canal de envio`, seleccionar `Archivo (multipart upload)`.
+2. En `Ruta local`, indicar uno o varios archivos separados por `;`.
+3. Usar modo `Sincrono (directo)` o `Asincrono (cola + jobs)`.
+4. Ejecutar ingest para probar los endpoints `POST /sources/ingest/files`
+    y `POST /sources/ingest/files/async`.
+
+Ejemplo de `Ruta local` multiarchivo en Windows:
+
+```text
+sample_data\engineering.md;sample_data\policy_finance.md
+```
+
+1. Query: ejecutar una pregunta simple y validar `citations`.
 
 ## 10. Run tests
 

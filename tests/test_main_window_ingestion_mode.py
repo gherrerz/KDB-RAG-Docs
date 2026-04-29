@@ -136,21 +136,21 @@ def test_main_window_reset_uses_delete_sources_reset_endpoint() -> None:
 def test_main_window_upload_sync_uses_multipart_endpoint(
     tmp_path: Path,
 ) -> None:
-    """Route upload sync mode to /sources/ingest/file without polling."""
+    """Route upload sync mode to /sources/ingest/files without polling."""
     window = _build_lightweight_window()
     upload_file = tmp_path / "sample.md"
     upload_file.write_text("hello", encoding="utf-8")
 
-    captured: list[tuple[str, Path, str, dict[str, Any], int]] = []
+    captured: list[tuple[str, list[Path], str, dict[str, Any], int]] = []
 
     def _fake_post_multipart(
         path: str,
-        file_path: Path,
+        file_paths: list[Path],
         source_type: str,
         filters: dict[str, Any],
         timeout: int,
     ) -> dict[str, Any]:
-        captured.append((path, file_path, source_type, filters, timeout))
+        captured.append((path, file_paths, source_type, filters, timeout))
         return {"status": "completed", "path": path}
 
     window._post_multipart = _fake_post_multipart  # type: ignore[method-assign]
@@ -168,29 +168,31 @@ def test_main_window_upload_sync_uses_multipart_endpoint(
     )
 
     assert result["status"] == "completed"
-    assert captured[0][0] == "/sources/ingest/file"
-    assert captured[0][1] == upload_file
+    assert captured[0][0] == "/sources/ingest/files"
+    assert captured[0][1] == [upload_file]
     assert captured[0][2] == "folder"
 
 
 def test_main_window_upload_async_uses_multipart_endpoint_and_polling(
     tmp_path: Path,
 ) -> None:
-    """Route upload async mode to /sources/ingest/file/async and poll job."""
+    """Route upload async mode to /sources/ingest/files/async and poll job."""
     window = _build_lightweight_window()
-    upload_file = tmp_path / "sample.md"
-    upload_file.write_text("hello", encoding="utf-8")
+    first_file = tmp_path / "sample.md"
+    second_file = tmp_path / "notes.txt"
+    first_file.write_text("hello", encoding="utf-8")
+    second_file.write_text("world", encoding="utf-8")
 
-    captured: list[tuple[str, Path, str, dict[str, Any], int]] = []
+    captured: list[tuple[str, list[Path], str, dict[str, Any], int]] = []
 
     def _fake_post_multipart(
         path: str,
-        file_path: Path,
+        file_paths: list[Path],
         source_type: str,
         filters: dict[str, Any],
         timeout: int,
     ) -> dict[str, Any]:
-        captured.append((path, file_path, source_type, filters, timeout))
+        captured.append((path, file_paths, source_type, filters, timeout))
         return {"status": "queued", "job_id": "upload-job-1"}
 
     window._post_multipart = _fake_post_multipart  # type: ignore[method-assign]
@@ -207,7 +209,7 @@ def test_main_window_upload_async_uses_multipart_endpoint_and_polling(
             "_ingestion_mode": "async",
             "source": {
                 "source_type": "folder",
-                "local_path": str(upload_file),
+                "local_path": f"{first_file};{second_file}",
                 "filters": {},
             },
         }
@@ -215,4 +217,5 @@ def test_main_window_upload_async_uses_multipart_endpoint_and_polling(
 
     assert result["status"] == "completed"
     assert result["job_id"] == "upload-job-1"
-    assert captured[0][0] == "/sources/ingest/file/async"
+    assert captured[0][0] == "/sources/ingest/files/async"
+    assert captured[0][1] == [first_file, second_file]
