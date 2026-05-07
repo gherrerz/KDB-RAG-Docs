@@ -136,6 +136,15 @@ class GraphStore:
             rows=rows,
         )
 
+    @staticmethod
+    def _delete_orphan_entities(tx_or_session) -> int:
+        """Delete Entity nodes that no longer have any relationships."""
+        result = tx_or_session.run(
+            "MATCH (n:Entity) WHERE NOT (n)--() DELETE n"
+        )
+        summary = result.consume()
+        return int(getattr(summary.counters, "nodes_deleted", 0))
+
     def _write_batch_with_retries(
         self,
         session,
@@ -171,6 +180,7 @@ class GraphStore:
                 "batches_written": 0,
                 "rows_written": 0,
                 "retries": 0,
+                "nodes_deleted": 0,
             }
         driver = self._get_driver()
 
@@ -186,8 +196,10 @@ class GraphStore:
                 "batches_written": 0,
                 "rows_written": 0,
                 "retries": 0,
+                "nodes_deleted": 0,
             }
             if not edge_rows:
+                metrics["nodes_deleted"] = self._delete_orphan_entities(session)
                 return metrics
 
             normalized_rows = [
@@ -209,6 +221,7 @@ class GraphStore:
                 )
                 metrics["batches_written"] += 1
                 metrics["rows_written"] += len(batch_rows)
+            metrics["nodes_deleted"] = self._delete_orphan_entities(session)
             return metrics
 
     def clear_all_edges(self) -> int:
@@ -222,9 +235,7 @@ class GraphStore:
                 "MATCH ()-[r:RELATES_TO|TDM_REL]-() DELETE r"
             )
             relationships_summary = relationships_result.consume()
-            session.run(
-                "MATCH (n:Entity) WHERE NOT (n)--() DELETE n"
-            ).consume()
+            self._delete_orphan_entities(session)
             return int(
                 relationships_summary.counters.relationships_deleted
             )
@@ -280,6 +291,7 @@ class GraphStore:
                 "batches_written": 0,
                 "rows_written": 0,
                 "retries": 0,
+                "nodes_deleted": 0,
             }
         driver = self._get_driver()
 
@@ -295,8 +307,10 @@ class GraphStore:
                 "batches_written": 0,
                 "rows_written": 0,
                 "retries": 0,
+                "nodes_deleted": 0,
             }
             if not edge_rows:
+                metrics["nodes_deleted"] = self._delete_orphan_entities(session)
                 return metrics
 
             normalized_rows: List[dict[str, str]] = []
@@ -314,6 +328,7 @@ class GraphStore:
                 )
 
             if not normalized_rows:
+                metrics["nodes_deleted"] = self._delete_orphan_entities(session)
                 return metrics
 
             for batch_rows in self._chunk_rows(
@@ -326,6 +341,7 @@ class GraphStore:
                 )
                 metrics["batches_written"] += 1
                 metrics["rows_written"] += len(batch_rows)
+            metrics["nodes_deleted"] = self._delete_orphan_entities(session)
             return metrics
 
     def expand_tdm_paths(

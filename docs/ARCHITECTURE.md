@@ -201,6 +201,7 @@ sequenceDiagram
         SVC->>DB: replace_graph_edges(source_id, edges)
         SVC->>GS: replace_edges(source_id, edges)
         Note over SVC,GS: UNWIND por bloques + transaccion por lote + retry acotado
+        Note over SVC,GS: replace_edges limpia nodos Entity huerfanos tras resincronizar Neo4j
         SVC->>IDX: rebuild BM25 global + vector del source actual
         IDX->>EMB: embeddings en paralelo por lote
         EMB-->>IDX: vectors
@@ -217,7 +218,8 @@ sequenceDiagram
   `title + content_type` con uno ya persistido, la version previa se elimina de
   SQLite, Chroma y del mirror local de staging antes de indexar la nueva.
   Cuando el documento reemplazado pertenecia a otra fuente, el grafo gestionado se
-  reconstruye para ese `source_id` afectado.
+  reconstruye para ese `source_id` afectado y Neo4j elimina nodos `Entity`
+  huerfanos al finalizar la resincronizacion.
 
 ## Secuencia principal: consulta
 

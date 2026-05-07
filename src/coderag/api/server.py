@@ -267,7 +267,8 @@ def list_documents(source_id: str | None = None) -> dict[str, Any]:
     description=(
         "Delete a persisted document by document_id, including SQLite "
         "metadata/chunks, Chroma vectors, managed staging mirror copy when "
-        "present, and graph resync for the affected source."
+        "present, graph resync for the affected source, and Neo4j orphan "
+        "Entity cleanup after resync."
     ),
     responses={
         404: {"description": "Document not found for the provided id."}

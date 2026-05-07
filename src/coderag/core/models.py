@@ -49,6 +49,7 @@ class DeleteDocumentResponse(BaseModel):
     deleted_chunks: int
     deleted_staging_files: int
     reindexed_sources: int
+    neo4j_nodes_deleted: int = 0
 
 
 class DocumentRecord(BaseModel):

@@ -194,6 +194,8 @@ Comportamiento:
 - Si el archivo persistido apuntaba al mirror de staging bajo `DATA_DIR`,
   intenta borrar tambien la copia fisica y podar carpetas vacias.
 - Resincroniza el grafo gestionado para el `source_id` afectado.
+- Tras la resincronizacion, elimina nodos `Entity` huerfanos en Neo4j para
+  evitar residuos de documentos ya borrados.
 - Reconstuye BM25 para que la consulta refleje el borrado inmediatamente.
 
 Response (ejemplo exitoso):
@@ -201,13 +203,14 @@ Response (ejemplo exitoso):
 ```json
 {
   "status": "completed",
-  "message": "Document was deleted from persisted metadata, vector index, and managed staging mirror.",
+  "message": "Document was deleted from persisted metadata, vector index, managed staging mirror, and Neo4j orphan cleanup.",
   "document_id": "abc123",
   "source_id": "f0e1d2c3b4a5",
   "deleted_documents": 1,
   "deleted_chunks": 3,
   "deleted_staging_files": 1,
-  "reindexed_sources": 1
+  "reindexed_sources": 1,
+  "neo4j_nodes_deleted": 2
 }
 ```
 

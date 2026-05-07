@@ -21,6 +21,8 @@ from coderag.core.models import (
     QueryRequest,
     QueryResponse,
     ResetAllResponse,
+    TdmQueryRequest,
+    TdmQueryResponse,
 )
 from coderag.core.graph_store import GraphStore
 from coderag.core.runtime import RUNTIME
@@ -228,6 +230,7 @@ class RagApplicationService:
                 "deleted_documents": 0,
                 "deleted_chunks": 0,
                 "deleted_staging_files": 0,
+                "neo4j_nodes_deleted": 0,
                 "reindexed_sources": 0,
                 "replaced_document_ids": [],
                 "replaced_paths": [],
@@ -237,6 +240,7 @@ class RagApplicationService:
         deleted_documents = 0
         deleted_chunks = 0
         deleted_staging_files = 0
+        neo4j_nodes_deleted = 0
         affected_source_ids: set[str] = set()
         staging_warnings: list[str] = []
 
@@ -261,7 +265,10 @@ class RagApplicationService:
         skipped_source_ids = skip_reindex_source_ids or set()
         rebuilt_source_ids = sorted(affected_source_ids - skipped_source_ids)
         for source_id in rebuilt_source_ids:
-            self._sync_graph_for_source(source_id)
+            _edges, graph_metrics = self._sync_graph_for_source(source_id)
+            nodes_deleted = graph_metrics.get("nodes_deleted", 0)
+            if isinstance(nodes_deleted, int):
+                neo4j_nodes_deleted += nodes_deleted
 
         self.store.bump_index_version()
         self._rebuild_bm25_from_store()
@@ -271,6 +278,7 @@ class RagApplicationService:
             "deleted_documents": deleted_documents,
             "deleted_chunks": deleted_chunks,
             "deleted_staging_files": deleted_staging_files,
+            "neo4j_nodes_deleted": neo4j_nodes_deleted,
             "reindexed_sources": len(rebuilt_source_ids),
             "replaced_document_ids": sorted(
                 duplicate.document_id for duplicate in documents
@@ -424,7 +432,7 @@ class RagApplicationService:
             status="completed",
             message=(
                 "Document was deleted from persisted metadata, vector index, "
-                "and managed staging mirror."
+                "managed staging mirror, and Neo4j orphan cleanup."
             ),
             document_id=document.document_id,
             source_id=document.source_id,
@@ -432,6 +440,7 @@ class RagApplicationService:
             deleted_chunks=int(deleted["deleted_chunks"]),
             deleted_staging_files=int(deleted["deleted_staging_files"]),
             reindexed_sources=int(deleted["reindexed_sources"]),
+            neo4j_nodes_deleted=int(deleted["neo4j_nodes_deleted"]),
         )
 
     def ingest(
@@ -989,7 +998,7 @@ class RagApplicationService:
                 "TDM endpoints are disabled. Set ENABLE_TDM=true to enable."
             )
 
-    def query_tdm(self, request: "TdmQueryRequest") -> "TdmQueryResponse":
+    def query_tdm(self, request: TdmQueryRequest) -> TdmQueryResponse:
         """Run TDM catalog query mode for agent-facing workflows."""
         self._ensure_tdm_graph_enabled()
 
@@ -1078,8 +1087,6 @@ class RagApplicationService:
             f"Found {len(findings)} catalog items and {len(tdm_paths)} graph paths."
         )
 
-        from coderag.core.models import TdmQueryResponse
-
         return TdmQueryResponse(
             answer=answer,
             findings=list(findings),
@@ -1153,7 +1160,7 @@ class RagApplicationService:
 
     def preview_tdm_virtualization(
         self,
-        request: "TdmQueryRequest",
+        request: TdmQueryRequest,
     ) -> Dict[str, object]:
         """Build lightweight virtualization preview from TDM catalog data."""
         self._ensure_tdm_graph_enabled()

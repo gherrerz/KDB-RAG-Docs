@@ -396,6 +396,65 @@ def test_delete_document_endpoint_returns_404_for_unknown_document() -> None:
     assert response.status_code == 404
 
 
+def test_delete_document_endpoint_reports_neo4j_cleanup_metrics() -> None:
+    """Expose orphan cleanup metrics when graph resync runs during delete."""
+    client = TestClient(server.app)
+    original_embed = index_chroma.embed_text
+    original_provider = server.SETTINGS.llm_provider
+    original_openai_key = server.SETTINGS.openai_api_key
+    original_use_neo4j = server.SETTINGS.use_neo4j
+    original_neo4j_uri = server.SETTINGS.neo4j_uri
+    original_neo4j_user = server.SETTINGS.neo4j_user
+    original_neo4j_password = server.SETTINGS.neo4j_password
+    original_replace_edges = server.SERVICE.graph_store.replace_edges
+
+    server.SETTINGS.llm_provider = "openai"
+    server.SETTINGS.openai_api_key = "test-key"
+    server.SETTINGS.use_neo4j = True
+    server.SETTINGS.neo4j_uri = "bolt://test-neo4j:7687"
+    server.SETTINGS.neo4j_user = "neo4j"
+    server.SETTINGS.neo4j_password = "password"
+    index_chroma.embed_text = _fake_embed_text
+    server.SERVICE.graph_store.replace_edges = (
+        lambda source_id, edges: {"nodes_deleted": 2, "rows_written": len(edges)}
+    )
+
+    try:
+        ingest_response = client.post(
+            "/sources/ingest",
+            json={
+                "source": {
+                    "source_type": "folder",
+                    "local_path": "sample_data",
+                }
+            },
+        )
+        assert ingest_response.status_code == 200
+        source_id = ingest_response.json()["source_id"]
+
+        catalog_before = client.get(f"/sources/documents?source_id={source_id}")
+        assert catalog_before.status_code == 200
+        documents_before = catalog_before.json()["documents"]
+        assert len(documents_before) >= 1
+
+        document_id = documents_before[0]["document_id"]
+
+        delete_response = client.delete(f"/sources/documents/{document_id}")
+        assert delete_response.status_code == 200
+        delete_body = delete_response.json()
+        assert delete_body["document_id"] == document_id
+        assert delete_body["neo4j_nodes_deleted"] == 2
+    finally:
+        server.SETTINGS.llm_provider = original_provider
+        server.SETTINGS.openai_api_key = original_openai_key
+        server.SETTINGS.use_neo4j = original_use_neo4j
+        server.SETTINGS.neo4j_uri = original_neo4j_uri
+        server.SETTINGS.neo4j_user = original_neo4j_user
+        server.SETTINGS.neo4j_password = original_neo4j_password
+        index_chroma.embed_text = original_embed
+        server.SERVICE.graph_store.replace_edges = original_replace_edges
+
+
 def test_delete_document_endpoint_removes_citations_from_followup_query() -> None:
     """Ensure deleted documents stop contributing citations in later queries."""
     client = TestClient(server.app)

@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.3.7] - 2026-05-07
+
+### Fixed
+- `DELETE /sources/documents/{document_id}` ahora limpia nodos `Entity`
+	huerfanos en Neo4j despues de resincronizar el grafo del `source_id`
+	afectado, evitando residuos de documentos borrados.
+
+### Changed
+- `DeleteDocumentResponse` expone la metrica `neo4j_nodes_deleted` para
+	reportar cuantos nodos huerfanos fueron eliminados durante el borrado.
+
 ## [0.3.6] - 2026-04-28
 
 ### Changed
