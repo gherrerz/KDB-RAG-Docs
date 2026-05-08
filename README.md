@@ -187,8 +187,6 @@ python src/run_ui.py
 
 - `GET /health`
 - `POST /sources/ingest`
-- `POST /sources/ingest/file`
-- `POST /sources/ingest/file/async`
 - `POST /sources/ingest/files`
 - `POST /sources/ingest/files/async`
 - `DELETE /sources/reset?confirm=true`
@@ -227,21 +225,13 @@ Ejemplo `POST /sources/ingest` para Confluence:
 }
 ```
 
-Ejemplo `POST /sources/ingest/file` (multipart upload):
+Ejemplo `POST /sources/ingest/files` (multipart upload sync, uno o mas archivos):
+
+Para un solo archivo, usar igualmente el campo multipart `files`:
 
 ```bash
-curl -X POST http://127.0.0.1:8000/sources/ingest/file \
-  -F "file=@sample_data/engineering.md" \
-  -F "source_type=folder" \
-  -F 'filters={"domain":"qa"}' \
-  -F "tags=finance,urgent"
-```
-
-Ejemplo `POST /sources/ingest/file/async` (multipart upload async):
-
-```bash
-curl -X POST http://127.0.0.1:8000/sources/ingest/file/async \
-  -F "file=@sample_data/engineering.md" \
+curl -X POST http://127.0.0.1:8000/sources/ingest/files \
+  -F "files=@sample_data/engineering.md" \
   -F "source_type=folder" \
   -F 'filters={"domain":"qa"}' \
   -F "tags=finance,urgent"
@@ -253,6 +243,18 @@ Ejemplo `POST /sources/ingest/files` (multipart upload batch sync):
 curl -X POST http://127.0.0.1:8000/sources/ingest/files \
   -F "files=@sample_data/engineering.md" \
   -F "files=@sample_data/policy_finance.md" \
+  -F "source_type=folder" \
+  -F 'filters={"domain":"qa"}' \
+  -F "tags=finance,urgent"
+```
+
+Ejemplo `POST /sources/ingest/files/async` (multipart upload async, uno o mas archivos):
+
+Para un solo archivo, usar igualmente el campo multipart `files`:
+
+```bash
+curl -X POST http://127.0.0.1:8000/sources/ingest/files/async \
+  -F "files=@sample_data/engineering.md" \
   -F "source_type=folder" \
   -F 'filters={"domain":"qa"}' \
   -F "tags=finance,urgent"

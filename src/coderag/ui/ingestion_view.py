@@ -122,7 +122,7 @@ class IngestionView(QWidget):
         )
         self.ingestion_channel.setToolTip(
             "Selecciona JSON tradicional por carpeta o upload multipart para "
-            "probar el endpoint /sources/ingest/file*."
+            "probar el endpoint /sources/ingest/files*."
         )
         self.execution_mode.setToolTip(
             "Asincrono requiere cola operativa; Sincrono ejecuta ingesta en "

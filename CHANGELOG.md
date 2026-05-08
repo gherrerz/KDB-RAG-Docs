@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.3.8] - 2026-05-08
+
+### Changed
+- Se eliminaron los endpoints `POST /sources/ingest/file` y
+	`POST /sources/ingest/file/async` para consolidar el upload multipart en
+	`POST /sources/ingest/files` y `POST /sources/ingest/files/async`.
+- La migracion requerida para clientes no es solo de path: incluso para un
+	solo archivo, el nombre del campo multipart ahora debe ser `files` en lugar
+	de `file`.
+
 ## [0.3.7] - 2026-05-07
 
 ### Fixed

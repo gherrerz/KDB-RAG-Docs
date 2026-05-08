@@ -151,14 +151,14 @@ La aplicacion carga automaticamente variables desde `.env` en runtime.
 - `UPLOAD_STAGING_SHARED`: habilita uploads async con RQ cuando `api` y
   `worker` comparten el mismo volumen/ruta de staging de archivos.
 - `UPLOAD_MAX_BYTES`: limite maximo por archivo para endpoints de upload
-  multipart (`/sources/ingest/file*`). Default `26214400` (25 MB).
+  multipart (`/sources/ingest/files*`). Default `26214400` (25 MB).
 
 Para ingesta `folder`, la UI hace staging automatico del directorio elegido
 por el usuario hacia `DATA_DIR/ingestion_staging`.
 El backend consume esa ruta staged, visible tanto para `api` como `worker`
 en Docker Compose por el montaje del repo (`./:/app`).
 
-Para upload async (`POST /sources/ingest/file/async`) con `USE_RQ=true`,
+Para upload async (`POST /sources/ingest/files/async`) con `USE_RQ=true`,
 requiere `UPLOAD_STAGING_SHARED=true` para asegurar que el worker puede leer
 la ruta staged creada por el API.
 

@@ -9,8 +9,8 @@ from fastapi.testclient import TestClient
 from coderag.api import server
 
 
-def test_upload_ingest_stages_file_and_runs_service() -> None:
-    """Ingest uploaded file through multipart endpoint and clean staging."""
+def test_upload_files_ingest_stages_single_file_and_runs_service() -> None:
+    """Ingest one uploaded file through plural multipart endpoint."""
     client = TestClient(server.app)
     original_ingest = server.SERVICE.ingest
     captured: dict[str, Path] = {}
@@ -31,14 +31,17 @@ def test_upload_ingest_stages_file_and_runs_service() -> None:
     server.SERVICE.ingest = _fake_ingest  # type: ignore[assignment]
     try:
         response = client.post(
-            "/sources/ingest/file",
-            files={
-                "file": (
-                    "notes.md",
-                    b"# Notes\nOwner: Project Atlas\n",
-                    "text/markdown",
+            "/sources/ingest/files",
+            files=[
+                (
+                    "files",
+                    (
+                        "notes.md",
+                        b"# Notes\nOwner: Project Atlas\n",
+                        "text/markdown",
+                    ),
                 )
-            },
+            ],
             data={
                 "source_type": "folder",
                 "filters": '{"domain":"qa"}',
@@ -53,13 +56,13 @@ def test_upload_ingest_stages_file_and_runs_service() -> None:
     assert not staged_dir.exists()
 
 
-def test_upload_ingest_rejects_invalid_filters_json() -> None:
-    """Reject malformed filters payload passed as multipart form text."""
+def test_upload_files_ingest_rejects_invalid_filters_json() -> None:
+    """Reject malformed filters payload passed to plural endpoint."""
     client = TestClient(server.app)
 
     response = client.post(
-        "/sources/ingest/file",
-        files={"file": ("notes.md", b"hello", "text/markdown")},
+        "/sources/ingest/files",
+        files=[("files", ("notes.md", b"hello", "text/markdown"))],
         data={"filters": "not-json"},
     )
 
@@ -67,13 +70,18 @@ def test_upload_ingest_rejects_invalid_filters_json() -> None:
     assert "filters" in str(response.json().get("detail", "")).lower()
 
 
-def test_upload_ingest_rejects_unsupported_extension() -> None:
-    """Reject uploads with extensions not supported by folder ingestion."""
+def test_upload_files_ingest_rejects_unsupported_extension_single_file() -> None:
+    """Reject one uploaded file with unsupported extension via plural route."""
     client = TestClient(server.app)
 
     response = client.post(
-        "/sources/ingest/file",
-        files={"file": ("script.exe", b"binary", "application/octet-stream")},
+        "/sources/ingest/files",
+        files=[
+            (
+                "files",
+                ("script.exe", b"binary", "application/octet-stream"),
+            )
+        ],
     )
 
     assert response.status_code == 422
@@ -113,8 +121,8 @@ def test_json_ingest_endpoint_remains_compatible() -> None:
     assert response.json().get("status") == "completed"
 
 
-def test_upload_async_uses_local_queue_and_passes_cleanup_dir() -> None:
-    """Enqueue upload ingestion in local async mode and pass cleanup path."""
+def test_upload_files_async_uses_local_queue_for_single_file() -> None:
+    """Enqueue one uploaded file through plural async endpoint."""
     client = TestClient(server.app)
     original_use_rq = server.SETTINGS.use_rq
     original_enqueue_local = server.enqueue_local_ingest_job
@@ -129,8 +137,8 @@ def test_upload_async_uses_local_queue_and_passes_cleanup_dir() -> None:
     server.enqueue_local_ingest_job = _fake_enqueue_local  # type: ignore[assignment]
     try:
         response = client.post(
-            "/sources/ingest/file/async",
-            files={"file": ("notes.md", b"hello", "text/markdown")},
+            "/sources/ingest/files/async",
+            files=[("files", ("notes.md", b"hello", "text/markdown"))],
             data={"filters": '{"domain":"qa"}'},
         )
     finally:
@@ -144,8 +152,8 @@ def test_upload_async_uses_local_queue_and_passes_cleanup_dir() -> None:
     assert captured["local_path"] == captured["cleanup"]
 
 
-def test_upload_async_rejects_rq_without_shared_staging() -> None:
-    """Block RQ upload async when staging is not shared between pods."""
+def test_upload_files_async_rejects_rq_without_shared_staging_single_file() -> None:
+    """Block plural async upload for one file when staging is not shared."""
     client = TestClient(server.app)
     original_use_rq = server.SETTINGS.use_rq
     original_shared = server.SETTINGS.upload_staging_shared
@@ -154,8 +162,8 @@ def test_upload_async_rejects_rq_without_shared_staging() -> None:
     server.SETTINGS.upload_staging_shared = False
     try:
         response = client.post(
-            "/sources/ingest/file/async",
-            files={"file": ("notes.md", b"hello", "text/markdown")},
+            "/sources/ingest/files/async",
+            files=[("files", ("notes.md", b"hello", "text/markdown"))],
         )
     finally:
         server.SETTINGS.use_rq = original_use_rq
@@ -167,8 +175,8 @@ def test_upload_async_rejects_rq_without_shared_staging() -> None:
     ).lower()
 
 
-def test_upload_async_uses_rq_when_staging_is_shared() -> None:
-    """Enqueue upload ingestion through RQ when shared staging is enabled."""
+def test_upload_files_async_uses_rq_when_staging_is_shared_single_file() -> None:
+    """Enqueue one uploaded file through plural async route with RQ."""
     client = TestClient(server.app)
     original_use_rq = server.SETTINGS.use_rq
     original_shared = server.SETTINGS.upload_staging_shared
@@ -185,8 +193,8 @@ def test_upload_async_uses_rq_when_staging_is_shared() -> None:
     server.enqueue_ingest_job = _fake_enqueue_rq  # type: ignore[assignment]
     try:
         response = client.post(
-            "/sources/ingest/file/async",
-            files={"file": ("notes.md", b"hello", "text/markdown")},
+            "/sources/ingest/files/async",
+            files=[("files", ("notes.md", b"hello", "text/markdown"))],
         )
     finally:
         server.SETTINGS.use_rq = original_use_rq
@@ -200,8 +208,8 @@ def test_upload_async_uses_rq_when_staging_is_shared() -> None:
     assert captured["local_path"] == captured["cleanup"]
 
 
-def test_upload_ingest_returns_structured_500_details() -> None:
-    """Return structured diagnostics when sync upload ingestion crashes."""
+def test_upload_files_ingest_returns_structured_500_details() -> None:
+    """Return structured diagnostics when plural sync upload crashes."""
     client = TestClient(server.app)
     original_ingest = server.SERVICE.ingest
 
@@ -211,8 +219,8 @@ def test_upload_ingest_returns_structured_500_details() -> None:
     server.SERVICE.ingest = _fake_ingest  # type: ignore[assignment]
     try:
         response = client.post(
-            "/sources/ingest/file",
-            files={"file": ("notes.md", b"hello", "text/markdown")},
+            "/sources/ingest/files",
+            files=[("files", ("notes.md", b"hello", "text/markdown"))],
             data={"source_type": "folder", "filters": ""},
         )
     finally:
@@ -220,9 +228,10 @@ def test_upload_ingest_returns_structured_500_details() -> None:
 
     assert response.status_code == 500
     detail = response.json().get("detail", {})
-    assert detail.get("operation") == "ingest_source_file"
+    assert detail.get("operation") == "ingest_source_files"
     assert detail.get("error_type") == "ValueError"
-    assert detail.get("context", {}).get("filename") == "notes.md"
+    assert detail.get("context", {}).get("filenames") == ["notes.md"]
+    assert detail.get("context", {}).get("file_count") == 1
 
 
 def test_upload_files_ingest_stages_batch_and_runs_service() -> None:

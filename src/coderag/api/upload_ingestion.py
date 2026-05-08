@@ -34,10 +34,6 @@ class UploadIngestionAdapter:
         self.base_dir = base_dir
         self.max_upload_bytes = max_upload_bytes
 
-    def stage_upload(self, file: UploadFile) -> Path:
-        """Persist uploaded file into an isolated temporary directory."""
-        return self.stage_uploads_batch([file])
-
     def stage_uploads_batch(self, files: list[UploadFile]) -> Path:
         """Persist uploaded files into one isolated temporary directory."""
         if not files:

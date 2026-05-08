@@ -29,8 +29,6 @@ de la red puede consumirse usando la IP del host.
 | Health | GET | `/health` | `health` | N/A | N/A | `{"status": "ok"}` |
 | Readiness | GET | `/readiness` | `readiness` | `SERVICE.store.get_index_version` | N/A | `{"status": "ready"}` |
 | Ingestion sync | POST | `/sources/ingest` | `ingest_source` | `SERVICE.ingest` | `IngestionRequest` | `dict` (estado de job + metricas) |
-| Ingestion upload sync | POST | `/sources/ingest/file` | `ingest_source_file` | `UploadIngestionAdapter` + `SERVICE.ingest` | `multipart/form-data` (`file`, `source_type?`, `filters?`, `tags?`) | `dict` (estado de job + metricas) |
-| Ingestion upload async | POST | `/sources/ingest/file/async` | `ingest_source_file_async` | `UploadIngestionAdapter` + `enqueue_ingest_job/enqueue_local_ingest_job` | `multipart/form-data` (`file`, `source_type?`, `filters?`, `tags?`) | `{"job_id", "status", "message"}` |
 | Ingestion uploads batch sync | POST | `/sources/ingest/files` | `ingest_source_files` | `UploadIngestionAdapter` + `SERVICE.ingest` | `multipart/form-data` (`files`, `source_type?`, `filters?`, `tags?`) | `dict` (estado de job + metricas) |
 | Ingestion uploads batch async | POST | `/sources/ingest/files/async` | `ingest_source_files_async` | `UploadIngestionAdapter` + `enqueue_ingest_job/enqueue_local_ingest_job` | `multipart/form-data` (`files`, `source_type?`, `filters?`, `tags?`) | `{"job_id", "status", "message"}` |
 | Ingestion async | POST | `/sources/ingest/async` | `ingest_source_async` | `enqueue_ingest_job` o `enqueue_local_ingest_job` | `IngestionRequest` | `{"job_id", "status", "message"}` |
@@ -305,91 +303,6 @@ Codigos comunes:
 - `200`: ingesta terminada (tambien puede retornar `status=failed` de negocio).
 - `503`: runtime estricto no disponible (por ejemplo, Chroma/provider).
 
-## POST /sources/ingest/file
-
-Ejecuta ingesta sincrona a partir de un archivo subido por
-`multipart/form-data`.
-
-Campos del formulario:
-
-- `file` (requerido): archivo a ingerir.
-- `source_type` (opcional): actualmente solo acepta `folder`.
-- `filters` (opcional): texto JSON con objeto de filtros.
-- `tags` (opcional): CSV (`finance,urgent`) o JSON array (`["finance","urgent"]`).
-
-Extensiones soportadas en `file`:
-
-- `.md`, `.txt`, `.html`, `.htm`, `.pdf`, `.docx`, `.doc`, `.pptx`, `.xlsx`
-
-Ejemplo `curl`:
-
-```bash
-curl -X POST http://127.0.0.1:8000/sources/ingest/file \
-  -F "file=@sample_data/engineering.md" \
-  -F "source_type=folder" \
-  -F 'filters={"domain":"qa"}' \
-  -F "tags=finance,urgent"
-```
-
-Codigos comunes:
-
-- `200`: ingesta terminada (tambien puede retornar `status=failed` de negocio).
-- `422`: formulario invalido, extension no soportada o `filters` no parseable.
-- `500`: excepcion no controlada. El campo `detail` ahora retorna payload
-  estructurado con `operation`, `error_type`, `error` y `context`.
-- `503`: runtime estricto no disponible (por ejemplo, Chroma/provider).
-
-Nota operativa:
-
-- Si Neo4j esta habilitado pero falla durante persistencia de grafo, la
-  ingesta continua con SQLite + Chroma y marca degradacion en pasos/metricas
-  (`persist_graph.status=warning`, `metrics.neo4j_degraded=true`).
-
-## POST /sources/ingest/file/async
-
-Encola una ingesta asincrona a partir de un archivo subido por
-`multipart/form-data`.
-
-Campos del formulario:
-
-- `file` (requerido): archivo a ingerir.
-- `source_type` (opcional): actualmente solo acepta `folder`.
-- `filters` (opcional): texto JSON con objeto de filtros.
-- `tags` (opcional): CSV (`finance,urgent`) o JSON array (`["finance","urgent"]`).
-
-Comportamiento segun modo async:
-
-- Con `USE_RQ=false`: crea worker local en background y encola el job.
-- Con `USE_RQ=true`: requiere `UPLOAD_STAGING_SHARED=true` para garantizar
-  que `api` y `worker` leen el mismo staging de upload.
-
-Ejemplo `curl`:
-
-```bash
-curl -X POST http://127.0.0.1:8000/sources/ingest/file/async \
-  -F "file=@sample_data/engineering.md" \
-  -F "source_type=folder" \
-  -F 'filters={"domain":"qa"}' \
-  -F "tags=finance,urgent"
-```
-
-Response (shape):
-
-```json
-{
-  "job_id": "job-id",
-  "status": "queued",
-  "message": "Upload ingestion job enqueued"
-}
-```
-
-Codigos comunes:
-
-- `200`: job aceptado.
-- `409`: `USE_RQ=true` sin staging compartido (`UPLOAD_STAGING_SHARED=false`).
-- `422`: formulario invalido, extension no soportada o `filters` no parseable.
-- `500`: error al encolar o iniciar worker.
-
 ## POST /sources/ingest/files
 
 Ejecuta ingesta sincrona a partir de varios archivos subidos por
@@ -406,6 +319,21 @@ Comportamiento:
 
 - El backend stagea todos los archivos en un solo directorio temporal.
 - La ingesta usa el mismo pipeline `folder` sobre ese staging de lote.
+- Para un solo archivo, tambien se usa esta misma ruta con el campo `files`.
+
+Extensiones soportadas en `files`:
+
+- `.md`, `.txt`, `.html`, `.htm`, `.pdf`, `.docx`, `.doc`, `.pptx`, `.xlsx`
+
+Ejemplo `curl` para un solo archivo:
+
+```bash
+curl -X POST http://127.0.0.1:8000/sources/ingest/files \
+  -F "files=@sample_data/engineering.md" \
+  -F "source_type=folder" \
+  -F 'filters={"domain":"qa"}' \
+  -F "tags=finance,urgent"
+```
 
 Ejemplo `curl`:
 
@@ -442,6 +370,18 @@ Comportamiento segun modo async:
 - Con `USE_RQ=false`: crea worker local en background y encola el job del lote.
 - Con `USE_RQ=true`: requiere `UPLOAD_STAGING_SHARED=true` para garantizar
   que `api` y `worker` leen el mismo staging del lote.
+
+Para un solo archivo, tambien se usa esta misma ruta con el campo `files`.
+
+Ejemplo `curl` para un solo archivo:
+
+```bash
+curl -X POST http://127.0.0.1:8000/sources/ingest/files/async \
+  -F "files=@sample_data/engineering.md" \
+  -F "source_type=folder" \
+  -F 'filters={"domain":"qa"}' \
+  -F "tags=finance,urgent"
+```
 
 Ejemplo `curl`:
 
