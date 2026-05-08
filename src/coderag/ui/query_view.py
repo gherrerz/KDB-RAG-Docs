@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMessageBox,
+    QInputDialog,
     QPushButton,
     QScrollArea,
     QSplitter,
@@ -60,7 +61,7 @@ class DocumentPickerDialog(QDialog):
 
         self.filter_input = QLineEdit()
         self.filter_input.setPlaceholderText(
-            "Filtrar por titulo, path o source_id"
+            "Filtrar por titulo, path, source_id o tags"
         )
         self.filter_input.setClearButtonEnabled(True)
         layout.addWidget(self.filter_input)
@@ -122,11 +123,14 @@ class DocumentPickerDialog(QDialog):
         title = str(document.get("title") or document.get("document_id") or "")
         path_or_url = str(document.get("path_or_url") or "").strip()
         source_id = str(document.get("source_id") or "").strip()
+        tags = document.get("tags") if isinstance(document.get("tags"), list) else []
         suffix = []
         if source_id:
             suffix.append(source_id)
         if path_or_url:
             suffix.append(path_or_url.replace("\\", "/"))
+        if tags:
+            suffix.append(f"tags={', '.join(str(tag) for tag in tags)}")
         if suffix:
             return f"{title} | {' | '.join(suffix)}"
         return title
@@ -143,6 +147,11 @@ class DocumentPickerDialog(QDialog):
                     str(payload.get("title") or ""),
                     str(payload.get("path_or_url") or ""),
                     str(payload.get("source_id") or ""),
+                    " ".join(
+                        str(tag)
+                        for tag in payload.get("tags", [])
+                        if str(tag).strip()
+                    ),
                 ]
             ).casefold()
             is_hidden = bool(needle) and needle not in haystack
@@ -182,15 +191,20 @@ class QueryView(QWidget):
     def __init__(
         self,
         on_query: Callable[[dict], dict],
-        on_list_documents: Callable[[str | None], dict] | None = None,
+        on_list_documents: Callable[[str | None, list[str] | None], dict] | None = None,
         on_delete_document: Callable[[str], dict] | None = None,
+        on_list_document_tags: Callable[[str | None], dict] | None = None,
+        on_replace_document_tags: Callable[[str, list[str]], dict] | None = None,
     ) -> None:
         super().__init__()
         self._on_query = on_query
         self._on_list_documents = on_list_documents
         self._on_delete_document = on_delete_document
+        self._on_list_document_tags = on_list_document_tags
+        self._on_replace_document_tags = on_replace_document_tags
         self._selected_documents: list[dict[str, Any]] = []
         self._available_documents: list[dict[str, Any]] = []
+        self._available_tag_facets: list[dict[str, Any]] = []
 
         self._document_refresh_timer = QTimer(self)
         self._document_refresh_timer.setSingleShot(True)
@@ -224,6 +238,10 @@ class QueryView(QWidget):
         self.source_id.setMinimumHeight(34)
         self.source_id.setClearButtonEnabled(True)
         self.source_id.textChanged.connect(self._handle_source_id_change)
+        self.catalog_tags = QLineEdit()
+        self.catalog_tags.setMinimumHeight(34)
+        self.catalog_tags.setClearButtonEnabled(True)
+        self.catalog_tags.textChanged.connect(self._handle_catalog_tags_change)
         self.document_picker_button = QPushButton("Seleccionar documentos")
         self.document_picker_button.setMinimumHeight(34)
         self.document_picker_button.clicked.connect(self._open_document_picker)
@@ -238,6 +256,9 @@ class QueryView(QWidget):
         self.delete_documents_button.clicked.connect(
             self._delete_selected_documents
         )
+        self.edit_tags_button = QPushButton("Editar tags")
+        self.edit_tags_button.setMinimumHeight(34)
+        self.edit_tags_button.clicked.connect(self._edit_selected_document_tags)
         self.clear_documents_button = QPushButton("Limpiar")
         self.clear_documents_button.setMinimumHeight(34)
         self.clear_documents_button.clicked.connect(self._clear_selected_documents)
@@ -247,6 +268,12 @@ class QueryView(QWidget):
         self.document_catalog_label = QLabel("Catalogo sin cargar")
         self.document_catalog_label.setProperty("role", "status")
         self.document_catalog_label.setProperty("state", "idle")
+        self.tag_facets_list = QListWidget()
+        self.tag_facets_list.setMaximumHeight(96)
+        self.tag_facets_list.itemClicked.connect(self._apply_tag_facet)
+        self.clear_tag_facets_button = QPushButton("Limpiar facetas")
+        self.clear_tag_facets_button.setMinimumHeight(34)
+        self.clear_tag_facets_button.clicked.connect(self._clear_tag_facet_selection)
         self.hops = QLineEdit("2")
         self.hops.setMinimumHeight(34)
         self.hops.setValidator(QIntValidator(1, 6, self))
@@ -263,6 +290,12 @@ class QueryView(QWidget):
         self.source_id.setToolTip(
             "Dejalo vacio para consultar sobre todas las fuentes indexadas."
         )
+        self.catalog_tags.setPlaceholderText(
+            "tags opcionales para filtrar catalogo"
+        )
+        self.catalog_tags.setToolTip(
+            "Filtra el catalogo local por etiquetas simples separadas por coma."
+        )
         self.document_picker_button.setToolTip(
             "Selecciona uno o mas documentos ingestados para acotar la consulta."
         )
@@ -272,6 +305,15 @@ class QueryView(QWidget):
         self.delete_documents_button.setToolTip(
             "Elimina de forma persistente los documentos seleccionados en el filtro actual."
         )
+        self.edit_tags_button.setToolTip(
+            "Reemplaza las tags persistidas del documento seleccionado."
+        )
+        self.tag_facets_list.setToolTip(
+            "Haz click sobre una tag para aplicarla al filtro del catalogo."
+        )
+        self.clear_tag_facets_button.setToolTip(
+            "Quita la seleccion de faceta y limpia el filtro de tags del catalogo."
+        )
         self.hops.setPlaceholderText("1-6")
         self.hops.setToolTip(
             "Profundidad de expansion del grafo. Recomendado: 2."
@@ -279,6 +321,7 @@ class QueryView(QWidget):
 
         form.addRow("Pregunta", self.question)
         form.addRow("Source ID (opcional)", self.source_id)
+        form.addRow("Tags catalogo (opcional)", self.catalog_tags)
         document_row = QWidget()
         document_row_layout = QHBoxLayout(document_row)
         document_row_layout.setContentsMargins(0, 0, 0, 0)
@@ -286,10 +329,18 @@ class QueryView(QWidget):
         document_row_layout.addWidget(self.document_picker_button)
         document_row_layout.addWidget(self.document_refresh_button)
         document_row_layout.addWidget(self.delete_documents_button)
+        document_row_layout.addWidget(self.edit_tags_button)
         document_row_layout.addWidget(self.clear_documents_button)
         document_row_layout.addWidget(self.selected_documents_label, 1)
         document_row_layout.addWidget(self.document_catalog_label)
         form.addRow("Documentos (opcional)", document_row)
+        tag_facets_row = QWidget()
+        tag_facets_layout = QHBoxLayout(tag_facets_row)
+        tag_facets_layout.setContentsMargins(0, 0, 0, 0)
+        tag_facets_layout.setSpacing(8)
+        tag_facets_layout.addWidget(self.tag_facets_list, 1)
+        tag_facets_layout.addWidget(self.clear_tag_facets_button)
+        form.addRow("Facetas de tags", tag_facets_row)
         form.addRow("Saltos de grafo", self.hops)
         response_mode_row = QWidget()
         response_mode_layout = QHBoxLayout(response_mode_row)
@@ -393,10 +444,12 @@ class QueryView(QWidget):
         self.question.returnPressed.connect(self._run_query)
 
         QWidget.setTabOrder(self.question, self.source_id)
-        QWidget.setTabOrder(self.source_id, self.document_picker_button)
+        QWidget.setTabOrder(self.source_id, self.catalog_tags)
+        QWidget.setTabOrder(self.catalog_tags, self.document_picker_button)
         QWidget.setTabOrder(self.document_picker_button, self.document_refresh_button)
         QWidget.setTabOrder(self.document_refresh_button, self.delete_documents_button)
-        QWidget.setTabOrder(self.delete_documents_button, self.clear_documents_button)
+        QWidget.setTabOrder(self.delete_documents_button, self.edit_tags_button)
+        QWidget.setTabOrder(self.edit_tags_button, self.clear_documents_button)
         QWidget.setTabOrder(self.clear_documents_button, self.hops)
         QWidget.setTabOrder(self.hops, self.include_llm_answer)
         QWidget.setTabOrder(self.include_llm_answer, self.query_button)
@@ -406,6 +459,7 @@ class QueryView(QWidget):
         self._sync_response_mode(self.include_llm_answer.isChecked())
         self._refresh_selected_documents_label()
         self._refresh_document_catalog_state()
+        self._refresh_tag_facets_state()
         QTimer.singleShot(0, self._refresh_document_catalog_silent)
         self.question.setFocus()
 
@@ -584,6 +638,12 @@ class QueryView(QWidget):
         )
         self._refresh_document_catalog_state()
 
+    def _handle_catalog_tags_change(self, _raw_text: str) -> None:
+        """Refresh catalog when the local tag filter changes."""
+        self._document_refresh_timer.start()
+        self._refresh_document_catalog_state()
+        self._refresh_tag_facets_state()
+
     def _clear_selected_documents(self) -> None:
         """Reset the optional document filter to query all documents."""
         self._selected_documents = []
@@ -683,6 +743,80 @@ class QueryView(QWidget):
             "No se pudo eliminar ninguno de los documentos seleccionados.",
         )
 
+    def _edit_selected_document_tags(self) -> None:
+        """Replace tags for one selected document using a simple modal input."""
+        if self._on_replace_document_tags is None:
+            self._set_status(
+                "error",
+                "La sesion actual no expone edicion manual de tags.",
+            )
+            return
+
+        documents = list(self._selected_documents)
+        if not documents:
+            self._set_status(
+                "error",
+                "Selecciona uno o mas documentos para editar sus tags.",
+            )
+            return
+
+        document = documents[0]
+        current_tags = self._parse_tags_payload(document.get("tags"))
+        current_text = ", ".join(current_tags)
+        if len(documents) > 1:
+            current_text = ""
+        new_text, accepted = QInputDialog.getText(
+            self,
+            "Editar tags",
+            "Tags separadas por coma:",
+            QLineEdit.EchoMode.Normal,
+            current_text,
+        )
+        if not accepted:
+            return
+
+        new_tags = self._parse_tags_payload(new_text)
+        updated_ids: list[str] = []
+        failed_ids: list[str] = []
+        for selected_document in documents:
+            document_id = str(selected_document.get("document_id") or "").strip()
+            result = self._on_replace_document_tags(document_id, new_tags)
+            if "error" in result or "detail" in result:
+                failed_ids.append(document_id)
+                continue
+            updated_tags = self._parse_tags_payload(
+                result.get("new_tags", new_tags)
+            )
+            for collection in (self._selected_documents, self._available_documents):
+                for item in collection:
+                    if str(item.get("document_id") or "") == document_id:
+                        item["tags"] = updated_tags
+            updated_ids.append(document_id)
+
+        if not updated_ids:
+            self._set_status(
+                "error",
+                "No se pudieron actualizar las tags de los documentos seleccionados.",
+            )
+            return
+
+        self._refresh_selected_documents_label()
+        self._refresh_document_catalog_state()
+        self._refresh_tag_facets(show_feedback=False)
+        if failed_ids:
+            self._set_status(
+                "error",
+                (
+                    f"Se actualizaron tags en {len(updated_ids)} documentos, "
+                    f"pero fallaron {len(failed_ids)}."
+                ),
+            )
+            return
+        self._set_status(
+            "success",
+            f"Tags actualizadas en {len(updated_ids)} documento(s)",
+        )
+
     def _set_selected_documents(
         self,
         documents: Sequence[dict[str, Any]],
@@ -703,6 +837,7 @@ class QueryView(QWidget):
                     "title": str(item.get("title") or document_id),
                     "path_or_url": str(item.get("path_or_url") or ""),
                     "source_id": str(item.get("source_id") or ""),
+                    "tags": self._parse_tags_payload(item.get("tags")),
                 }
             )
         self._selected_documents = normalized
@@ -752,7 +887,8 @@ class QueryView(QWidget):
             return False
 
         source_id = self.source_id.text().strip() or None
-        result = self._on_list_documents(source_id)
+        tags = self._parse_catalog_tags_input()
+        result = self._on_list_documents(source_id, tags)
         documents = result.get("documents", []) if isinstance(result, dict) else []
         if not isinstance(documents, list):
             documents = []
@@ -762,6 +898,7 @@ class QueryView(QWidget):
         ]
         self._prune_selected_documents_against_catalog()
         self._refresh_document_catalog_state()
+        self._refresh_tag_facets(show_feedback=False)
 
         if show_feedback:
             if self._available_documents:
@@ -776,6 +913,63 @@ class QueryView(QWidget):
                 )
         return bool(self._available_documents)
 
+    def _refresh_tag_facets(self, show_feedback: bool) -> bool:
+        """Fetch aggregated tag facets for the current source filter."""
+        if self._on_list_document_tags is None:
+            self._available_tag_facets = []
+            self._render_tag_facets()
+            if show_feedback:
+                self._set_status(
+                    "error",
+                    "Las facetas de tags no estan disponibles en esta sesion.",
+                )
+            return False
+
+        source_id = self.source_id.text().strip() or None
+        result = self._on_list_document_tags(source_id)
+        items = result.get("items", []) if isinstance(result, dict) else []
+        if not isinstance(items, list):
+            items = []
+        self._available_tag_facets = [
+            item for item in items if isinstance(item, dict)
+        ]
+        self._render_tag_facets()
+        return bool(self._available_tag_facets)
+
+    def _render_tag_facets(self) -> None:
+        """Render the currently loaded tag facets in the sidebar list."""
+        self.tag_facets_list.clear()
+        active_tags = set(self._parse_catalog_tags_input())
+        for facet in self._available_tag_facets:
+            tag = str(facet.get("tag") or "").strip()
+            if not tag:
+                continue
+            count = int(facet.get("document_count") or 0)
+            item = QListWidgetItem(f"{tag} ({count})")
+            item.setData(Qt.ItemDataRole.UserRole, tag)
+            item.setSelected(tag in active_tags)
+            self.tag_facets_list.addItem(item)
+        self._refresh_tag_facets_state()
+
+    def _apply_tag_facet(self, item: QListWidgetItem) -> None:
+        """Apply one clicked tag facet to the catalog filter input."""
+        tag = str(item.data(Qt.ItemDataRole.UserRole) or "").strip()
+        if tag:
+            self.catalog_tags.setText(tag)
+
+    def _clear_tag_facet_selection(self) -> None:
+        """Clear any selected tag facet and reset catalog tag filter input."""
+        self.tag_facets_list.clearSelection()
+        self.catalog_tags.clear()
+
+    def _refresh_tag_facets_state(self) -> None:
+        """Refresh availability state for visible tag facets."""
+        has_facets = bool(self._available_tag_facets)
+        self.tag_facets_list.setEnabled(has_facets)
+        self.clear_tag_facets_button.setEnabled(
+            has_facets or bool(self.catalog_tags.text().strip())
+        )
+
     def _ensure_document_catalog(self, show_feedback: bool) -> bool:
         """Ensure a non-empty cached catalog exists before opening picker."""
         source_id = self.source_id.text().strip() or None
@@ -784,7 +978,10 @@ class QueryView(QWidget):
                 str(item.get("source_id") or "").strip()
                 for item in self._available_documents
             }
-            if not source_id or cached_source_ids == {source_id}:
+            if (
+                (not source_id or cached_source_ids == {source_id})
+                and not self._parse_catalog_tags_input()
+            ):
                 return True
         return self._refresh_document_catalog(show_feedback=show_feedback)
 
@@ -820,6 +1017,7 @@ class QueryView(QWidget):
             return
 
         source_id = self.source_id.text().strip()
+        tag_count = len(self._parse_catalog_tags_input())
         document_count = len(self._available_documents)
         selected_count = len(self.selected_document_ids())
         self.document_refresh_button.setEnabled(self._on_list_documents is not None)
@@ -827,11 +1025,16 @@ class QueryView(QWidget):
         self.delete_documents_button.setEnabled(
             self._on_delete_document is not None and selected_count > 0
         )
+        self.edit_tags_button.setEnabled(
+            self._on_replace_document_tags is not None and selected_count > 0
+        )
 
         if document_count <= 0:
             self.document_catalog_label.setProperty("state", "idle")
             if source_id:
                 self.document_catalog_label.setText("0 docs en source")
+            elif tag_count > 0:
+                self.document_catalog_label.setText("0 docs por tags")
             else:
                 self.document_catalog_label.setText("Catalogo vacio")
         else:
@@ -844,6 +1047,10 @@ class QueryView(QWidget):
                 self.document_catalog_label.setText(
                     f"{document_count} docs en source"
                 )
+            elif tag_count > 0:
+                self.document_catalog_label.setText(
+                    f"{document_count} docs por tags"
+                )
             else:
                 self.document_catalog_label.setText(
                     f"{document_count} docs disponibles"
@@ -852,3 +1059,28 @@ class QueryView(QWidget):
         self.document_catalog_label.style().unpolish(self.document_catalog_label)
         self.document_catalog_label.style().polish(self.document_catalog_label)
         self.document_catalog_label.update()
+
+    def _parse_catalog_tags_input(self) -> list[str]:
+        """Return normalized tag filter values from the catalog input."""
+        return self._parse_tags_payload(self.catalog_tags.text())
+
+    @staticmethod
+    def _parse_tags_payload(raw_tags: object) -> list[str]:
+        """Normalize tag values coming from UI text or API payloads."""
+        if isinstance(raw_tags, list):
+            values = raw_tags
+        else:
+            values = str(raw_tags or "").split(",")
+
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for raw_tag in values:
+            tag = str(raw_tag or "").strip()
+            if not tag:
+                continue
+            tag_key = tag.casefold()
+            if tag_key in seen:
+                continue
+            seen.add(tag_key)
+            normalized.append(tag)
+        return normalized

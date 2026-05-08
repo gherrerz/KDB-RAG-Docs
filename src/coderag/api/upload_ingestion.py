@@ -7,7 +7,7 @@ import re
 import shutil
 import uuid
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 from fastapi import UploadFile
 
@@ -88,11 +88,34 @@ class UploadIngestionAdapter:
             )
         return parsed
 
+    def parse_tags(self, tags_raw: str | None) -> List[str]:
+        """Parse optional tags form field as JSON array or CSV text."""
+        if not tags_raw or not tags_raw.strip():
+            return []
+
+        stripped = tags_raw.strip()
+        if stripped.startswith("["):
+            try:
+                parsed = json.loads(stripped)
+            except json.JSONDecodeError as exc:
+                raise UploadIngestionError(
+                    "tags must be valid JSON array text or CSV text."
+                ) from exc
+
+            if not isinstance(parsed, list):
+                raise UploadIngestionError(
+                    "tags must decode to a JSON array."
+                )
+            return self._normalize_tags(parsed)
+
+        return self._normalize_tags(stripped.split(","))
+
     def build_request(
         self,
         staged_dir: Path,
         source_type: str,
         filters: Dict[str, Any],
+        tags: List[str] | None = None,
     ) -> IngestionRequest:
         """Build canonical ingestion request from staged upload content."""
         normalized_source_type = (source_type or "folder").strip().lower()
@@ -105,6 +128,7 @@ class UploadIngestionAdapter:
             source_type="folder",
             local_path=str(staged_dir),
             filters=filters,
+            tags=self._normalize_tags(tags or []),
         )
         return IngestionRequest(source=source)
 
@@ -145,3 +169,19 @@ class UploadIngestionAdapter:
         if sanitized in {"", ".", ".."}:
             return "upload.txt"
         return sanitized
+
+    @staticmethod
+    def _normalize_tags(raw_tags: list[object]) -> List[str]:
+        """Return stable, deduplicated tags suitable for requests."""
+        normalized: List[str] = []
+        seen: set[str] = set()
+        for raw_tag in raw_tags:
+            tag = str(raw_tag or "").strip()
+            if not tag:
+                continue
+            tag_key = tag.casefold()
+            if tag_key in seen:
+                continue
+            seen.add(tag_key)
+            normalized.append(tag)
+        return normalized

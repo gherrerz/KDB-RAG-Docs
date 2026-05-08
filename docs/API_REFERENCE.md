@@ -29,13 +29,15 @@ de la red puede consumirse usando la IP del host.
 | Health | GET | `/health` | `health` | N/A | N/A | `{"status": "ok"}` |
 | Readiness | GET | `/readiness` | `readiness` | `SERVICE.store.get_index_version` | N/A | `{"status": "ready"}` |
 | Ingestion sync | POST | `/sources/ingest` | `ingest_source` | `SERVICE.ingest` | `IngestionRequest` | `dict` (estado de job + metricas) |
-| Ingestion upload sync | POST | `/sources/ingest/file` | `ingest_source_file` | `UploadIngestionAdapter` + `SERVICE.ingest` | `multipart/form-data` (`file`, `source_type?`, `filters?`) | `dict` (estado de job + metricas) |
-| Ingestion upload async | POST | `/sources/ingest/file/async` | `ingest_source_file_async` | `UploadIngestionAdapter` + `enqueue_ingest_job/enqueue_local_ingest_job` | `multipart/form-data` (`file`, `source_type?`, `filters?`) | `{"job_id", "status", "message"}` |
-| Ingestion uploads batch sync | POST | `/sources/ingest/files` | `ingest_source_files` | `UploadIngestionAdapter` + `SERVICE.ingest` | `multipart/form-data` (`files`, `source_type?`, `filters?`) | `dict` (estado de job + metricas) |
-| Ingestion uploads batch async | POST | `/sources/ingest/files/async` | `ingest_source_files_async` | `UploadIngestionAdapter` + `enqueue_ingest_job/enqueue_local_ingest_job` | `multipart/form-data` (`files`, `source_type?`, `filters?`) | `{"job_id", "status", "message"}` |
+| Ingestion upload sync | POST | `/sources/ingest/file` | `ingest_source_file` | `UploadIngestionAdapter` + `SERVICE.ingest` | `multipart/form-data` (`file`, `source_type?`, `filters?`, `tags?`) | `dict` (estado de job + metricas) |
+| Ingestion upload async | POST | `/sources/ingest/file/async` | `ingest_source_file_async` | `UploadIngestionAdapter` + `enqueue_ingest_job/enqueue_local_ingest_job` | `multipart/form-data` (`file`, `source_type?`, `filters?`, `tags?`) | `{"job_id", "status", "message"}` |
+| Ingestion uploads batch sync | POST | `/sources/ingest/files` | `ingest_source_files` | `UploadIngestionAdapter` + `SERVICE.ingest` | `multipart/form-data` (`files`, `source_type?`, `filters?`, `tags?`) | `dict` (estado de job + metricas) |
+| Ingestion uploads batch async | POST | `/sources/ingest/files/async` | `ingest_source_files_async` | `UploadIngestionAdapter` + `enqueue_ingest_job/enqueue_local_ingest_job` | `multipart/form-data` (`files`, `source_type?`, `filters?`, `tags?`) | `{"job_id", "status", "message"}` |
 | Ingestion async | POST | `/sources/ingest/async` | `ingest_source_async` | `enqueue_ingest_job` o `enqueue_local_ingest_job` | `IngestionRequest` | `{"job_id", "status", "message"}` |
 | Ingestion readiness | GET | `/sources/ingest/readiness` | `ingest_readiness` | checks runtime + Neo4j + Redis + RQ worker | N/A | `{"ready", "recommendation", "checks"}` |
-| Documents catalog | GET | `/sources/documents` | `list_documents` | `SERVICE.list_documents` | `source_id?` | `{"count", "documents"}` |
+| Documents catalog | GET | `/sources/documents` | `list_documents` | `SERVICE.list_documents` | `source_id?`, `tags?` | `{"source_id", "tags", "count", "documents"}` |
+| Document tags catalog | GET | `/sources/tags` | `list_document_tags` | `SERVICE.list_document_tags` | `source_id?` | `ListDocumentTagsResponse` |
+| Replace document tags | PUT | `/sources/documents/{document_id}/tags` | `replace_document_tags` | `SERVICE.replace_document_tags` | `document_id` en path + `ReplaceDocumentTagsRequest` | `ReplaceDocumentTagsResponse` |
 | Delete document | DELETE | `/sources/documents/{document_id}` | `delete_document` | `SERVICE.delete_document` | `document_id` en path | `DeleteDocumentResponse` |
 | Job status | GET | `/jobs/{job_id}` | `get_job` | `SERVICE.get_job` y fallback `get_rq_job_status` | `job_id` en path | `dict` (estado + timeline) |
 | Full reset | DELETE | `/sources/reset?confirm=true` | `reset_sources` | `SERVICE.reset_all` | `confirm` query param | `ResetAllResponse` |
@@ -60,7 +62,8 @@ de la red puede consumirse usando la IP del host.
     "base_url": null,
     "token": null,
     "local_path": "sample_data",
-    "filters": {}
+    "filters": {},
+    "tags": ["finance", "urgent"]
   }
 }
 ```
@@ -182,6 +185,12 @@ Codigos comunes:
 ## POST /sources/ingest
 
 Ejecuta pipeline de ingesta e indexacion en modo sincrono.
+
+Notas de contrato:
+
+- `source.tags` es opcional y acepta una lista simple de strings.
+- Las tags se persisten por documento dentro del lote ingerido.
+- Este cambio no modifica el request schema de `/query` ni `/query/retrieval`.
 
 ## DELETE /sources/documents/{document_id}
 
@@ -306,6 +315,7 @@ Campos del formulario:
 - `file` (requerido): archivo a ingerir.
 - `source_type` (opcional): actualmente solo acepta `folder`.
 - `filters` (opcional): texto JSON con objeto de filtros.
+- `tags` (opcional): CSV (`finance,urgent`) o JSON array (`["finance","urgent"]`).
 
 Extensiones soportadas en `file`:
 
@@ -317,7 +327,8 @@ Ejemplo `curl`:
 curl -X POST http://127.0.0.1:8000/sources/ingest/file \
   -F "file=@sample_data/engineering.md" \
   -F "source_type=folder" \
-  -F 'filters={"domain":"qa"}'
+  -F 'filters={"domain":"qa"}' \
+  -F "tags=finance,urgent"
 ```
 
 Codigos comunes:
@@ -344,6 +355,7 @@ Campos del formulario:
 - `file` (requerido): archivo a ingerir.
 - `source_type` (opcional): actualmente solo acepta `folder`.
 - `filters` (opcional): texto JSON con objeto de filtros.
+- `tags` (opcional): CSV (`finance,urgent`) o JSON array (`["finance","urgent"]`).
 
 Comportamiento segun modo async:
 
@@ -357,7 +369,8 @@ Ejemplo `curl`:
 curl -X POST http://127.0.0.1:8000/sources/ingest/file/async \
   -F "file=@sample_data/engineering.md" \
   -F "source_type=folder" \
-  -F 'filters={"domain":"qa"}'
+  -F 'filters={"domain":"qa"}' \
+  -F "tags=finance,urgent"
 ```
 
 Response (shape):
@@ -387,6 +400,7 @@ Campos del formulario:
 - `files` (requerido): una o mas partes de archivo con el mismo nombre de campo.
 - `source_type` (opcional): actualmente solo acepta `folder`.
 - `filters` (opcional): texto JSON con objeto de filtros.
+- `tags` (opcional): CSV (`finance,urgent`) o JSON array (`["finance","urgent"]`).
 
 Comportamiento:
 
@@ -400,7 +414,8 @@ curl -X POST http://127.0.0.1:8000/sources/ingest/files \
   -F "files=@sample_data/engineering.md" \
   -F "files=@sample_data/policy_finance.md" \
   -F "source_type=folder" \
-  -F 'filters={"domain":"qa"}'
+  -F 'filters={"domain":"qa"}' \
+  -F "tags=finance,urgent"
 ```
 
 Codigos comunes:
@@ -420,6 +435,7 @@ Campos del formulario:
 - `files` (requerido): una o mas partes de archivo con el mismo nombre de campo.
 - `source_type` (opcional): actualmente solo acepta `folder`.
 - `filters` (opcional): texto JSON con objeto de filtros.
+- `tags` (opcional): CSV (`finance,urgent`) o JSON array (`["finance","urgent"]`).
 
 Comportamiento segun modo async:
 
@@ -434,7 +450,8 @@ curl -X POST http://127.0.0.1:8000/sources/ingest/files/async \
   -F "files=@sample_data/engineering.md" \
   -F "files=@sample_data/policy_finance.md" \
   -F "source_type=folder" \
-  -F 'filters={"domain":"qa"}'
+  -F 'filters={"domain":"qa"}' \
+  -F "tags=finance,urgent"
 ```
 
 Response (shape):
@@ -617,12 +634,14 @@ o diagnostico operativo.
 Query params opcionales:
 
 - `source_id`: limita el catalogo a una fuente/lote de ingesta.
+- `tags`: filtra por una o mas tags usando CSV con semantica OR.
 
 Response shape:
 
 ```json
 {
   "source_id": "abc123def456",
+  "tags": ["finance"],
   "count": 2,
   "documents": [
     {
@@ -631,16 +650,97 @@ Response shape:
       "title": "engineering",
       "path_or_url": "sample_data/engineering.md",
       "content_type": "md",
-      "updated_at": "2026-04-23T15:00:00+00:00"
+      "updated_at": "2026-04-23T15:00:00+00:00",
+      "tags": ["finance", "urgent"]
     }
   ]
 }
+```
+
+Ejemplo:
+
+```bash
+curl "http://127.0.0.1:8000/sources/documents?source_id=abc123def456&tags=finance,urgent"
 ```
 
 Codigos comunes:
 
 - `200`: respuesta generada.
 - `503`: falla de runtime estricto (provider/embedding/index refresh).
+
+## GET /sources/tags
+
+Retorna la lista unica de tags actualmente presentes en documentos ya
+persistidos.
+
+Query params opcionales:
+
+- `source_id`: limita la agregacion a una fuente/lote de ingesta.
+
+Response shape:
+
+```json
+{
+  "source_id": "abc123def456",
+  "count": 2,
+  "tags": ["finance", "urgent"],
+  "items": [
+    {"tag": "finance", "document_count": 3},
+    {"tag": "urgent", "document_count": 1}
+  ]
+}
+```
+
+`tags` mantiene la lista unica ordenada para compatibilidad. `items` expone
+las facetas visibles con el total de documentos persistidos por tag.
+
+Ejemplo:
+
+```bash
+curl "http://127.0.0.1:8000/sources/tags?source_id=abc123def456"
+```
+
+Codigos comunes:
+
+- `200`: respuesta generada.
+
+## PUT /sources/documents/{document_id}/tags
+
+Reemplaza completamente las tags persistidas para un documento dado.
+
+Request:
+
+```json
+{
+  "tags": ["legal", "approved"]
+}
+```
+
+Response shape:
+
+```json
+{
+  "status": "updated",
+  "message": "Tags replaced for document.",
+  "document_id": "7f0a...",
+  "source_id": "abc123def456",
+  "old_tags": ["finance", "urgent"],
+  "new_tags": ["legal", "approved"]
+}
+```
+
+Ejemplo:
+
+```bash
+curl -X PUT http://127.0.0.1:8000/sources/documents/7f0a/tags \
+  -H "Content-Type: application/json" \
+  -d '{"tags": ["legal", "approved"]}'
+```
+
+Codigos comunes:
+
+- `200`: tags reemplazadas.
+- `404`: no existe documento persistido con ese `document_id`.
 
 ## POST /query/retrieval
 

@@ -113,6 +113,8 @@ class IngestionView(QWidget):
         self.token.setMinimumHeight(34)
         self.filters = QLineEdit("{}")
         self.filters.setMinimumHeight(34)
+        self.tags = QLineEdit()
+        self.tags.setMinimumHeight(34)
 
         self.source_type.setPlaceholderText("folder | confluence")
         self.source_type.setToolTip(
@@ -135,6 +137,10 @@ class IngestionView(QWidget):
         self.token.setEchoMode(QLineEdit.EchoMode.Password)
         self.filters.setPlaceholderText('{"space": "ENG", "labels": ["policy"]}')
         self.filters.setToolTip("Objeto JSON opcional para filtros del origen.")
+        self.tags.setPlaceholderText("finanzas, urgente")
+        self.tags.setToolTip(
+            "Lista opcional de etiquetas simples separadas por coma."
+        )
 
         source_pattern = QRegularExpression("^[a-zA-Z_][a-zA-Z0-9_-]*$")
         self.source_type.setValidator(QRegularExpressionValidator(source_pattern))
@@ -146,6 +152,7 @@ class IngestionView(QWidget):
         form_layout.addRow("URL base", self.base_url)
         form_layout.addRow("Token", self.token)
         form_layout.addRow("Filtros (JSON)", self.filters)
+        form_layout.addRow("Tags", self.tags)
 
         actions = QHBoxLayout()
         self.ingest_button = QPushButton("Ingerir")
@@ -233,7 +240,8 @@ class IngestionView(QWidget):
         QWidget.setTabOrder(self.local_path, self.base_url)
         QWidget.setTabOrder(self.base_url, self.token)
         QWidget.setTabOrder(self.token, self.filters)
-        QWidget.setTabOrder(self.filters, self.delete_document_id)
+        QWidget.setTabOrder(self.filters, self.tags)
+        QWidget.setTabOrder(self.tags, self.delete_document_id)
         QWidget.setTabOrder(self.delete_document_id, self.delete_document_button)
         QWidget.setTabOrder(self.delete_document_button, self.ingest_button)
         QWidget.setTabOrder(self.ingest_button, self.reset_all_button)
@@ -272,6 +280,7 @@ class IngestionView(QWidget):
                 "base_url": self.base_url.text().strip() or None,
                 "token": self.token.text().strip() or None,
                 "filters": self._safe_json(self.filters.text().strip()),
+                "tags": self._parse_tags(self.tags.text()),
             },
             "_ingestion_channel": str(
                 self.ingestion_channel.currentData() or "json_folder"
@@ -808,6 +817,8 @@ class IngestionView(QWidget):
 
         self.filters.setProperty("invalid", False)
         self._refresh_input_style(self.filters)
+        self.tags.setProperty("invalid", False)
+        self._refresh_input_style(self.tags)
         return None
 
     @staticmethod
@@ -828,3 +839,19 @@ class IngestionView(QWidget):
             return {}
         except json.JSONDecodeError:
             return {}
+
+    @staticmethod
+    def _parse_tags(raw: str) -> list[str]:
+        """Parse a comma-separated tag list from the ingestion form."""
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for raw_tag in (raw or "").split(","):
+            tag = raw_tag.strip()
+            if not tag:
+                continue
+            tag_key = tag.casefold()
+            if tag_key in seen:
+                continue
+            seen.add(tag_key)
+            normalized.append(tag)
+        return normalized

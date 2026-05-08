@@ -327,11 +327,192 @@ def test_list_documents_endpoint_returns_ingested_catalog() -> None:
         assert all("document_id" in item for item in body["documents"])
         assert all("title" in item for item in body["documents"])
         assert all("path_or_url" in item for item in body["documents"])
+        assert all("tags" in item for item in body["documents"])
     finally:
         server.SETTINGS.llm_provider = original_provider
         server.SETTINGS.openai_api_key = original_openai_key
         server.SETTINGS.use_neo4j = original_use_neo4j
         index_chroma.embed_text = original_embed
+
+
+def test_list_documents_endpoint_filters_by_tags() -> None:
+    """Filter catalog rows by tags using OR semantics."""
+    client = TestClient(server.app)
+    original_embed = index_chroma.embed_text
+    original_provider = server.SETTINGS.llm_provider
+    original_openai_key = server.SETTINGS.openai_api_key
+    original_use_neo4j = server.SETTINGS.use_neo4j
+
+    server.SETTINGS.llm_provider = "openai"
+    server.SETTINGS.openai_api_key = "test-key"
+    server.SETTINGS.use_neo4j = False
+    index_chroma.embed_text = _fake_embed_text
+
+    try:
+        ingest_response = client.post(
+            "/sources/ingest",
+            json={
+                "source": {
+                    "source_type": "folder",
+                    "local_path": "sample_data",
+                    "tags": ["finance", "urgent"],
+                }
+            },
+        )
+        assert ingest_response.status_code == 200
+        source_id = ingest_response.json()["source_id"]
+
+        response = client.get(
+            f"/sources/documents?source_id={source_id}&tags=finance"
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["tags"] == ["finance"]
+        assert body["count"] > 0
+        assert all(item["tags"] == ["finance", "urgent"] for item in body["documents"])
+
+        empty_response = client.get(
+            f"/sources/documents?source_id={source_id}&tags=missing"
+        )
+        assert empty_response.status_code == 200
+        assert empty_response.json()["count"] == 0
+    finally:
+        server.SETTINGS.llm_provider = original_provider
+        server.SETTINGS.openai_api_key = original_openai_key
+        server.SETTINGS.use_neo4j = original_use_neo4j
+        index_chroma.embed_text = original_embed
+
+
+def test_list_document_tags_endpoint_returns_unique_tags() -> None:
+    """Return distinct tags and per-tag document counts."""
+    client = TestClient(server.app)
+    original_embed = index_chroma.embed_text
+    original_provider = server.SETTINGS.llm_provider
+    original_openai_key = server.SETTINGS.openai_api_key
+    original_use_neo4j = server.SETTINGS.use_neo4j
+
+    server.SETTINGS.llm_provider = "openai"
+    server.SETTINGS.openai_api_key = "test-key"
+    server.SETTINGS.use_neo4j = False
+    index_chroma.embed_text = _fake_embed_text
+
+    try:
+        ingest_response = client.post(
+            "/sources/ingest",
+            json={
+                "source": {
+                    "source_type": "folder",
+                    "local_path": "sample_data",
+                    "tags": ["finance", "urgent", "finance"],
+                }
+            },
+        )
+        assert ingest_response.status_code == 200
+        source_id = ingest_response.json()["source_id"]
+
+        response = client.get(f"/sources/tags?source_id={source_id}")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["source_id"] == source_id
+        assert body["count"] == 2
+        assert body["tags"] == ["finance", "urgent"]
+        assert body["items"] == [
+            {"tag": "finance", "document_count": 2},
+            {"tag": "urgent", "document_count": 2},
+        ]
+    finally:
+        server.SETTINGS.llm_provider = original_provider
+        server.SETTINGS.openai_api_key = original_openai_key
+        server.SETTINGS.use_neo4j = original_use_neo4j
+        index_chroma.embed_text = original_embed
+
+
+def test_replace_document_tags_endpoint_updates_catalog_immediately() -> None:
+    """Replace tags for one document and expose the new values in catalog APIs."""
+    client = TestClient(server.app)
+    original_embed = index_chroma.embed_text
+    original_provider = server.SETTINGS.llm_provider
+    original_openai_key = server.SETTINGS.openai_api_key
+    original_use_neo4j = server.SETTINGS.use_neo4j
+
+    server.SETTINGS.llm_provider = "openai"
+    server.SETTINGS.openai_api_key = "test-key"
+    server.SETTINGS.use_neo4j = False
+    index_chroma.embed_text = _fake_embed_text
+
+    try:
+        ingest_response = client.post(
+            "/sources/ingest",
+            json={
+                "source": {
+                    "source_type": "folder",
+                    "local_path": "sample_data",
+                    "tags": ["finance", "urgent"],
+                }
+            },
+        )
+        assert ingest_response.status_code == 200
+        source_id = ingest_response.json()["source_id"]
+
+        catalog_response = client.get(f"/sources/documents?source_id={source_id}")
+        assert catalog_response.status_code == 200
+        document_id = catalog_response.json()["documents"][0]["document_id"]
+
+        replace_response = client.put(
+            f"/sources/documents/{document_id}/tags",
+            json={"tags": ["legal", "approved"]},
+        )
+
+        assert replace_response.status_code == 200
+        replace_body = replace_response.json()
+        assert replace_body["status"] == "updated"
+        assert replace_body["document_id"] == document_id
+        assert replace_body["source_id"] == source_id
+        assert replace_body["old_tags"] == ["finance", "urgent"]
+        assert replace_body["new_tags"] == ["legal", "approved"]
+
+        updated_catalog = client.get(f"/sources/documents?source_id={source_id}")
+        assert updated_catalog.status_code == 200
+        updated_document = next(
+            item
+            for item in updated_catalog.json()["documents"]
+            if item["document_id"] == document_id
+        )
+        assert updated_document["tags"] == ["legal", "approved"]
+
+        tags_response = client.get(f"/sources/tags?source_id={source_id}")
+        assert tags_response.status_code == 200
+        tags_payload = tags_response.json()
+        assert "approved" in tags_payload["tags"]
+        assert "legal" in tags_payload["tags"]
+        assert any(
+            item == {"tag": "approved", "document_count": 1}
+            for item in tags_payload["items"]
+        )
+        assert any(
+            item == {"tag": "legal", "document_count": 1}
+            for item in tags_payload["items"]
+        )
+    finally:
+        server.SETTINGS.llm_provider = original_provider
+        server.SETTINGS.openai_api_key = original_openai_key
+        server.SETTINGS.use_neo4j = original_use_neo4j
+        index_chroma.embed_text = original_embed
+
+
+def test_replace_document_tags_endpoint_returns_404_for_missing_document() -> None:
+    """Reject tag replacement when the target document id does not exist."""
+    client = TestClient(server.app)
+
+    response = client.put(
+        "/sources/documents/missing-document/tags",
+        json={"tags": ["finance"]},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Document not found: missing-document"
 
 
 def test_delete_document_endpoint_removes_one_persisted_document() -> None:

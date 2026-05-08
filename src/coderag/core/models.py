@@ -17,6 +17,7 @@ class SourceConfig(BaseModel):
     token: Optional[str] = None
     local_path: Optional[str] = None
     filters: Dict[str, Any] = Field(default_factory=dict)
+    tags: List[str] = Field(default_factory=list)
 
 
 class IngestionRequest(BaseModel):
@@ -52,6 +53,39 @@ class DeleteDocumentResponse(BaseModel):
     neo4j_nodes_deleted: int = 0
 
 
+class ReplaceDocumentTagsRequest(BaseModel):
+    """Request payload for replacing document tags."""
+
+    tags: List[str] = Field(default_factory=list)
+
+
+class DocumentTagFacet(BaseModel):
+    """Aggregated tag facet with persisted document count."""
+
+    tag: str
+    document_count: int
+
+
+class ListDocumentTagsResponse(BaseModel):
+    """Response payload for aggregated document tags."""
+
+    source_id: Optional[str] = None
+    count: int
+    tags: List[str] = Field(default_factory=list)
+    items: List[DocumentTagFacet] = Field(default_factory=list)
+
+
+class ReplaceDocumentTagsResponse(BaseModel):
+    """Response payload for replacing document tags."""
+
+    status: str
+    message: str
+    document_id: str
+    source_id: str
+    old_tags: List[str] = Field(default_factory=list)
+    new_tags: List[str] = Field(default_factory=list)
+
+
 class DocumentRecord(BaseModel):
     """Canonical document object inside local storage."""
 
@@ -62,6 +96,7 @@ class DocumentRecord(BaseModel):
     path_or_url: str
     content_type: str
     updated_at: datetime
+    tags: List[str] = Field(default_factory=list)
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
@@ -74,6 +109,7 @@ class DocumentCatalogEntry(BaseModel):
     path_or_url: str
     content_type: str
     updated_at: datetime
+    tags: List[str] = Field(default_factory=list)
 
 
 class ChunkRecord(BaseModel):

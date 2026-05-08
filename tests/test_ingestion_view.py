@@ -94,6 +94,15 @@ def test_ingestion_view_requires_valid_filters_json() -> None:
     assert error == "Los filtros deben ser un objeto JSON valido."
 
 
+def test_ingestion_view_parses_comma_separated_tags() -> None:
+    """Normalize comma-separated tags before sending ingestion payload."""
+    assert IngestionView._parse_tags(" finance, urgent ,finance ,, qa ") == [
+        "finance",
+        "urgent",
+        "qa",
+    ]
+
+
 def test_ingestion_view_updates_progress_and_summary_from_live_update() -> None:
     """Render concise progress state from backend live updates."""
     view = _build_view()

@@ -115,6 +115,44 @@ def test_main_window_list_documents_builds_expected_path() -> None:
     assert captured[0][0] == "/sources/documents?source_id=src-1"
 
 
+def test_main_window_list_documents_includes_tags_filter() -> None:
+    """Append catalog tags filter to the GET route when requested."""
+    window = _build_lightweight_window()
+
+    captured: list[tuple[str, int]] = []
+
+    def _fake_get(path: str, timeout: int) -> dict[str, Any]:
+        captured.append((path, timeout))
+        return {"count": 0, "documents": []}
+
+    window._get_json = _fake_get  # type: ignore[method-assign]
+
+    result = window.list_documents("src-1", ["finance", "urgent"])
+
+    assert result["count"] == 0
+    assert captured[0][0] == (
+        "/sources/documents?source_id=src-1&tags=finance%2Curgent"
+    )
+
+
+def test_main_window_list_document_tags_builds_expected_path() -> None:
+    """Fetch aggregated tag facets through the dedicated GET route."""
+    window = _build_lightweight_window()
+
+    captured: list[tuple[str, int]] = []
+
+    def _fake_get(path: str, timeout: int) -> dict[str, Any]:
+        captured.append((path, timeout))
+        return {"count": 1, "tags": ["finance"], "items": []}
+
+    window._get_json = _fake_get  # type: ignore[method-assign]
+
+    result = window.list_document_tags("src-1")
+
+    assert result["count"] == 1
+    assert captured[0][0] == "/sources/tags?source_id=src-1"
+
+
 def test_main_window_reset_uses_delete_sources_reset_endpoint() -> None:
     """Route full reset through canonical DELETE /sources/reset endpoint."""
     window = _build_lightweight_window()
@@ -133,6 +171,25 @@ def test_main_window_reset_uses_delete_sources_reset_endpoint() -> None:
     assert captured[0][0] == "/sources/reset?confirm=true"
 
 
+def test_main_window_replace_document_tags_uses_put_endpoint() -> None:
+    """Route tag replacement through the dedicated PUT document tags endpoint."""
+    window = _build_lightweight_window()
+
+    captured: list[tuple[str, dict[str, Any], int]] = []
+
+    def _fake_put(path: str, payload: dict[str, Any], timeout: int) -> dict[str, Any]:
+        captured.append((path, payload, timeout))
+        return {"status": "updated", "new_tags": ["legal", "approved"]}
+
+    window._put_json = _fake_put  # type: ignore[method-assign]
+
+    result = window.replace_document_tags("doc-1", ["legal", "approved"])
+
+    assert result["status"] == "updated"
+    assert captured[0][0] == "/sources/documents/doc-1/tags"
+    assert captured[0][1] == {"tags": ["legal", "approved"]}
+
+
 def test_main_window_upload_sync_uses_multipart_endpoint(
     tmp_path: Path,
 ) -> None:
@@ -141,16 +198,19 @@ def test_main_window_upload_sync_uses_multipart_endpoint(
     upload_file = tmp_path / "sample.md"
     upload_file.write_text("hello", encoding="utf-8")
 
-    captured: list[tuple[str, list[Path], str, dict[str, Any], int]] = []
+    captured: list[
+        tuple[str, list[Path], str, dict[str, Any], list[str], int]
+    ] = []
 
     def _fake_post_multipart(
         path: str,
         file_paths: list[Path],
         source_type: str,
         filters: dict[str, Any],
+        tags: list[str],
         timeout: int,
     ) -> dict[str, Any]:
-        captured.append((path, file_paths, source_type, filters, timeout))
+        captured.append((path, file_paths, source_type, filters, tags, timeout))
         return {"status": "completed", "path": path}
 
     window._post_multipart = _fake_post_multipart  # type: ignore[method-assign]
@@ -163,6 +223,7 @@ def test_main_window_upload_sync_uses_multipart_endpoint(
                 "source_type": "folder",
                 "local_path": str(upload_file),
                 "filters": {"domain": "qa"},
+                "tags": ["finance", "urgent"],
             },
         }
     )
@@ -171,6 +232,7 @@ def test_main_window_upload_sync_uses_multipart_endpoint(
     assert captured[0][0] == "/sources/ingest/files"
     assert captured[0][1] == [upload_file]
     assert captured[0][2] == "folder"
+    assert captured[0][4] == ["finance", "urgent"]
 
 
 def test_main_window_upload_async_uses_multipart_endpoint_and_polling(
@@ -183,16 +245,19 @@ def test_main_window_upload_async_uses_multipart_endpoint_and_polling(
     first_file.write_text("hello", encoding="utf-8")
     second_file.write_text("world", encoding="utf-8")
 
-    captured: list[tuple[str, list[Path], str, dict[str, Any], int]] = []
+    captured: list[
+        tuple[str, list[Path], str, dict[str, Any], list[str], int]
+    ] = []
 
     def _fake_post_multipart(
         path: str,
         file_paths: list[Path],
         source_type: str,
         filters: dict[str, Any],
+        tags: list[str],
         timeout: int,
     ) -> dict[str, Any]:
-        captured.append((path, file_paths, source_type, filters, timeout))
+        captured.append((path, file_paths, source_type, filters, tags, timeout))
         return {"status": "queued", "job_id": "upload-job-1"}
 
     window._post_multipart = _fake_post_multipart  # type: ignore[method-assign]
@@ -211,6 +276,7 @@ def test_main_window_upload_async_uses_multipart_endpoint_and_polling(
                 "source_type": "folder",
                 "local_path": f"{first_file};{second_file}",
                 "filters": {},
+                "tags": ["release"],
             },
         }
     )
@@ -219,3 +285,4 @@ def test_main_window_upload_async_uses_multipart_endpoint_and_polling(
     assert result["job_id"] == "upload-job-1"
     assert captured[0][0] == "/sources/ingest/files/async"
     assert captured[0][1] == [first_file, second_file]
+    assert captured[0][4] == ["release"]

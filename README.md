@@ -32,6 +32,7 @@ Aplicacion Python para ingesta documental y consulta con RAG hibrido
 - API REST para integracion externa
 - Ingesta asincrona opcional con Redis + RQ
 - Ingesta asincrona local sin Redis cuando `USE_RQ=false`
+- Tags opcionales por documento durante ingesta y filtro de catalogo por tags
 - Trazabilidad de ingesta en UI con timeline en vivo, pasos y metricas
 - Boton `BORRAR TODO` en Ingestion para reset completo de BM25, vector,
   grafo y jobs antes de una nueva primera ingesta
@@ -124,6 +125,7 @@ python src/run_ui.py
 - `Modo de ejecucion`: `Asincrono (cola + jobs)` o `Sincrono (directo)`
 - `Local Path`: carpeta cuando usas `Carpeta (JSON)` o uno/multiples
   archivos cuando usas `Archivo (multipart upload)` (separados por `;`).
+- `Tags`: lista opcional separada por comas; se aplica a los documentos del lote.
 - Click en `Ingest`
 - `Borrado puntual`: si ya conoces un `document_id`, puedes eliminarlo desde
   el panel de Ingestion con `Eliminar documento`.
@@ -141,6 +143,11 @@ python src/run_ui.py
 - `Source ID` sigue siendo opcional para acotar por una ingesta concreta.
 - `Documentos (opcional)` permite seleccionar uno o varios documentos ya
   ingestados para limitar la consulta a ese subconjunto.
+- `Tags catalogo (opcional)` filtra el catalogo de documentos por una o mas tags.
+- `Facetas de tags` muestra las tags agregadas con cantidad de documentos; al
+  hacer click sobre una faceta se aplica ese filtro al catalogo.
+- Tras seleccionar uno o varios documentos en Query, `Editar tags` permite
+  reemplazar sus tags persistidas sin reingerir el contenido.
 - Tras seleccionar documentos en Query, `Eliminar seleccionados` permite
   borrarlos de forma persistente desde la UI usando el endpoint publico
   `DELETE /sources/documents/{document_id}`.
@@ -188,6 +195,8 @@ python src/run_ui.py
 - `POST /sources/ingest/async`
 - `GET /sources/ingest/readiness`
 - `GET /sources/documents`
+- `GET /sources/tags`
+- `PUT /sources/documents/{document_id}/tags`
 - `DELETE /sources/documents/{document_id}`
 - `GET /jobs/{id}`
 - `POST /query`
@@ -199,7 +208,8 @@ Ejemplo `POST /sources/ingest`:
 {
   "source": {
     "source_type": "folder",
-    "local_path": "sample_data"
+    "local_path": "sample_data",
+    "tags": ["finance", "urgent"]
   }
 }
 ```
@@ -223,7 +233,8 @@ Ejemplo `POST /sources/ingest/file` (multipart upload):
 curl -X POST http://127.0.0.1:8000/sources/ingest/file \
   -F "file=@sample_data/engineering.md" \
   -F "source_type=folder" \
-  -F 'filters={"domain":"qa"}'
+  -F 'filters={"domain":"qa"}' \
+  -F "tags=finance,urgent"
 ```
 
 Ejemplo `POST /sources/ingest/file/async` (multipart upload async):
@@ -232,7 +243,8 @@ Ejemplo `POST /sources/ingest/file/async` (multipart upload async):
 curl -X POST http://127.0.0.1:8000/sources/ingest/file/async \
   -F "file=@sample_data/engineering.md" \
   -F "source_type=folder" \
-  -F 'filters={"domain":"qa"}'
+  -F 'filters={"domain":"qa"}' \
+  -F "tags=finance,urgent"
 ```
 
 Ejemplo `POST /sources/ingest/files` (multipart upload batch sync):
@@ -242,7 +254,8 @@ curl -X POST http://127.0.0.1:8000/sources/ingest/files \
   -F "files=@sample_data/engineering.md" \
   -F "files=@sample_data/policy_finance.md" \
   -F "source_type=folder" \
-  -F 'filters={"domain":"qa"}'
+  -F 'filters={"domain":"qa"}' \
+  -F "tags=finance,urgent"
 ```
 
 Ejemplo `POST /sources/ingest/files/async` (multipart upload batch async):
@@ -252,8 +265,46 @@ curl -X POST http://127.0.0.1:8000/sources/ingest/files/async \
   -F "files=@sample_data/engineering.md" \
   -F "files=@sample_data/policy_finance.md" \
   -F "source_type=folder" \
-  -F 'filters={"domain":"qa"}'
+  -F 'filters={"domain":"qa"}' \
+  -F "tags=finance,urgent"
 ```
+
+Ejemplo `GET /sources/documents` filtrando por tags del catalogo:
+
+```bash
+curl "http://127.0.0.1:8000/sources/documents?source_id=abc123&tags=finance,urgent"
+```
+
+Ejemplo `GET /sources/tags` para listar las tags actualmente presentes:
+
+```bash
+curl "http://127.0.0.1:8000/sources/tags?source_id=abc123"
+```
+
+Respuesta esperada:
+
+```json
+{
+  "source_id": "abc123",
+  "count": 2,
+  "tags": ["finance", "urgent"],
+  "items": [
+    {"tag": "finance", "document_count": 3},
+    {"tag": "urgent", "document_count": 1}
+  ]
+}
+```
+
+Ejemplo `PUT /sources/documents/{document_id}/tags` para reemplazar tags de un documento:
+
+```bash
+curl -X PUT http://127.0.0.1:8000/sources/documents/7f0a/tags \
+  -H "Content-Type: application/json" \
+  -d '{"tags": ["legal", "approved"]}'
+```
+
+El filtro de `tags` usa semantica OR sobre el catalogo de documentos y no cambia
+el contrato de `POST /query` ni de `POST /query/retrieval`.
 
 Nota: si `USE_RQ=true`, activa `UPLOAD_STAGING_SHARED=true` solo cuando
 `api` y `worker` comparten el mismo volumen de staging de uploads.

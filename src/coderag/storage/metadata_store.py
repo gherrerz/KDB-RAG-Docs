@@ -68,6 +68,7 @@ class MetadataStore:
                 path_or_url TEXT NOT NULL,
                 content_type TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
+                tags_json TEXT NOT NULL DEFAULT '[]',
                 metadata_json TEXT NOT NULL
             );
 
@@ -234,7 +235,59 @@ class MetadataStore:
             ON tdm_synthetic_profiles(source_id);
             """
         )
+        MetadataStore._migrate_documents_table(conn)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_documents_tags_json "
+            "ON documents(tags_json)"
+        )
         conn.commit()
+
+    @staticmethod
+    def _migrate_documents_table(conn: sqlite3.Connection) -> None:
+        """Apply idempotent schema updates required for existing DB files."""
+        columns = {
+            str(row["name"])
+            for row in conn.execute("PRAGMA table_info(documents)").fetchall()
+        }
+        if "tags_json" not in columns:
+            conn.execute(
+                "ALTER TABLE documents "
+                "ADD COLUMN tags_json TEXT NOT NULL DEFAULT '[]'"
+            )
+
+    @staticmethod
+    def _normalize_tags(tags: Iterable[object]) -> List[str]:
+        """Return stable, deduplicated tags suitable for persistence."""
+        normalized: List[str] = []
+        seen: set[str] = set()
+        for raw_tag in tags:
+            tag = str(raw_tag or "").strip()
+            if not tag:
+                continue
+            tag_key = tag.casefold()
+            if tag_key in seen:
+                continue
+            seen.add(tag_key)
+            normalized.append(tag)
+        return normalized
+
+    @classmethod
+    def _document_metadata_payload(cls, doc: DocumentRecord) -> Dict[str, Any]:
+        """Keep document metadata and explicit tag payload aligned."""
+        metadata = dict(doc.metadata)
+        metadata["tags"] = cls._normalize_tags(doc.tags)
+        return metadata
+
+    @classmethod
+    def _parse_tags_json(cls, raw_tags: str) -> List[str]:
+        """Decode persisted tags payload into a normalized list."""
+        try:
+            parsed = json.loads(raw_tags)
+        except json.JSONDecodeError:
+            return []
+        if not isinstance(parsed, list):
+            return []
+        return cls._normalize_tags(parsed)
 
     @staticmethod
     def _now_iso() -> str:
@@ -248,14 +301,16 @@ class MetadataStore:
 
     def upsert_document(self, doc: DocumentRecord) -> None:
         """Insert or update a document row."""
+        metadata = self._document_metadata_payload(doc)
+        tags = self._normalize_tags(doc.tags)
         conn = self._connect()
         try:
             conn.execute(
                 """
                 INSERT INTO documents (
                     document_id, source_id, title, content, path_or_url,
-                    content_type, updated_at, metadata_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    content_type, updated_at, tags_json, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(document_id) DO UPDATE SET
                     source_id = excluded.source_id,
                     title = excluded.title,
@@ -263,6 +318,7 @@ class MetadataStore:
                     path_or_url = excluded.path_or_url,
                     content_type = excluded.content_type,
                     updated_at = excluded.updated_at,
+                    tags_json = excluded.tags_json,
                     metadata_json = excluded.metadata_json;
                 """,
                 (
@@ -273,7 +329,8 @@ class MetadataStore:
                     doc.path_or_url,
                     doc.content_type,
                     doc.updated_at.isoformat(),
-                    json.dumps(doc.metadata),
+                    json.dumps(tags, ensure_ascii=True),
+                    json.dumps(metadata, ensure_ascii=True),
                 ),
             )
             conn.commit()
@@ -291,7 +348,11 @@ class MetadataStore:
                 doc.path_or_url,
                 doc.content_type,
                 doc.updated_at.isoformat(),
-                json.dumps(doc.metadata),
+                json.dumps(self._normalize_tags(doc.tags), ensure_ascii=True),
+                json.dumps(
+                    self._document_metadata_payload(doc),
+                    ensure_ascii=True,
+                ),
             )
             for doc in docs
         ]
@@ -304,8 +365,8 @@ class MetadataStore:
                 """
                 INSERT INTO documents (
                     document_id, source_id, title, content, path_or_url,
-                    content_type, updated_at, metadata_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    content_type, updated_at, tags_json, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(document_id) DO UPDATE SET
                     source_id = excluded.source_id,
                     title = excluded.title,
@@ -313,6 +374,7 @@ class MetadataStore:
                     path_or_url = excluded.path_or_url,
                     content_type = excluded.content_type,
                     updated_at = excluded.updated_at,
+                    tags_json = excluded.tags_json,
                     metadata_json = excluded.metadata_json;
                 """,
                 rows,
@@ -610,15 +672,18 @@ class MetadataStore:
     def list_documents(
         self,
         source_id: Optional[str] = None,
+        tags: Optional[Iterable[str]] = None,
     ) -> List[DocumentCatalogEntry]:
         """Return lightweight document metadata for UI/API catalog views."""
+        requested_tags = self._normalize_tags(tags or [])
+        requested_tag_keys = {tag.casefold() for tag in requested_tags}
         conn = self._connect()
         try:
             if source_id:
                 rows = conn.execute(
                     """
                     SELECT document_id, source_id, title, path_or_url,
-                           content_type, updated_at
+                           content_type, updated_at, tags_json
                     FROM documents
                     WHERE source_id = ?
                     ORDER BY lower(title) ASC, lower(path_or_url) ASC
@@ -629,22 +694,30 @@ class MetadataStore:
                 rows = conn.execute(
                     """
                     SELECT document_id, source_id, title, path_or_url,
-                           content_type, updated_at
+                           content_type, updated_at, tags_json
                     FROM documents
                     ORDER BY lower(title) ASC, lower(path_or_url) ASC
                     """
                 ).fetchall()
-            return [
-                DocumentCatalogEntry(
-                    document_id=row["document_id"],
-                    source_id=row["source_id"],
-                    title=row["title"],
-                    path_or_url=row["path_or_url"],
-                    content_type=row["content_type"],
-                    updated_at=datetime.fromisoformat(row["updated_at"]),
+            documents: List[DocumentCatalogEntry] = []
+            for row in rows:
+                row_tags = self._parse_tags_json(str(row["tags_json"] or "[]"))
+                if requested_tag_keys:
+                    row_tag_keys = {tag.casefold() for tag in row_tags}
+                    if not row_tag_keys.intersection(requested_tag_keys):
+                        continue
+                documents.append(
+                    DocumentCatalogEntry(
+                        document_id=row["document_id"],
+                        source_id=row["source_id"],
+                        title=row["title"],
+                        path_or_url=row["path_or_url"],
+                        content_type=row["content_type"],
+                        updated_at=datetime.fromisoformat(row["updated_at"]),
+                        tags=row_tags,
+                    )
                 )
-                for row in rows
-            ]
+            return documents
         finally:
             conn.close()
 
@@ -658,7 +731,7 @@ class MetadataStore:
             row = conn.execute(
                 """
                 SELECT document_id, source_id, title, path_or_url,
-                       content_type, updated_at
+                      content_type, updated_at, tags_json
                 FROM documents
                 WHERE document_id = ?
                 """,
@@ -673,7 +746,96 @@ class MetadataStore:
                 path_or_url=row["path_or_url"],
                 content_type=row["content_type"],
                 updated_at=datetime.fromisoformat(row["updated_at"]),
+                tags=self._parse_tags_json(str(row["tags_json"] or "[]")),
             )
+        finally:
+            conn.close()
+
+    def list_tag_facets(
+        self,
+        source_id: Optional[str] = None,
+    ) -> List[Tuple[str, int]]:
+        """Return persisted tag facets with document counts."""
+        conn = self._connect()
+        try:
+            if source_id:
+                rows = conn.execute(
+                    "SELECT tags_json FROM documents WHERE source_id = ?",
+                    (source_id,),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT tags_json FROM documents"
+                ).fetchall()
+
+            counts: dict[str, tuple[str, int]] = {}
+            for row in rows:
+                for tag in self._parse_tags_json(str(row["tags_json"] or "[]")):
+                    tag_key = tag.casefold()
+                    display_tag, current_count = counts.get(tag_key, (tag, 0))
+                    counts[tag_key] = (display_tag, current_count + 1)
+            items = [
+                (display_tag, document_count)
+                for display_tag, document_count in counts.values()
+            ]
+            return sorted(items, key=lambda item: (str.casefold(item[0]), item[1]))
+        finally:
+            conn.close()
+
+    def list_unique_tags(
+        self,
+        source_id: Optional[str] = None,
+    ) -> List[str]:
+        """Return the distinct normalized tags present in persisted documents."""
+        return [tag for tag, _count in self.list_tag_facets(source_id=source_id)]
+
+    def replace_document_tags(
+        self,
+        document_id: str,
+        tags: Iterable[object],
+    ) -> Optional[Dict[str, Any]]:
+        """Replace persisted tags for one document while keeping metadata aligned."""
+        normalized_tags = self._normalize_tags(tags)
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                """
+                SELECT source_id, tags_json, metadata_json
+                FROM documents
+                WHERE document_id = ?
+                """,
+                (document_id,),
+            ).fetchone()
+            if row is None:
+                return None
+
+            old_tags = self._parse_tags_json(str(row["tags_json"] or "[]"))
+            try:
+                metadata = json.loads(str(row["metadata_json"] or "{}"))
+            except json.JSONDecodeError:
+                metadata = {}
+            if not isinstance(metadata, dict):
+                metadata = {}
+            metadata["tags"] = normalized_tags
+
+            conn.execute(
+                """
+                UPDATE documents
+                SET tags_json = ?, metadata_json = ?
+                WHERE document_id = ?
+                """,
+                (
+                    json.dumps(normalized_tags, ensure_ascii=True),
+                    json.dumps(metadata, ensure_ascii=True),
+                    document_id,
+                ),
+            )
+            conn.commit()
+            return {
+                "source_id": str(row["source_id"]),
+                "old_tags": old_tags,
+                "new_tags": normalized_tags,
+            }
         finally:
             conn.close()
 
@@ -688,7 +850,7 @@ class MetadataStore:
             rows = conn.execute(
                 """
                 SELECT document_id, source_id, title, path_or_url,
-                       content_type, updated_at
+                                             content_type, updated_at, tags_json
                 FROM documents
                 WHERE lower(title) = lower(?)
                   AND lower(content_type) = lower(?)
@@ -704,6 +866,7 @@ class MetadataStore:
                     path_or_url=row["path_or_url"],
                     content_type=row["content_type"],
                     updated_at=datetime.fromisoformat(row["updated_at"]),
+                    tags=self._parse_tags_json(str(row["tags_json"] or "[]")),
                 )
                 for row in rows
             ]

@@ -13,13 +13,17 @@ from typing import Callable, Dict, List, Optional
 
 from coderag.core.models import (
     DeleteDocumentResponse,
+    DocumentTagFacet,
     DocumentRecord,
     DocumentCatalogEntry,
     Evidence,
     GraphPath,
     IngestionRequest,
+    ListDocumentTagsResponse,
     QueryRequest,
     QueryResponse,
+    ReplaceDocumentTagsResponse,
+    ReplaceDocumentTagsRequest,
     ResetAllResponse,
     TdmQueryRequest,
     TdmQueryResponse,
@@ -44,6 +48,46 @@ from coderag.tdm.virtualization_export import build_virtualization_templates
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
+def _normalize_tags(tags: List[str] | None) -> List[str]:
+    """Return stable, deduplicated document tags."""
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for raw_tag in tags or []:
+        tag = str(raw_tag or "").strip()
+        if not tag:
+            continue
+        tag_key = tag.casefold()
+        if tag_key in seen:
+            continue
+        seen.add(tag_key)
+        normalized.append(tag)
+    return normalized
+
+
+def _apply_tags_to_documents(
+    documents: List[DocumentRecord],
+    tags: List[str] | None,
+) -> List[DocumentRecord]:
+    """Attach one normalized tag set to every loaded document."""
+    normalized_tags = _normalize_tags(tags)
+    if not normalized_tags:
+        return documents
+
+    tagged_documents: list[DocumentRecord] = []
+    for document in documents:
+        metadata = dict(document.metadata)
+        metadata["tags"] = normalized_tags
+        tagged_documents.append(
+            document.model_copy(
+                update={
+                    "tags": normalized_tags,
+                    "metadata": metadata,
+                }
+            )
+        )
+    return tagged_documents
 
 
 def _on_rmtree_error(func, path, _exc_info) -> None:
@@ -538,6 +582,7 @@ class RagApplicationService:
             request.source,
             progress_callback=_loader_progress,
         )
+        documents = _apply_tags_to_documents(documents, request.source.tags)
         _add_step("load_documents", load_stats, progress_pct=30.0)
         if not documents:
             local_path = request.source.local_path or "<not-set>"
@@ -803,9 +848,48 @@ class RagApplicationService:
     def list_documents(
         self,
         source_id: Optional[str] = None,
+        tags: Optional[List[str]] = None,
     ) -> List[DocumentCatalogEntry]:
         """Return document catalog entries for optional source filter."""
-        return self.store.list_documents(source_id=source_id)
+        return self.store.list_documents(source_id=source_id, tags=tags)
+
+    def list_document_tags(
+        self,
+        source_id: Optional[str] = None,
+    ) -> ListDocumentTagsResponse:
+        """Return aggregated tags present in persisted documents."""
+        facets = self.store.list_tag_facets(source_id=source_id)
+        tags = [tag for tag, _count in facets]
+        return ListDocumentTagsResponse(
+            source_id=source_id,
+            count=len(tags),
+            tags=tags,
+            items=[
+                DocumentTagFacet(tag=tag, document_count=document_count)
+                for tag, document_count in facets
+            ],
+        )
+
+    def replace_document_tags(
+        self,
+        document_id: str,
+        request: ReplaceDocumentTagsRequest,
+    ) -> ReplaceDocumentTagsResponse:
+        """Replace all persisted tags for one document id."""
+        result = self.store.replace_document_tags(
+            document_id=document_id,
+            tags=_normalize_tags(request.tags),
+        )
+        if result is None:
+            raise KeyError(document_id)
+        return ReplaceDocumentTagsResponse(
+            status="updated",
+            message="Tags replaced for document.",
+            document_id=document_id,
+            source_id=str(result["source_id"]),
+            old_tags=list(result["old_tags"]),
+            new_tags=list(result["new_tags"]),
+        )
 
     def query(self, request: QueryRequest) -> QueryResponse:
         """Run hybrid retrieval + graph expansion + grounded answering."""

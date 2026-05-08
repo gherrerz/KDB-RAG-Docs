@@ -15,7 +15,10 @@ from coderag.api.upload_ingestion import (
 from coderag.core.models import (
     DeleteDocumentResponse,
     IngestionRequest,
+    ListDocumentTagsResponse,
     QueryRequest,
+    ReplaceDocumentTagsRequest,
+    ReplaceDocumentTagsResponse,
     TdmQueryRequest,
 )
 from coderag.core.service import SERVICE
@@ -241,7 +244,57 @@ def _tdm_disabled_detail() -> dict[str, Any]:
     }
 
 
+def _parse_catalog_tags(tags_raw: str | None) -> list[str]:
+    """Parse optional catalog tags query parameter using CSV semantics."""
+    if not tags_raw or not tags_raw.strip():
+        return []
+
+    tags: list[str] = []
+    seen: set[str] = set()
+    for raw_tag in tags_raw.split(","):
+        tag = raw_tag.strip()
+        if not tag:
+            continue
+        tag_key = tag.casefold()
+        if tag_key in seen:
+            continue
+        seen.add(tag_key)
+        tags.append(tag)
+    return tags
+
+
+def list_documents(
+    source_id: str | None = None,
+    tags: str | None = None,
+) -> dict[str, Any]:
+    """Expose ingested document metadata for UI selectors and diagnostics."""
+    parsed_tags = _parse_catalog_tags(tags)
+    documents = SERVICE.list_documents(source_id=source_id, tags=parsed_tags)
+    return {
+        "source_id": source_id,
+        "tags": parsed_tags,
+        "count": len(documents),
+        "documents": [item.model_dump(mode="json") for item in documents],
+    }
+
+
 @app.get(
+    "/sources/tags",
+    tags=["ingestion"],
+    summary="List persisted document tags",
+    description=(
+        "Return the distinct tags currently present in persisted documents, "
+        "optionally filtered by source_id."
+    ),
+)
+def list_document_tags(
+    source_id: str | None = None,
+) -> ListDocumentTagsResponse:
+    """Expose the current aggregated tag catalog for persisted documents."""
+    return SERVICE.list_document_tags(source_id=source_id)
+
+
+app.get(
     "/sources/documents",
     tags=["ingestion"],
     summary="List ingested documents",
@@ -249,15 +302,7 @@ def _tdm_disabled_detail() -> dict[str, Any]:
         "Return lightweight metadata for documents currently persisted in the "
         "local catalog, optionally filtered by source_id."
     ),
-)
-def list_documents(source_id: str | None = None) -> dict[str, Any]:
-    """Expose ingested document metadata for UI selectors and diagnostics."""
-    documents = SERVICE.list_documents(source_id=source_id)
-    return {
-        "source_id": source_id,
-        "count": len(documents),
-        "documents": [item.model_dump(mode="json") for item in documents],
-    }
+)(list_documents)
 
 
 @app.delete(
@@ -284,6 +329,32 @@ def delete_document(document_id: str) -> DeleteDocumentResponse:
             detail=f"Document not found: {document_id}",
         ) from exc
     return response
+
+
+@app.put(
+    "/sources/documents/{document_id}/tags",
+    tags=["ingestion"],
+    summary="Replace tags for one ingested document",
+    description=(
+        "Replace the full tag set for one persisted document without "
+        "changing its indexed content."
+    ),
+    responses={
+        404: {"description": "Document not found for the provided id."}
+    },
+)
+def replace_document_tags(
+    document_id: str,
+    request: ReplaceDocumentTagsRequest,
+) -> ReplaceDocumentTagsResponse:
+    """Replace all tags for one persisted document."""
+    try:
+        return SERVICE.replace_document_tags(document_id, request)
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Document not found: {document_id}",
+        ) from exc
 
 
 @app.get(
@@ -393,16 +464,19 @@ def ingest_source_file(
     file: UploadFile = File(...),
     source_type: str = Form("folder"),
     filters: str | None = Form(None),
+    tags: str | None = Form(None),
 ) -> dict[str, Any]:
     """Trigger ingestion pipeline from one uploaded file."""
     staged_dir: Path | None = None
     try:
         staged_dir = UPLOAD_INGESTION.stage_upload(file)
         parsed_filters = UPLOAD_INGESTION.parse_filters(filters)
+        parsed_tags = UPLOAD_INGESTION.parse_tags(tags)
         request = UPLOAD_INGESTION.build_request(
             staged_dir=staged_dir,
             source_type=source_type,
             filters=parsed_filters,
+            tags=parsed_tags,
         )
         return SERVICE.ingest(request)
     except UploadIngestionError as exc:
@@ -417,6 +491,7 @@ def ingest_source_file(
                     "filename": file.filename,
                     "source_type": source_type,
                     "has_filters": bool(filters and filters.strip()),
+                    "has_tags": bool(tags and tags.strip()),
                 },
             ),
         ) from exc
@@ -430,6 +505,7 @@ def ingest_source_file(
                     "filename": file.filename,
                     "source_type": source_type,
                     "has_filters": bool(filters and filters.strip()),
+                    "has_tags": bool(tags and tags.strip()),
                     "staged_dir": str(staged_dir) if staged_dir else None,
                 },
             ),
@@ -467,6 +543,7 @@ def ingest_source_files(
     files: list[UploadFile] = File(...),
     source_type: str = Form("folder"),
     filters: str | None = Form(None),
+    tags: str | None = Form(None),
 ) -> dict[str, Any]:
     """Trigger ingestion pipeline from one uploaded batch."""
     staged_dir: Path | None = None
@@ -474,10 +551,12 @@ def ingest_source_files(
     try:
         staged_dir = UPLOAD_INGESTION.stage_uploads_batch(files)
         parsed_filters = UPLOAD_INGESTION.parse_filters(filters)
+        parsed_tags = UPLOAD_INGESTION.parse_tags(tags)
         request = UPLOAD_INGESTION.build_request(
             staged_dir=staged_dir,
             source_type=source_type,
             filters=parsed_filters,
+            tags=parsed_tags,
         )
         return SERVICE.ingest(request)
     except UploadIngestionError as exc:
@@ -493,6 +572,7 @@ def ingest_source_files(
                     "file_count": len(files),
                     "source_type": source_type,
                     "has_filters": bool(filters and filters.strip()),
+                    "has_tags": bool(tags and tags.strip()),
                 },
             ),
         ) from exc
@@ -507,6 +587,7 @@ def ingest_source_files(
                     "file_count": len(files),
                     "source_type": source_type,
                     "has_filters": bool(filters and filters.strip()),
+                    "has_tags": bool(tags and tags.strip()),
                     "staged_dir": str(staged_dir) if staged_dir else None,
                 },
             ),
@@ -548,16 +629,19 @@ def ingest_source_file_async(
     file: UploadFile = File(...),
     source_type: str = Form("folder"),
     filters: str | None = Form(None),
+    tags: str | None = Form(None),
 ) -> dict[str, str]:
     """Enqueue async ingestion pipeline from one uploaded file."""
     staged_dir: Path | None = None
     try:
         staged_dir = UPLOAD_INGESTION.stage_upload(file)
         parsed_filters = UPLOAD_INGESTION.parse_filters(filters)
+        parsed_tags = UPLOAD_INGESTION.parse_tags(tags)
         request = UPLOAD_INGESTION.build_request(
             staged_dir=staged_dir,
             source_type=source_type,
             filters=parsed_filters,
+            tags=parsed_tags,
         )
         payload = request.model_dump()
         cleanup_staging_dir = str(staged_dir)
@@ -621,6 +705,7 @@ def ingest_source_file_async(
                     "filename": file.filename,
                     "source_type": source_type,
                     "has_filters": bool(filters and filters.strip()),
+                    "has_tags": bool(tags and tags.strip()),
                     "staged_dir": str(staged_dir) if staged_dir else None,
                     "use_rq": SETTINGS.use_rq,
                 },
@@ -663,6 +748,7 @@ def ingest_source_files_async(
     files: list[UploadFile] = File(...),
     source_type: str = Form("folder"),
     filters: str | None = Form(None),
+    tags: str | None = Form(None),
 ) -> dict[str, str]:
     """Enqueue async ingestion pipeline from one uploaded batch."""
     staged_dir: Path | None = None
@@ -670,10 +756,12 @@ def ingest_source_files_async(
     try:
         staged_dir = UPLOAD_INGESTION.stage_uploads_batch(files)
         parsed_filters = UPLOAD_INGESTION.parse_filters(filters)
+        parsed_tags = UPLOAD_INGESTION.parse_tags(tags)
         request = UPLOAD_INGESTION.build_request(
             staged_dir=staged_dir,
             source_type=source_type,
             filters=parsed_filters,
+            tags=parsed_tags,
         )
         payload = request.model_dump()
         cleanup_staging_dir = str(staged_dir)
@@ -738,6 +826,7 @@ def ingest_source_files_async(
                     "file_count": len(files),
                     "source_type": source_type,
                     "has_filters": bool(filters and filters.strip()),
+                    "has_tags": bool(tags and tags.strip()),
                     "staged_dir": str(staged_dir) if staged_dir else None,
                     "use_rq": SETTINGS.use_rq,
                 },

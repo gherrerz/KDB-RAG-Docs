@@ -97,6 +97,8 @@ class MainWindow(QMainWindow):
                 self.query,
                 self.list_documents,
                 on_delete_document=self.delete_document,
+                on_list_document_tags=self.list_document_tags,
+                on_replace_document_tags=self.replace_document_tags,
             ),
             "Query",
         )
@@ -204,6 +206,7 @@ class MainWindow(QMainWindow):
         source_type = str(source.get("source_type") or "folder").strip().lower()
         local_path_raw = source.get("local_path")
         filters_raw = source.get("filters", {})
+        tags_raw = source.get("tags", [])
 
         if source_type != "folder":
             return {
@@ -219,6 +222,11 @@ class MainWindow(QMainWindow):
             return {
                 "status": "failed",
                 "message": "Upload ingestion expects source.filters as JSON object.",
+            }
+        if not isinstance(tags_raw, list):
+            return {
+                "status": "failed",
+                "message": "Upload ingestion expects source.tags as list.",
             }
 
         file_paths: list[Path] = []
@@ -260,6 +268,7 @@ class MainWindow(QMainWindow):
             file_paths=file_paths,
             source_type=source_type,
             filters=filters_raw,
+            tags=[str(tag) for tag in tags_raw],
             timeout=timeout,
         )
         if execution_mode == "sync":
@@ -291,9 +300,30 @@ class MainWindow(QMainWindow):
         """Call backend query endpoint."""
         return self._post_json("/query", payload, timeout=180)
 
-    def list_documents(self, source_id: str | None = None) -> Dict[str, Any]:
+    def list_documents(
+        self,
+        source_id: str | None = None,
+        tags: list[str] | None = None,
+    ) -> Dict[str, Any]:
         """Fetch ingested document catalog for optional source filter."""
         path = "/sources/documents"
+        query_parts: list[str] = []
+        if source_id:
+            query_parts.append(f"source_id={quote(source_id, safe='')}")
+        if tags:
+            query_parts.append(
+                f"tags={quote(','.join(tags), safe='')}"
+            )
+        if query_parts:
+            path = f"{path}?{'&'.join(query_parts)}"
+        return self._get_json(path, timeout=30)
+
+    def list_document_tags(
+        self,
+        source_id: str | None = None,
+    ) -> Dict[str, Any]:
+        """Fetch aggregated tag facets for optional source filter."""
+        path = "/sources/tags"
         if source_id:
             path = f"{path}?source_id={quote(source_id, safe='')}"
         return self._get_json(path, timeout=30)
@@ -302,6 +332,18 @@ class MainWindow(QMainWindow):
         """Delete one persisted document from the backend catalog."""
         return self._delete_json(
             f"/sources/documents/{quote(document_id, safe='')}",
+            timeout=60,
+        )
+
+    def replace_document_tags(
+        self,
+        document_id: str,
+        tags: list[str],
+    ) -> Dict[str, Any]:
+        """Replace the persisted tags for one document."""
+        return self._put_json(
+            f"/sources/documents/{quote(document_id, safe='')}/tags",
+            {"tags": tags},
             timeout=60,
         )
 
@@ -406,12 +448,31 @@ class MainWindow(QMainWindow):
         except requests.RequestException as exc:
             return self._format_request_exception(exc)
 
+    def _put_json(
+        self,
+        path: str,
+        payload: Dict[str, Any],
+        timeout: int,
+    ) -> Dict[str, Any]:
+        """Call backend PUT endpoint and parse JSON response."""
+        try:
+            response = requests.put(
+                f"{self.api_base_url}{path}",
+                json=payload,
+                timeout=timeout,
+            )
+            response.raise_for_status()
+            return response.json()
+        except requests.RequestException as exc:
+            return self._format_request_exception(exc)
+
     def _post_multipart(
         self,
         path: str,
         file_paths: list[Path],
         source_type: str,
         filters: Dict[str, Any],
+        tags: list[str],
         timeout: int,
     ) -> Dict[str, Any]:
         """Call backend multipart upload endpoint and parse JSON response."""
@@ -444,6 +505,7 @@ class MainWindow(QMainWindow):
                     data={
                         "source_type": source_type,
                         "filters": json.dumps(filters, ensure_ascii=False),
+                        "tags": ",".join(tags),
                     },
                     files=multipart_files,
                     timeout=timeout,
