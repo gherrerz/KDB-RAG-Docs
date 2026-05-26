@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
-from typing import Any, Optional
+from typing import Any
 
 from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert
@@ -30,7 +30,7 @@ class PostgresTdmStore:
         self,
         postgres_dsn: str,
         *,
-        session_factory: Optional[PostgresSessionFactory] = None,
+        session_factory: PostgresSessionFactory | None = None,
     ) -> None:
         """Create the store using a reusable SQLAlchemy session factory."""
         self._session_factory = session_factory or PostgresSessionFactory(
@@ -62,7 +62,7 @@ class PostgresTdmStore:
         source_id: str,
         database_name: str,
         schema_name: str,
-        metadata: Optional[dict[str, Any]] = None,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         """Insert or update one TDM schema asset."""
         now = self._now()
@@ -90,7 +90,7 @@ class PostgresTdmStore:
 
     def list_tdm_schemas(
         self,
-        source_id: Optional[str] = None,
+        source_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """Return stored TDM schema assets, optionally filtered by source."""
         statement = select(
@@ -122,7 +122,7 @@ class PostgresTdmStore:
         schema_id: str,
         table_name: str,
         table_type: str = "table",
-        metadata: Optional[dict[str, Any]] = None,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         """Insert or update one TDM table asset."""
         now = self._now()
@@ -152,7 +152,7 @@ class PostgresTdmStore:
 
     def list_tdm_tables(
         self,
-        source_id: Optional[str] = None,
+        source_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """Return stored TDM table assets, optionally filtered by source."""
         statement = select(
@@ -187,8 +187,8 @@ class PostgresTdmStore:
         column_name: str,
         data_type: str,
         nullable: bool = True,
-        pii_class: Optional[str] = None,
-        metadata: Optional[dict[str, Any]] = None,
+        pii_class: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         """Insert or update one TDM column asset."""
         now = self._now()
@@ -222,7 +222,7 @@ class PostgresTdmStore:
 
     def list_tdm_columns(
         self,
-        source_id: Optional[str] = None,
+        source_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """Return stored TDM column assets, optionally filtered by source."""
         statement = select(
@@ -265,7 +265,7 @@ class PostgresTdmStore:
         endpoint: str,
         method: str,
         table_id: str,
-        metadata: Optional[dict[str, Any]] = None,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         """Insert or update one service-to-table mapping for TDM."""
         now = self._now()
@@ -297,7 +297,7 @@ class PostgresTdmStore:
 
     def list_tdm_service_mappings(
         self,
-        source_id: Optional[str] = None,
+        source_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """Return stored service mappings, optionally filtered by source."""
         statement = select(
@@ -335,10 +335,10 @@ class PostgresTdmStore:
         rule_name: str,
         policy_type: str,
         scope: str,
-        table_id: Optional[str] = None,
-        column_id: Optional[str] = None,
+        table_id: str | None = None,
+        column_id: str | None = None,
         priority: int = 100,
-        metadata: Optional[dict[str, Any]] = None,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         """Insert or update one TDM masking rule."""
         now = self._now()
@@ -374,7 +374,7 @@ class PostgresTdmStore:
 
     def list_tdm_masking_rules(
         self,
-        source_id: Optional[str] = None,
+        source_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """Return stored masking rules, optionally filtered by source."""
         statement = select(
@@ -423,8 +423,8 @@ class PostgresTdmStore:
         source_id: str,
         service_name: str,
         artifact_type: str,
-        content: Optional[dict[str, Any]] = None,
-        metadata: Optional[dict[str, Any]] = None,
+        content: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         """Insert or update one virtualization artifact for TDM."""
         now = self._now()
@@ -454,7 +454,7 @@ class PostgresTdmStore:
 
     def list_tdm_virtualization_artifacts(
         self,
-        source_id: Optional[str] = None,
+        source_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """Return virtualization artifacts, optionally filtered by source."""
         statement = select(
@@ -489,8 +489,8 @@ class PostgresTdmStore:
         source_id: str,
         profile_name: str,
         strategy: str = "template",
-        target_table_id: Optional[str] = None,
-        metadata: Optional[dict[str, Any]] = None,
+        target_table_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         """Insert or update one synthetic data profile for TDM."""
         now = self._now()
@@ -520,7 +520,7 @@ class PostgresTdmStore:
 
     def list_tdm_synthetic_profiles(
         self,
-        source_id: Optional[str] = None,
+        source_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """Return synthetic profiles, optionally filtered by source."""
         statement = select(

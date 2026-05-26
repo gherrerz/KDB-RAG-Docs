@@ -6,7 +6,7 @@ import hashlib
 import json
 import threading
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Optional
+from typing import Any
 
 from google.auth.transport.requests import Request
 from google.oauth2 import service_account
@@ -17,8 +17,8 @@ _VERTEX_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
 _REFRESH_WINDOW = timedelta(minutes=5)
 
 _credentials_lock = threading.Lock()
-_cached_credentials: Optional[service_account.Credentials] = None
-_cached_fingerprint: Optional[str] = None
+_cached_credentials: service_account.Credentials | None = None
+_cached_fingerprint: str | None = None
 
 
 def _fingerprint_secret(raw_json: str) -> str:
@@ -26,7 +26,7 @@ def _fingerprint_secret(raw_json: str) -> str:
     return hashlib.sha256(raw_json.encode("utf-8")).hexdigest()
 
 
-def _parse_service_account_info(raw_json: str) -> Dict[str, Any]:
+def _parse_service_account_info(raw_json: str) -> dict[str, Any]:
     """Parse service account JSON and validate minimum required keys."""
     try:
         payload = json.loads(raw_json)
@@ -117,11 +117,11 @@ def get_vertex_access_token() -> str:
 
 
 def build_vertex_request_headers(
-    labels: Optional[Dict[str, str]] = None,
-) -> Dict[str, str]:
+    labels: dict[str, str] | None = None,
+) -> dict[str, str]:
     """Build headers required for Vertex requests plus trace labels."""
     token = get_vertex_access_token()
-    headers: Dict[str, str] = {
+    headers: dict[str, str] = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
     }

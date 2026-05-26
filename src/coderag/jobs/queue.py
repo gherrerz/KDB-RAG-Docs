@@ -6,7 +6,7 @@ import copy
 import shutil
 import threading
 import uuid
-from typing import Any, Dict, Optional
+from typing import Any
 
 from coderag.core.models import IngestionRequest
 from coderag.core.service import RagApplicationService
@@ -17,7 +17,7 @@ from coderag.core.settings import SETTINGS
 _LOCAL_THREADS: dict[str, threading.Thread] = {}
 
 
-def _artifact_id_from_payload(payload: Dict[str, Any]) -> str | None:
+def _artifact_id_from_payload(payload: dict[str, Any]) -> str | None:
     """Extract optional artifact id from a serialized ingestion payload."""
     source = payload.get("source")
     if not isinstance(source, dict):
@@ -28,7 +28,7 @@ def _artifact_id_from_payload(payload: Dict[str, Any]) -> str | None:
     return artifact_id.strip()
 
 
-def _cleanup_staging_dir(staging_dir: Optional[str]) -> None:
+def _cleanup_staging_dir(staging_dir: str | None) -> None:
     """Best-effort cleanup for staged upload directories."""
     if not staging_dir:
         return
@@ -36,8 +36,8 @@ def _cleanup_staging_dir(staging_dir: Optional[str]) -> None:
 
 
 def _prepare_worker_payload(
-    payload: Dict[str, Any],
-) -> tuple[Dict[str, Any], str | None]:
+    payload: dict[str, Any],
+) -> tuple[dict[str, Any], str | None]:
     """Rehydrate payload source paths from persisted upload artifacts."""
     artifact_id = _artifact_id_from_payload(payload)
     if not artifact_id:
@@ -69,9 +69,9 @@ def _load_rq_modules():
 
 def ingest_task(
     job_id: str,
-    payload: Dict[str, Any],
-    cleanup_staging_dir: Optional[str] = None,
-) -> Dict[str, Any]:
+    payload: dict[str, Any],
+    cleanup_staging_dir: str | None = None,
+) -> dict[str, Any]:
     """Background task entrypoint executed by RQ worker."""
     artifact_id = _artifact_id_from_payload(payload)
     materialized_dir: str | None = None
@@ -106,8 +106,8 @@ def ingest_task(
 
 def _run_local_ingest_job(
     job_id: str,
-    payload: Dict[str, Any],
-    cleanup_staging_dir: Optional[str] = None,
+    payload: dict[str, Any],
+    cleanup_staging_dir: str | None = None,
 ) -> None:
     """Execute local background ingestion and persist terminal job state."""
     artifact_id = _artifact_id_from_payload(payload)
@@ -142,8 +142,8 @@ def _run_local_ingest_job(
 
 
 def enqueue_local_ingest_job(
-    payload: Dict[str, Any],
-    cleanup_staging_dir: Optional[str] = None,
+    payload: dict[str, Any],
+    cleanup_staging_dir: str | None = None,
 ) -> str:
     """Enqueue ingestion in a local background thread and return job id."""
     job_id = uuid.uuid4().hex[:12]
@@ -163,8 +163,8 @@ def enqueue_local_ingest_job(
 
 
 def enqueue_ingest_job(
-    payload: Dict[str, Any],
-    cleanup_staging_dir: Optional[str] = None,
+    payload: dict[str, Any],
+    cleanup_staging_dir: str | None = None,
 ) -> str:
     """Enqueue ingestion task and return RQ job id."""
     Redis, Queue, _ = _load_rq_modules()
@@ -186,7 +186,7 @@ def enqueue_ingest_job(
     return job.id
 
 
-def get_rq_job_status(job_id: str) -> Optional[Dict[str, Any]]:
+def get_rq_job_status(job_id: str) -> dict[str, Any] | None:
     """Return async job status from Redis RQ."""
     try:
         Redis, _queue, Job = _load_rq_modules()
@@ -198,7 +198,7 @@ def get_rq_job_status(job_id: str) -> Optional[Dict[str, Any]]:
     status = job.get_status(refresh=True)
     result = job.result if isinstance(job.result, dict) else None
 
-    payload: Dict[str, Any] = {
+    payload: dict[str, Any] = {
         "job_id": job_id,
         "status": status,
         "message": "queued",

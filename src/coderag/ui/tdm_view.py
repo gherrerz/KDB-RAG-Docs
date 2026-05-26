@@ -30,6 +30,8 @@ from PySide6.QtWidgets import (
     QApplication,
 )
 
+from coderag.ui.tdm_presenter import TdmPresenter
+
 
 class TdmView(QWidget):
     """Widget for invoking additive TDM endpoints from the desktop UI."""
@@ -50,6 +52,7 @@ class TdmView(QWidget):
         self._on_tdm_table_catalog = on_tdm_table_catalog
         self._on_tdm_virtualization_preview = on_tdm_virtualization_preview
         self._on_tdm_synthetic_profile = on_tdm_synthetic_profile
+        self._presenter = TdmPresenter()
 
         root = QVBoxLayout(self)
         root.setContentsMargins(8, 8, 8, 8)
@@ -326,13 +329,11 @@ class TdmView(QWidget):
             return
 
         self._set_status("running", "Ejecutando ingesta TDM...")
-        payload = {
-            "source": {
-                "source_type": source_type,
-                "local_path": local_path,
-                "filters": self._safe_json(self.filters.text().strip()),
-            }
-        }
+        payload = self._presenter.build_ingest_payload(
+            source_type=source_type,
+            local_path=local_path,
+            filters_raw=self.filters.text(),
+        )
         result = self._on_tdm_ingest(payload)
         self._render_result("/tdm/ingest", result)
 
@@ -344,13 +345,13 @@ class TdmView(QWidget):
             return
 
         self._set_status("running", "Ejecutando consulta TDM...")
-        payload = {
-            "question": question,
-            "source_id": self._optional(self.source_id.text()),
-            "service_name": self._optional(self.service_name.text()),
-            "table_name": self._optional(self.table_name.text()),
-            "include_virtualization_preview": self.include_virtualization_preview.isChecked(),
-        }
+        payload = self._presenter.build_query_payload(
+            question=question,
+            source_id=self.source_id.text(),
+            service_name=self.service_name.text(),
+            table_name=self.table_name.text(),
+            include_virtualization_preview=self.include_virtualization_preview.isChecked(),
+        )
         result = self._on_tdm_query(payload)
         self._render_result("/tdm/query", result)
 
@@ -363,7 +364,7 @@ class TdmView(QWidget):
         self._set_status("running", "Consultando catalogo por servicio...")
         result = self._on_tdm_service_catalog(
             service_name,
-            self._optional(self.source_id.text()),
+            self._presenter.optional(self.source_id.text()),
         )
         self._render_result("/tdm/catalog/services/{service_name}", result)
 
@@ -376,7 +377,7 @@ class TdmView(QWidget):
         self._set_status("running", "Consultando catalogo por tabla...")
         result = self._on_tdm_table_catalog(
             table_name,
-            self._optional(self.source_id.text()),
+            self._presenter.optional(self.source_id.text()),
         )
         self._render_result("/tdm/catalog/tables/{table_name}", result)
 
@@ -384,13 +385,12 @@ class TdmView(QWidget):
         """Invoke TDM virtualization preview endpoint."""
         question = self.question.text().strip()
         self._set_status("running", "Generando preview de virtualizacion...")
-        payload = {
-            "question": question or "virtualization preview",
-            "source_id": self._optional(self.source_id.text()),
-            "service_name": self._optional(self.service_name.text()),
-            "table_name": self._optional(self.table_name.text()),
-            "include_virtualization_preview": True,
-        }
+        payload = self._presenter.build_virtualization_preview_payload(
+            question=question,
+            source_id=self.source_id.text(),
+            service_name=self.service_name.text(),
+            table_name=self.table_name.text(),
+        )
         result = self._on_tdm_virtualization_preview(payload)
         self._render_result("/tdm/virtualization/preview", result)
 
@@ -401,7 +401,7 @@ class TdmView(QWidget):
             self._set_error("El nombre de tabla es obligatorio para synthetic profile.")
             return
 
-        rows = self._safe_int(self.target_rows.text().strip())
+        rows = self._presenter.safe_int(self.target_rows.text().strip())
         if rows is None or rows < 1:
             self._set_error("Synthetic target rows debe ser un entero >= 1.")
             return
@@ -409,7 +409,7 @@ class TdmView(QWidget):
         self._set_status("running", "Generando perfil sintetico...")
         result = self._on_tdm_synthetic_profile(
             table_name,
-            self._optional(self.source_id.text()),
+            self._presenter.optional(self.source_id.text()),
             rows,
         )
         self._render_result("/tdm/synthetic/profile/{table_name}", result)
@@ -418,7 +418,7 @@ class TdmView(QWidget):
         """Render operation result with capability-aware status messaging."""
         detail = str(result.get("detail") or result.get("error") or "").strip()
         if detail:
-            self._set_status("error", self._hint_for_error_detail(detail))
+            self._set_status("error", self._presenter.hint_for_error_detail(detail))
             self.summary.setPlainText(
                 "Estado: failed\n"
                 f"Operacion: {operation}\n"
@@ -454,7 +454,7 @@ class TdmView(QWidget):
 
     def _update_result_table(self, result: dict[str, Any]) -> None:
         """Render structured result rows for operational review."""
-        rows = self._extract_result_rows(result)
+        rows = self._presenter.extract_result_rows(result)
         self._result_rows = rows
         self._refresh_result_type_filter_options(rows)
         self._visible_result_rows = rows
@@ -650,114 +650,7 @@ class TdmView(QWidget):
     @staticmethod
     def _extract_result_rows(result: dict[str, Any]) -> list[dict[str, Any]]:
         """Normalize response payloads into rows for tabular rendering."""
-        rows: list[dict[str, Any]] = []
-
-        findings = result.get("findings")
-        if isinstance(findings, list):
-            for finding in findings:
-                if not isinstance(finding, dict):
-                    continue
-                rows.append(
-                    {
-                        "type": "finding",
-                        "primary": str(
-                            finding.get("service_name")
-                            or finding.get("table_name")
-                            or finding.get("column_name")
-                            or finding.get("mapping_id")
-                            or "item"
-                        ),
-                        "secondary": str(
-                            finding.get("endpoint")
-                            or finding.get("table_id")
-                            or finding.get("data_type")
-                            or ""
-                        ),
-                        "notes": str(
-                            finding.get("method")
-                            or finding.get("pii_class")
-                            or ""
-                        ),
-                        "raw": finding,
-                    }
-                )
-
-        mappings = result.get("mappings")
-        if isinstance(mappings, list):
-            for mapping in mappings:
-                if not isinstance(mapping, dict):
-                    continue
-                rows.append(
-                    {
-                        "type": "service_mapping",
-                        "primary": str(mapping.get("service_name") or ""),
-                        "secondary": str(mapping.get("endpoint") or ""),
-                        "notes": str(mapping.get("method") or ""),
-                        "raw": mapping,
-                    }
-                )
-
-        tables = result.get("tables")
-        if isinstance(tables, list):
-            for table in tables:
-                if not isinstance(table, dict):
-                    continue
-                rows.append(
-                    {
-                        "type": "table",
-                        "primary": str(table.get("table_name") or ""),
-                        "secondary": str(table.get("table_id") or ""),
-                        "notes": str(table.get("schema_id") or ""),
-                        "raw": table,
-                    }
-                )
-
-        columns = result.get("columns")
-        if isinstance(columns, list):
-            for column in columns:
-                if not isinstance(column, dict):
-                    continue
-                rows.append(
-                    {
-                        "type": "column",
-                        "primary": str(column.get("column_name") or ""),
-                        "secondary": str(column.get("data_type") or ""),
-                        "notes": str(column.get("pii_class") or ""),
-                        "raw": column,
-                    }
-                )
-
-        templates = result.get("templates")
-        if isinstance(templates, list):
-            for template in templates:
-                if not isinstance(template, dict):
-                    continue
-                request = template.get("content", {}).get("request", {})
-                if not isinstance(request, dict):
-                    request = {}
-                rows.append(
-                    {
-                        "type": "virtualization",
-                        "primary": str(template.get("service_name") or ""),
-                        "secondary": str(request.get("path") or ""),
-                        "notes": str(request.get("method") or ""),
-                        "raw": template,
-                    }
-                )
-
-        plan = result.get("plan")
-        if isinstance(plan, dict):
-            rows.append(
-                {
-                    "type": "synthetic_plan",
-                    "primary": str(plan.get("table_name") or result.get("table_name") or ""),
-                    "secondary": str(plan.get("target_rows") or ""),
-                    "notes": str(plan.get("strategy") or ""),
-                    "raw": plan,
-                }
-            )
-
-        return rows
+        return TdmPresenter.extract_result_rows(result)
 
     def _set_error(self, message: str) -> None:
         """Render local validation error without backend call."""
@@ -767,18 +660,7 @@ class TdmView(QWidget):
     @staticmethod
     def _hint_for_error_detail(detail: str) -> str:
         """Map backend error details into actionable UI hints."""
-        lowered = detail.casefold()
-        if "tdm endpoints are disabled" in lowered:
-            return "TDM deshabilitado (ENABLE_TDM=false)."
-        if "tdm virtualization is disabled" in lowered:
-            return "Virtualization deshabilitada (TDM_ENABLE_VIRTUALIZATION=false)."
-        if "tdm synthetic planning is disabled" in lowered:
-            return "Synthetic deshabilitado (TDM_ENABLE_SYNTHETIC=false)."
-        if "disabled" in lowered:
-            return "Capacidad TDM deshabilitada por feature flag."
-        if "503" in lowered or "service unavailable" in lowered:
-            return "Backend TDM no disponible temporalmente (503)."
-        return "Operacion TDM fallo."
+        return TdmPresenter.hint_for_error_detail(detail)
 
     def _set_status(self, state: str, hint: str) -> None:
         """Update status badge state and hint text."""
@@ -802,26 +684,14 @@ class TdmView(QWidget):
     @staticmethod
     def _optional(raw: str) -> str | None:
         """Convert empty strings to None for optional payload fields."""
-        value = raw.strip()
-        return value or None
+        return TdmPresenter.optional(raw)
 
     @staticmethod
     def _safe_json(raw: str) -> dict[str, Any]:
         """Parse JSON object safely, defaulting to empty dict."""
-        if not raw:
-            return {}
-        try:
-            parsed = json.loads(raw)
-        except json.JSONDecodeError:
-            return {}
-        if isinstance(parsed, dict):
-            return parsed
-        return {}
+        return TdmPresenter.safe_json(raw)
 
     @staticmethod
     def _safe_int(raw: str) -> int | None:
         """Parse integer safely and return None when invalid."""
-        try:
-            return int(raw)
-        except ValueError:
-            return None
+        return TdmPresenter.safe_int(raw)

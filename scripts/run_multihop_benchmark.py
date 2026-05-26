@@ -11,9 +11,10 @@ import json
 import os
 import sqlite3
 import sys
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any
 
 
 def _normalize_for_match(value: str) -> str:
@@ -33,12 +34,12 @@ class BenchmarkCase:
     question: str
     question_type: str
     hops: int
-    source_id: Optional[str]
+    source_id: str | None
     min_retrieval_unique_documents: int
     min_reranked_unique_documents: int
     min_citation_unique_documents: int
     min_graph_paths: int
-    required_answer_terms: Tuple[str, ...]
+    required_answer_terms: tuple[str, ...]
     min_required_answer_terms_hit: int
 
 
@@ -49,7 +50,7 @@ class BenchmarkResult:
     case_id: str
     question: str
     question_type: str
-    source_id: Optional[str]
+    source_id: str | None
     hops: int
     retrieval_candidates: int
     retrieval_unique_documents: int
@@ -58,8 +59,8 @@ class BenchmarkResult:
     graph_paths: int
     required_answer_terms_hit: int
     required_answer_terms_total: int
-    thresholds: Dict[str, int]
-    failure_reasons: List[str]
+    thresholds: dict[str, int]
+    failure_reasons: list[str]
     passed: bool
 
 
@@ -84,7 +85,7 @@ from coderag.core.models import QueryRequest, QueryResponse
 from coderag.core.service import SERVICE
 
 
-def _default_source_id(repo_root: Path) -> Optional[str]:
+def _default_source_id(repo_root: Path) -> str | None:
     """Return source_id with most documents from local metadata store."""
     db_path = repo_root / "storage" / "metadata.db"
     if not db_path.exists():
@@ -106,11 +107,11 @@ def _default_source_id(repo_root: Path) -> Optional[str]:
     return str(row[0])
 
 
-def _load_cases(path: Path) -> List[BenchmarkCase]:
+def _load_cases(path: Path) -> list[BenchmarkCase]:
     """Load benchmark cases from JSON file and validate structure."""
     data = json.loads(path.read_text(encoding="utf-8"))
 
-    thresholds_by_type: Dict[str, Dict[str, int]] = {}
+    thresholds_by_type: dict[str, dict[str, int]] = {}
     raw_cases: Any
     if isinstance(data, list):
         raw_cases = data
@@ -139,9 +140,9 @@ def _load_cases(path: Path) -> List[BenchmarkCase]:
     default_thresholds = thresholds_by_type.get("default", {})
 
     def _resolve_thresholds(
-        item: Dict[str, Any],
+        item: dict[str, Any],
         question_type: str,
-    ) -> Tuple[int, int, int, int, int]:
+    ) -> tuple[int, int, int, int, int]:
         base = dict(default_thresholds)
         base.update(thresholds_by_type.get(question_type, {}))
 
@@ -181,7 +182,7 @@ def _load_cases(path: Path) -> List[BenchmarkCase]:
             max(0, min_required_answer_terms_hit),
         )
 
-    cases: List[BenchmarkCase] = []
+    cases: list[BenchmarkCase] = []
     for item in raw_cases:
         if not isinstance(item, dict):
             raise ValueError("Each benchmark case must be a JSON object.")
@@ -239,7 +240,7 @@ def _citation_unique_documents(response: QueryResponse) -> int:
 
 def _run_case(
     case: BenchmarkCase,
-    default_source_id: Optional[str],
+    default_source_id: str | None,
 ) -> BenchmarkResult:
     """Execute a query case through service pipeline with fallback LLM mode."""
     effective_source_id = case.source_id or default_source_id
@@ -282,7 +283,7 @@ def _run_case(
         if _normalize_for_match(term) in normalized_answer
     )
 
-    failure_reasons: List[str] = []
+    failure_reasons: list[str] = []
     if retrieval_unique_documents < case.min_retrieval_unique_documents:
         failure_reasons.append(
             "retrieval_unique_documents "
@@ -347,7 +348,7 @@ def _run_case(
     )
 
 
-def _as_json_payload(results: Sequence[BenchmarkResult]) -> Dict[str, Any]:
+def _as_json_payload(results: Sequence[BenchmarkResult]) -> dict[str, Any]:
     """Convert benchmark results to a serializable JSON payload."""
     total = len(results)
     passed = sum(1 for item in results if item.passed)
@@ -386,13 +387,13 @@ def _as_json_payload(results: Sequence[BenchmarkResult]) -> Dict[str, Any]:
 
 def _summary_by_type(
     results: Sequence[BenchmarkResult],
-) -> Dict[str, Dict[str, float]]:
+) -> dict[str, dict[str, float]]:
     """Aggregate pass/fail counts grouped by question type."""
-    grouped: Dict[str, List[BenchmarkResult]] = {}
+    grouped: dict[str, list[BenchmarkResult]] = {}
     for item in results:
         grouped.setdefault(item.question_type, []).append(item)
 
-    summary: Dict[str, Dict[str, float]] = {}
+    summary: dict[str, dict[str, float]] = {}
     for question_type, items in grouped.items():
         total = len(items)
         passed = sum(1 for item in items if item.passed)
@@ -407,7 +408,7 @@ def _summary_by_type(
 
 def _build_markdown_report(
     benchmark_file: Path,
-    json_payload: Dict[str, Any],
+    json_payload: dict[str, Any],
 ) -> str:
     """Build markdown report to inspect benchmark runs quickly."""
     summary = json_payload["summary"]

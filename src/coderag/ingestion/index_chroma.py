@@ -8,9 +8,10 @@ import os
 import shutil
 import stat
 import uuid
+from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any, List, Optional, Sequence, Tuple
+from typing import Any
 
 import chromadb
 from chromadb.api.models.Collection import Collection
@@ -434,7 +435,7 @@ class ChromaVectorIndex:
         except InvalidCollectionException:
             self._collection = self._get_or_create_collection()
 
-    def _embed_chunks(self, chunks: Sequence[ChunkRecord]) -> List[List[float]]:
+    def _embed_chunks(self, chunks: Sequence[ChunkRecord]) -> list[list[float]]:
         """Generate embeddings with bounded parallelism for I/O providers."""
         if not chunks:
             return []
@@ -509,9 +510,9 @@ class ChromaVectorIndex:
         self,
         query: str,
         top_n: int,
-        source_id: Optional[str] = None,
-        document_ids: Optional[Sequence[str]] = None,
-    ) -> List[Tuple[ChunkRecord, float]]:
+        source_id: str | None = None,
+        document_ids: Sequence[str] | None = None,
+    ) -> list[tuple[ChunkRecord, float]]:
         """Search similar chunks in Chroma using query embeddings."""
         if top_n <= 0:
             return []
@@ -562,7 +563,7 @@ class ChromaVectorIndex:
         if not ids or not ids[0]:
             return []
 
-        results: List[Tuple[ChunkRecord, float]] = []
+        results: list[tuple[ChunkRecord, float]] = []
         for chunk_id, document, metadata, distance in zip(
             ids[0],
             documents[0],

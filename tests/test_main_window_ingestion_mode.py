@@ -1,309 +1,186 @@
-"""Tests for ingestion mode routing behavior in MainWindow."""
+"""Tests for MainWindow delegation to UiApiClient."""
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 from coderag.ui.main_window import MainWindow
+
+
+class _FakeApiClient:
+    """Minimal fake API client used to assert MainWindow delegation."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = []
+
+    def ingest(self, payload: dict[str, Any], on_update=None) -> dict[str, Any]:
+        self.calls.append(("ingest", (payload, on_update), {}))
+        return {"status": "completed", "job_id": "job-1"}
+
+    def ingest_readiness(self) -> dict[str, Any]:
+        self.calls.append(("ingest_readiness", (), {}))
+        return {"ready": True}
+
+    def list_documents(
+        self,
+        source_id: str | None = None,
+        tags: list[str] | None = None,
+    ) -> dict[str, Any]:
+        self.calls.append(("list_documents", (), {"source_id": source_id, "tags": tags}))
+        return {"count": 0, "documents": []}
+
+    def list_document_tags(self, source_id: str | None = None) -> dict[str, Any]:
+        self.calls.append(("list_document_tags", (), {"source_id": source_id}))
+        return {"count": 0, "items": []}
+
+    def delete_document(self, document_id: str) -> dict[str, Any]:
+        self.calls.append(("delete_document", (), {"document_id": document_id}))
+        return {"status": "completed"}
+
+    def replace_document_tags(self, document_id: str, tags: list[str]) -> dict[str, Any]:
+        self.calls.append(
+            ("replace_document_tags", (), {"document_id": document_id, "tags": tags})
+        )
+        return {"status": "updated", "new_tags": tags}
+
+    def reset_all(self) -> dict[str, Any]:
+        self.calls.append(("reset_all", (), {}))
+        return {"status": "completed"}
+
+    def tdm_ingest(self, payload: dict[str, Any]) -> dict[str, Any]:
+        self.calls.append(("tdm_ingest", (payload,), {}))
+        return {"status": "completed"}
+
+    def tdm_query(self, payload: dict[str, Any]) -> dict[str, Any]:
+        self.calls.append(("tdm_query", (payload,), {}))
+        return {"status": "completed"}
+
+    def tdm_service_catalog(
+        self,
+        service_name: str,
+        source_id: str | None = None,
+    ) -> dict[str, Any]:
+        self.calls.append(
+            (
+                "tdm_service_catalog",
+                (),
+                {"service_name": service_name, "source_id": source_id},
+            )
+        )
+        return {"count": 0}
+
+    def tdm_table_catalog(
+        self,
+        table_name: str,
+        source_id: str | None = None,
+    ) -> dict[str, Any]:
+        self.calls.append(
+            (
+                "tdm_table_catalog",
+                (),
+                {"table_name": table_name, "source_id": source_id},
+            )
+        )
+        return {"count": 0}
+
+    def tdm_virtualization_preview(self, payload: dict[str, Any]) -> dict[str, Any]:
+        self.calls.append(("tdm_virtualization_preview", (payload,), {}))
+        return {"count": 0}
+
+    def tdm_synthetic_profile(
+        self,
+        table_name: str,
+        source_id: str | None = None,
+        target_rows: int = 1000,
+    ) -> dict[str, Any]:
+        self.calls.append(
+            (
+                "tdm_synthetic_profile",
+                (),
+                {
+                    "table_name": table_name,
+                    "source_id": source_id,
+                    "target_rows": target_rows,
+                },
+            )
+        )
+        return {"profile_id": "syn-1"}
 
 
 def _build_lightweight_window() -> MainWindow:
     """Create a non-Qt-initialized MainWindow instance for method tests."""
     window = MainWindow.__new__(MainWindow)
     window.api_base_url = "http://127.0.0.1:8000"
+    window.api_client = _FakeApiClient()
     return window
 
 
-def test_main_window_sync_ingestion_uses_sync_endpoint() -> None:
-    """Route sync ingestion mode to /sources/ingest without polling."""
+def test_main_window_ingest_delegates_to_api_client() -> None:
+    """Delegate ingestion execution to UiApiClient abstraction."""
     window = _build_lightweight_window()
 
-    captured: list[tuple[str, dict[str, Any], int]] = []
-
-    def _fake_post(path: str, payload: dict[str, Any], timeout: int) -> dict[str, Any]:
-        captured.append((path, payload, timeout))
-        return {"status": "completed", "path": path}
-
-    window._post_json = _fake_post  # type: ignore[method-assign]
-    window._poll_job = lambda *args, **kwargs: {"status": "failed"}  # type: ignore[method-assign]
-
-    result = window.ingest(
-        {
-            "_ingestion_mode": "sync",
-            "source": {
-                "source_type": "confluence",
-                "base_url": "https://example.atlassian.net/wiki",
-                "token": "x",
-                "filters": {},
-            },
-        }
-    )
+    result = window.ingest({"_ingestion_mode": "async", "source": {"source_type": "folder"}})
 
     assert result["status"] == "completed"
-    assert captured[0][0] == "/sources/ingest"
+    assert window.api_client.calls[0][0] == "ingest"
 
 
-def test_main_window_async_ingestion_uses_async_endpoint_and_polling() -> None:
-    """Route async ingestion mode to enqueue endpoint and poll for completion."""
+def test_main_window_ingest_readiness_delegates_to_api_client() -> None:
+    """Delegate readiness check to UiApiClient abstraction."""
     window = _build_lightweight_window()
-
-    captured: list[tuple[str, dict[str, Any], int]] = []
-
-    def _fake_post(path: str, payload: dict[str, Any], timeout: int) -> dict[str, Any]:
-        captured.append((path, payload, timeout))
-        return {"status": "queued", "job_id": "job-1"}
-
-    window._post_json = _fake_post  # type: ignore[method-assign]
-    window._poll_job = (  # type: ignore[method-assign]
-        lambda job_id, timeout_seconds, on_update=None: {
-            "status": "completed",
-            "job_id": job_id,
-        }
-    )
-
-    result = window.ingest(
-        {
-            "_ingestion_mode": "async",
-            "source": {
-                "source_type": "confluence",
-                "base_url": "https://example.atlassian.net/wiki",
-                "token": "x",
-                "filters": {},
-            },
-        }
-    )
-
-    assert result["status"] == "completed"
-    assert result["job_id"] == "job-1"
-    assert captured[0][0] == "/sources/ingest/async"
-
-
-def test_main_window_ingest_readiness_calls_expected_endpoint() -> None:
-    """Fetch async-ingestion readiness from dedicated API endpoint."""
-    window = _build_lightweight_window()
-
-    captured: list[tuple[str, int]] = []
-
-    def _fake_get(path: str, timeout: int) -> dict[str, Any]:
-        captured.append((path, timeout))
-        return {"ready": True}
-
-    window._get_json = _fake_get  # type: ignore[method-assign]
 
     result = window.ingest_readiness()
 
     assert result["ready"] is True
-    assert captured[0][0] == "/sources/ingest/readiness"
+    assert window.api_client.calls[0][0] == "ingest_readiness"
 
 
-def test_main_window_list_documents_builds_expected_path() -> None:
-    """Fetch document catalog through dedicated GET route with source filter."""
+def test_main_window_list_documents_delegates_with_args() -> None:
+    """Delegate catalog listing with source and tags filters."""
     window = _build_lightweight_window()
-
-    captured: list[tuple[str, int]] = []
-
-    def _fake_get(path: str, timeout: int) -> dict[str, Any]:
-        captured.append((path, timeout))
-        return {"count": 0, "documents": []}
-
-    window._get_json = _fake_get  # type: ignore[method-assign]
-
-    result = window.list_documents("src-1")
-
-    assert result["count"] == 0
-    assert captured[0][0] == "/sources/documents?source_id=src-1"
-
-
-def test_main_window_list_documents_includes_tags_filter() -> None:
-    """Append catalog tags filter to the GET route when requested."""
-    window = _build_lightweight_window()
-
-    captured: list[tuple[str, int]] = []
-
-    def _fake_get(path: str, timeout: int) -> dict[str, Any]:
-        captured.append((path, timeout))
-        return {"count": 0, "documents": []}
-
-    window._get_json = _fake_get  # type: ignore[method-assign]
 
     result = window.list_documents("src-1", ["finance", "urgent"])
 
     assert result["count"] == 0
-    assert captured[0][0] == (
-        "/sources/documents?source_id=src-1&tags=finance%2Curgent"
+    assert window.api_client.calls[0] == (
+        "list_documents",
+        (),
+        {"source_id": "src-1", "tags": ["finance", "urgent"]},
     )
 
 
-def test_main_window_list_document_tags_builds_expected_path() -> None:
-    """Fetch aggregated tag facets through the dedicated GET route."""
+def test_main_window_replace_document_tags_delegates() -> None:
+    """Delegate tag replacement through UiApiClient."""
     window = _build_lightweight_window()
-
-    captured: list[tuple[str, int]] = []
-
-    def _fake_get(path: str, timeout: int) -> dict[str, Any]:
-        captured.append((path, timeout))
-        return {"count": 1, "tags": ["finance"], "items": []}
-
-    window._get_json = _fake_get  # type: ignore[method-assign]
-
-    result = window.list_document_tags("src-1")
-
-    assert result["count"] == 1
-    assert captured[0][0] == "/sources/tags?source_id=src-1"
-
-
-def test_main_window_reset_uses_delete_sources_reset_endpoint() -> None:
-    """Route full reset through canonical DELETE /sources/reset endpoint."""
-    window = _build_lightweight_window()
-
-    captured: list[tuple[str, int]] = []
-
-    def _fake_delete(path: str, timeout: int) -> dict[str, Any]:
-        captured.append((path, timeout))
-        return {"status": "completed"}
-
-    window._delete_json = _fake_delete  # type: ignore[method-assign]
-
-    result = window.reset_all()
-
-    assert result["status"] == "completed"
-    assert captured[0][0] == "/sources/reset?confirm=true"
-
-
-def test_main_window_replace_document_tags_uses_put_endpoint() -> None:
-    """Route tag replacement through the dedicated PUT document tags endpoint."""
-    window = _build_lightweight_window()
-
-    captured: list[tuple[str, dict[str, Any], int]] = []
-
-    def _fake_put(path: str, payload: dict[str, Any], timeout: int) -> dict[str, Any]:
-        captured.append((path, payload, timeout))
-        return {"status": "updated", "new_tags": ["legal", "approved"]}
-
-    window._put_json = _fake_put  # type: ignore[method-assign]
 
     result = window.replace_document_tags("doc-1", ["legal", "approved"])
 
     assert result["status"] == "updated"
-    assert captured[0][0] == "/sources/documents/doc-1/tags"
-    assert captured[0][1] == {"tags": ["legal", "approved"]}
+    assert window.api_client.calls[0] == (
+        "replace_document_tags",
+        (),
+        {"document_id": "doc-1", "tags": ["legal", "approved"]},
+    )
 
 
-def test_main_window_upload_sync_uses_multipart_endpoint(
-    tmp_path: Path,
-) -> None:
-    """Route upload sync mode to /sources/ingest/files without polling."""
+def test_main_window_tdm_methods_delegate_to_api_client() -> None:
+    """Delegate all TDM operations through UiApiClient façade."""
     window = _build_lightweight_window()
-    upload_file = tmp_path / "sample.md"
-    upload_file.write_text("hello", encoding="utf-8")
 
-    captured: list[
-        tuple[
-            str,
-            list[tuple[Path, str]],
-            str,
-            dict[str, Any],
-            list[str],
-            int,
-        ]
-    ] = []
+    window.tdm_ingest({"source": {"source_type": "tdm_folder"}})
+    window.tdm_query({"question": "impacto"})
+    window.tdm_service_catalog("billing-api", "src-1")
+    window.tdm_table_catalog("invoices", "src-1")
+    window.tdm_virtualization_preview({"question": "preview"})
+    result = window.tdm_synthetic_profile("invoices", "src-1", 500)
 
-    def _fake_post_multipart(
-        path: str,
-        upload_entries: list[tuple[Path, str]],
-        source_type: str,
-        filters: dict[str, Any],
-        tags: list[str],
-        timeout: int,
-    ) -> dict[str, Any]:
-        captured.append(
-            (path, upload_entries, source_type, filters, tags, timeout)
-        )
-        return {"status": "completed", "path": path}
-
-    window._post_multipart = _fake_post_multipart  # type: ignore[method-assign]
-
-    result = window.ingest(
-        {
-            "_ingestion_channel": "upload_file",
-            "_ingestion_mode": "sync",
-            "source": {
-                "source_type": "folder",
-                "local_path": str(upload_file),
-                "filters": {"domain": "qa"},
-                "tags": ["finance", "urgent"],
-            },
-        }
-    )
-
-    assert result["status"] == "completed"
-    assert captured[0][0] == "/sources/ingest/files"
-    assert captured[0][1] == [(upload_file, upload_file.name)]
-    assert captured[0][2] == "folder"
-    assert captured[0][4] == ["finance", "urgent"]
-
-
-def test_main_window_upload_async_uses_multipart_endpoint_and_polling(
-    tmp_path: Path,
-) -> None:
-    """Route upload async mode to /sources/ingest/files/async and poll job."""
-    window = _build_lightweight_window()
-    first_file = tmp_path / "sample.md"
-    second_file = tmp_path / "notes.txt"
-    first_file.write_text("hello", encoding="utf-8")
-    second_file.write_text("world", encoding="utf-8")
-
-    captured: list[
-        tuple[
-            str,
-            list[tuple[Path, str]],
-            str,
-            dict[str, Any],
-            list[str],
-            int,
-        ]
-    ] = []
-
-    def _fake_post_multipart(
-        path: str,
-        upload_entries: list[tuple[Path, str]],
-        source_type: str,
-        filters: dict[str, Any],
-        tags: list[str],
-        timeout: int,
-    ) -> dict[str, Any]:
-        captured.append(
-            (path, upload_entries, source_type, filters, tags, timeout)
-        )
-        return {"status": "queued", "job_id": "upload-job-1"}
-
-    window._post_multipart = _fake_post_multipart  # type: ignore[method-assign]
-    window._poll_job = (  # type: ignore[method-assign]
-        lambda job_id, timeout_seconds, on_update=None: {
-            "status": "completed",
-            "job_id": job_id,
-        }
-    )
-
-    result = window.ingest(
-        {
-            "_ingestion_channel": "upload_file",
-            "_ingestion_mode": "async",
-            "source": {
-                "source_type": "folder",
-                "local_path": f"{first_file};{second_file}",
-                "filters": {},
-                "tags": ["release"],
-            },
-        }
-    )
-
-    assert result["status"] == "completed"
-    assert result["job_id"] == "upload-job-1"
-    assert captured[0][0] == "/sources/ingest/files/async"
-    assert captured[0][1] == [
-        (first_file, first_file.name),
-        (second_file, second_file.name),
+    assert result["profile_id"] == "syn-1"
+    method_names = [item[0] for item in window.api_client.calls]
+    assert method_names == [
+        "tdm_ingest",
+        "tdm_query",
+        "tdm_service_catalog",
+        "tdm_table_catalog",
+        "tdm_virtualization_preview",
+        "tdm_synthetic_profile",
     ]
-    assert captured[0][4] == ["release"]

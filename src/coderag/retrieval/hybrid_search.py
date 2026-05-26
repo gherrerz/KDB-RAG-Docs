@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Dict, List, Optional, Sequence, Tuple
+from collections.abc import Sequence
 
 from coderag.core.lexical_index import QueryLexicalIndex
 from coderag.core.models import ChunkRecord
@@ -11,8 +11,8 @@ from coderag.ingestion.index_chroma import LocalVectorIndex
 
 
 def _normalize_scores(
-    values: List[Tuple[ChunkRecord, float]],
-) -> Dict[str, float]:
+    values: list[tuple[ChunkRecord, float]],
+) -> dict[str, float]:
     """Normalize retrieval scores to [0, 1] by maximum value."""
     if not values:
         return {}
@@ -26,9 +26,9 @@ def hybrid_search(
     vector_index: LocalVectorIndex,
     top_n: int,
     alpha: float = 0.55,
-    source_id: Optional[str] = None,
-    document_ids: Optional[Sequence[str]] = None,
-) -> List[Tuple[ChunkRecord, float, Dict[str, float]]]:
+    source_id: str | None = None,
+    document_ids: Sequence[str] | None = None,
+) -> list[tuple[ChunkRecord, float, dict[str, float]]]:
     """Combine lexical and vector scores into a unified ranking."""
     lexical_hits = lexical_index.search(
         query,
@@ -46,8 +46,8 @@ def hybrid_search(
     lexical_norm = _normalize_scores(lexical_hits)
     vector_norm = _normalize_scores(vector_hits)
 
-    chunks: Dict[str, ChunkRecord] = {}
-    score_map: Dict[str, float] = defaultdict(float)
+    chunks: dict[str, ChunkRecord] = {}
+    score_map: dict[str, float] = defaultdict(float)
 
     for chunk, _ in lexical_hits:
         chunks[chunk.chunk_id] = chunk

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List
+from typing import Any
 
 CREATE_TABLE_PATTERN = re.compile(
     r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?"
@@ -53,9 +53,9 @@ def _guess_pii_class(column_name: str) -> str | None:
     return None
 
 
-def _parse_columns(table_body: str) -> List[Dict[str, Any]]:
+def _parse_columns(table_body: str) -> list[dict[str, Any]]:
     """Parse column definitions from one CREATE TABLE body block."""
-    columns: List[Dict[str, Any]] = []
+    columns: list[dict[str, Any]] = []
     for raw_line in table_body.splitlines():
         line = raw_line.strip().rstrip(",")
         if not line:
@@ -86,11 +86,11 @@ def _parse_columns(table_body: str) -> List[Dict[str, Any]]:
     return columns
 
 
-def parse_sql_schema(sql_text: str) -> Dict[str, Any]:
+def parse_sql_schema(sql_text: str) -> dict[str, Any]:
     """Extract schema, table, and column metadata from SQL DDL text."""
-    schemas: Dict[str, Dict[str, Any]] = {}
-    tables: List[Dict[str, Any]] = []
-    columns: List[Dict[str, Any]] = []
+    schemas: dict[str, dict[str, Any]] = {}
+    tables: list[dict[str, Any]] = []
+    columns: list[dict[str, Any]] = []
 
     for table_match in CREATE_TABLE_PATTERN.finditer(sql_text):
         full_name = table_match.group("name")

@@ -9,7 +9,7 @@ import shutil
 import uuid
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Any, Dict, List
+from typing import Any
 
 from fastapi import UploadFile
 
@@ -109,7 +109,7 @@ class UploadIngestionAdapter:
 
         return captured_files
 
-    def parse_filters(self, filters_raw: str | None) -> Dict[str, Any]:
+    def parse_filters(self, filters_raw: str | None) -> dict[str, Any]:
         """Parse optional JSON filters string from multipart form field."""
         if not filters_raw or not filters_raw.strip():
             return {}
@@ -126,7 +126,7 @@ class UploadIngestionAdapter:
             )
         return parsed
 
-    def parse_tags(self, tags_raw: str | None) -> List[str]:
+    def parse_tags(self, tags_raw: str | None) -> list[str]:
         """Parse optional tags form field as JSON array or CSV text."""
         if not tags_raw or not tags_raw.strip():
             return []
@@ -152,8 +152,8 @@ class UploadIngestionAdapter:
         self,
         staged_dir: Path | None,
         source_type: str,
-        filters: Dict[str, Any],
-        tags: List[str] | None = None,
+        filters: dict[str, Any],
+        tags: list[str] | None = None,
         artifact_id: str | None = None,
     ) -> IngestionRequest:
         """Build canonical ingestion request from staged upload content."""
@@ -227,9 +227,9 @@ class UploadIngestionAdapter:
         return "/".join(safe_parts)
 
     @staticmethod
-    def _normalize_tags(raw_tags: list[object]) -> List[str]:
+    def _normalize_tags(raw_tags: list[object]) -> list[str]:
         """Return stable, deduplicated tags suitable for requests."""
-        normalized: List[str] = []
+        normalized: list[str] = []
         seen: set[str] = set()
         for raw_tag in raw_tags:
             tag = str(raw_tag or "").strip()

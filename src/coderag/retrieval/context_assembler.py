@@ -4,15 +4,15 @@ from __future__ import annotations
 
 from collections import deque
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from coderag.core.models import ChunkRecord, GraphPath
 
 
-def _round_robin_chunks(chunks: List[ChunkRecord]) -> List[ChunkRecord]:
+def _round_robin_chunks(chunks: list[ChunkRecord]) -> list[ChunkRecord]:
     """Interleave chunks by document to improve cross-document coverage."""
-    by_doc: Dict[str, deque[ChunkRecord]] = {}
-    order: List[str] = []
+    by_doc: dict[str, deque[ChunkRecord]] = {}
+    order: list[str] = []
     for chunk in chunks:
         doc_id = chunk.document_id
         if doc_id not in by_doc:
@@ -20,7 +20,7 @@ def _round_robin_chunks(chunks: List[ChunkRecord]) -> List[ChunkRecord]:
             order.append(doc_id)
         by_doc[doc_id].append(chunk)
 
-    interleaved: List[ChunkRecord] = []
+    interleaved: list[ChunkRecord] = []
     while True:
         emitted = False
         for doc_id in order:
@@ -35,10 +35,10 @@ def _round_robin_chunks(chunks: List[ChunkRecord]) -> List[ChunkRecord]:
 
 
 def assemble_context(
-    chunks: List[ChunkRecord],
-    graph_paths: List[GraphPath],
+    chunks: list[ChunkRecord],
+    graph_paths: list[GraphPath],
     max_chars: int,
-    document_map: Optional[Dict[str, Dict[str, Any]]] = None,
+    document_map: dict[str, dict[str, Any]] | None = None,
 ) -> str:
     """Build compact context text from evidence chunks and graph paths."""
     document_map = document_map or {}
@@ -84,7 +84,7 @@ def assemble_context(
     if graph_blocks:
         chunk_budget = max(0, int(max_chars * 0.8))
 
-    blocks: List[str] = []
+    blocks: list[str] = []
     current_length = 0
     for block in chunk_blocks:
         separator_size = 2 if blocks else 0

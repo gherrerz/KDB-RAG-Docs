@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Dict, List, Tuple
 
 ALLOWED_EXTENSIONS = {
     ".md",
@@ -19,7 +18,7 @@ ALLOWED_EXTENSIONS = {
 }
 
 
-def scan_folder(path: Path) -> List[Path]:
+def scan_folder(path: Path) -> list[Path]:
     """Return supported files recursively from a root path."""
     files, _stats = scan_folder_with_diagnostics(path)
     return files
@@ -27,11 +26,11 @@ def scan_folder(path: Path) -> List[Path]:
 
 def scan_folder_with_diagnostics(
     path: Path,
-) -> Tuple[List[Path], Dict[str, object]]:
+) -> tuple[list[Path], dict[str, object]]:
     """Return supported files plus scan diagnostics for robust failures."""
     path_exists = path.exists()
     path_is_dir = path.is_dir() if path_exists else False
-    stats: Dict[str, object] = {
+    stats: dict[str, object] = {
         "path": str(path),
         "path_exists": path_exists,
         "path_is_dir": path_is_dir,
@@ -43,8 +42,8 @@ def scan_folder_with_diagnostics(
     if not path_exists or not path_is_dir:
         return [], stats
 
-    discovered: List[Path] = []
-    scan_errors: List[str] = []
+    discovered: list[Path] = []
+    scan_errors: list[str] = []
 
     def _on_walk_error(exc: OSError) -> None:
         scan_errors.append(str(exc))

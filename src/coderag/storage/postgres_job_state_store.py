@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
-from typing import Any, Optional
+from typing import Any
 
 from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert
@@ -27,7 +27,7 @@ class PostgresJobStateStore:
         self,
         postgres_dsn: str,
         *,
-        session_factory: Optional[PostgresSessionFactory] = None,
+        session_factory: PostgresSessionFactory | None = None,
     ) -> None:
         """Create the store using a reusable SQLAlchemy session factory."""
         self._session_factory = session_factory or PostgresSessionFactory(
@@ -68,7 +68,7 @@ class PostgresJobStateStore:
         with self._session_factory.get_connection() as connection:
             connection.execute(statement)
 
-    def get_job(self, job_id: str) -> Optional[JobStatus]:
+    def get_job(self, job_id: str) -> JobStatus | None:
         """Fetch one persisted job by id."""
         statement = select(
             jobs_table.c.job_id,
@@ -171,7 +171,7 @@ class PostgresJobStateStore:
             result = connection.execute(statement)
         return max(0, int(result.rowcount or 0))
 
-    def get_runtime_state(self, key: str) -> Optional[str]:
+    def get_runtime_state(self, key: str) -> str | None:
         """Return one persisted runtime state value by key."""
         statement = select(runtime_state_table.c.state_value).where(
             runtime_state_table.c.state_key == key

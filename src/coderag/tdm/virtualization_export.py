@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import hashlib
-from typing import Any, Dict, Iterable, List
+from collections.abc import Iterable
+from typing import Any
 
 
 def _artifact_id(
@@ -19,11 +20,11 @@ def _artifact_id(
 
 def build_virtualization_templates(
     source_id: str,
-    mappings: Iterable[Dict[str, Any]],
+    mappings: Iterable[dict[str, Any]],
     service_name_filter: str | None = None,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Create neutral virtualization templates from service mappings."""
-    templates: List[Dict[str, Any]] = []
+    templates: list[dict[str, Any]] = []
     for item in mappings:
         service_name = str(item.get("service_name") or "").strip()
         endpoint = str(item.get("endpoint") or "").strip()

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List
 
 
 @dataclass
@@ -13,7 +12,7 @@ class ConfluenceClient:
     base_url: str
     token: str
 
-    def fetch_pages(self, filters: Dict[str, str]) -> List[Dict[str, str]]:
+    def fetch_pages(self, filters: dict[str, str]) -> list[dict[str, str]]:
         """Fetch pages from Confluence API.
 
         This MVP implementation returns an empty list so local folder mode can

@@ -5,9 +5,9 @@ from __future__ import annotations
 import difflib
 import hashlib
 import unicodedata
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Callable, Dict, List, Tuple
 
 from coderag.core.models import DocumentRecord, SourceConfig
 from coderag.ingestion.confluence_client import ConfluenceClient
@@ -21,9 +21,9 @@ def _source_id_from_path(path: str) -> str:
 
 
 def _emit_progress(
-    callback: Callable[[str, Dict[str, object]], None] | None,
+    callback: Callable[[str, dict[str, object]], None] | None,
     event: str,
-    payload: Dict[str, object],
+    payload: dict[str, object],
 ) -> None:
     """Emit loader progress events when callback is provided."""
     if callback is None:
@@ -40,7 +40,7 @@ def _normalize_path_token(value: str) -> str:
     return stripped.casefold().strip()
 
 
-def _suggest_nearby_paths(path: Path, limit: int = 3) -> List[str]:
+def _suggest_nearby_paths(path: Path, limit: int = 3) -> list[str]:
     """Suggest similar sibling folders when configured path is invalid."""
     parent = path.parent
     target_name = path.name
@@ -82,8 +82,8 @@ def _suggest_nearby_paths(path: Path, limit: int = 3) -> List[str]:
 
 def load_documents(
     source: SourceConfig,
-    progress_callback: Callable[[str, Dict[str, object]], None] | None = None,
-) -> Tuple[List[DocumentRecord], Dict[str, object]]:
+    progress_callback: Callable[[str, dict[str, object]], None] | None = None,
+) -> tuple[list[DocumentRecord], dict[str, object]]:
     """Load and normalize documents from a configured source."""
     if source.source_type == "confluence" and source.base_url and source.token:
         client = ConfluenceClient(base_url=source.base_url, token=source.token)
@@ -138,11 +138,11 @@ def load_documents(
     resolved_root = root.resolve(strict=False)
     logical_root = str(source.logical_root or "").strip().replace("\\", "/")
     source_id = _source_id_from_path(str(resolved_root))
-    documents: List[DocumentRecord] = []
+    documents: list[DocumentRecord] = []
     discovered_files, scan_stats = scan_folder_with_diagnostics(resolved_root)
     total_files = len(discovered_files)
     skipped_empty = 0
-    extensions: Dict[str, int] = {}
+    extensions: dict[str, int] = {}
 
     path_exists = bool(scan_stats.get("path_exists", False))
     path_is_dir = bool(scan_stats.get("path_is_dir", False))

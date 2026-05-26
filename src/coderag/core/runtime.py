@@ -6,6 +6,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from coderag.core.protocols import (
+    IngestionArtifactStoreProtocol,
+    RuntimeStoreProtocol,
+)
 from coderag.core.settings import SETTINGS, resolve_postgres_dsn
 from coderag.storage.metadata_store import MetadataStore
 from coderag.storage.postgres_startup import ensure_postgres_schema_ready
@@ -73,7 +77,7 @@ class NullIngestionArtifactStore:
         return 0
 
 
-def _build_runtime_store() -> Any:
+def _build_runtime_store() -> RuntimeStoreProtocol:
     """Build the current storage backend for the active cutover phase."""
     postgres_dsn = resolve_postgres_dsn(SETTINGS)
     if not postgres_dsn:
@@ -87,7 +91,7 @@ def _build_runtime_store() -> Any:
     )
 
 
-def _build_ingestion_artifact_store() -> Any:
+def _build_ingestion_artifact_store() -> IngestionArtifactStoreProtocol:
     """Build the async ingestion artifact store for the active cutover phase."""
     postgres_dsn = resolve_postgres_dsn(SETTINGS)
     if not postgres_dsn:
@@ -108,8 +112,8 @@ class RuntimeState:
         default_factory=lambda: ensure_postgres_schema_ready(SETTINGS)
     )
 
-    store: Any = field(default_factory=_build_runtime_store)
-    ingestion_artifact_store: Any = field(
+    store: RuntimeStoreProtocol = field(default_factory=_build_runtime_store)
+    ingestion_artifact_store: IngestionArtifactStoreProtocol = field(
         default_factory=_build_ingestion_artifact_store
     )
 

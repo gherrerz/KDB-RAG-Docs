@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import hashlib
-from typing import Any, Dict, Iterable
+from collections.abc import Iterable
+from typing import Any
 
 
 def apply_masking_value(
@@ -38,10 +39,10 @@ def apply_masking_value(
 
 
 def apply_masking_rules_to_row(
-    row: Dict[str, Any],
-    rules: Iterable[Dict[str, Any]],
+    row: dict[str, Any],
+    rules: Iterable[dict[str, Any]],
     seed: str = "tdm",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Apply column-scoped masking rules to one row dictionary."""
     masked_row = dict(row)
     for rule in rules:

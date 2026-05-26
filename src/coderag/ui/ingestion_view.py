@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from typing import Callable
 
 from PySide6.QtCore import QObject, QThread, Signal, Slot, Qt
@@ -25,6 +24,15 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 from PySide6.QtCore import QRegularExpression
+
+from coderag.ui.ingestion_formatters import (
+    format_async_readiness,
+    format_deduplication_paths,
+    format_ingestion_result,
+    localize_status,
+    status_to_badge,
+)
+from coderag.ui.ingestion_presenter import IngestionPresenter
 
 
 class _IngestionWorker(QObject):
@@ -73,6 +81,7 @@ class IngestionView(QWidget):
         self._on_reset_all = on_reset_all
         self._on_delete_document = on_delete_document
         self._on_ingestion_readiness = on_ingestion_readiness
+        self._presenter = IngestionPresenter()
         self._ingest_thread: QThread | None = None
         self._ingest_worker: _IngestionWorker | None = None
 
@@ -273,26 +282,24 @@ class IngestionView(QWidget):
             )
             return
 
-        payload = {
-            "source": {
-                "source_type": self.source_type.text().strip() or "folder",
-                "local_path": self.local_path.text().strip() or None,
-                "base_url": self.base_url.text().strip() or None,
-                "token": self.token.text().strip() or None,
-                "filters": self._safe_json(self.filters.text().strip()),
-                "tags": self._parse_tags(self.tags.text()),
-            },
-            "_ingestion_channel": str(
+        payload = self._presenter.build_payload(
+            source_type=self.source_type.text(),
+            local_path=self.local_path.text(),
+            base_url=self.base_url.text(),
+            token=self.token.text(),
+            filters_raw=self.filters.text(),
+            tags_raw=self.tags.text(),
+            ingestion_channel=str(
                 self.ingestion_channel.currentData() or "json_folder"
             ),
-            "_ingestion_mode": str(self.execution_mode.currentData() or "async"),
-        }
+            execution_mode=str(self.execution_mode.currentData() or "async"),
+        )
 
         execution_mode = str(payload.get("_ingestion_mode") or "async")
         fallback_note = ""
         if execution_mode == "async" and self._on_ingestion_readiness is not None:
             readiness = self._on_ingestion_readiness()
-            if not self._is_async_ready(readiness):
+            if not self._presenter.is_async_ready(readiness):
                 self.execution_mode.setCurrentIndex(1)
                 payload["_ingestion_mode"] = "sync"
                 fallback_note = (
@@ -302,7 +309,7 @@ class IngestionView(QWidget):
                     "Estado: en curso\n"
                     f"{fallback_note}"
                 )
-                self.output.setPlainText(self._format_async_readiness(readiness))
+                self.output.setPlainText(format_async_readiness(readiness))
         selected_mode = str(payload.get("_ingestion_mode") or "async")
         channel = str(payload.get("_ingestion_channel") or "json_folder")
         dispatch_message = "Enviando job de ingesta..."
@@ -347,7 +354,7 @@ class IngestionView(QWidget):
         """Render incremental updates while ingestion is running."""
         self._update_progress(result)
         self._render_summary(result)
-        rendered = self._format_ingestion_result(result, include_raw=True)
+        rendered = format_ingestion_result(result, include_raw=True)
         self.output.setPlainText(rendered)
         QApplication.processEvents()
 
@@ -356,9 +363,9 @@ class IngestionView(QWidget):
         """Render final ingestion result and restore UI state."""
         self._update_progress(result)
         self._render_summary(result)
-        rendered = self._format_ingestion_result(result, include_raw=True)
+        rendered = format_ingestion_result(result, include_raw=True)
         self.output.setPlainText(rendered)
-        final_state = self._status_to_badge(result.get("status"))
+        final_state = status_to_badge(result.get("status"))
         self._set_status(final_state)
         self.ingest_button.setEnabled(True)
         self.reset_all_button.setEnabled(True)
@@ -415,9 +422,9 @@ class IngestionView(QWidget):
         result = self._on_reset_all()
         self._update_progress(result)
         self._render_summary(result)
-        rendered = self._format_ingestion_result(result, include_raw=True)
+        rendered = format_ingestion_result(result, include_raw=True)
         self.output.setPlainText(rendered)
-        self._set_status(self._status_to_badge(result.get("status")))
+        self._set_status(status_to_badge(result.get("status")))
 
     def _run_delete_document(self) -> None:
         """Run one-document deletion after explicit user confirmation."""
@@ -501,9 +508,9 @@ class IngestionView(QWidget):
             )
         )
         self.output.setPlainText(
-            self._format_ingestion_result(result, include_raw=True)
+            format_ingestion_result(result, include_raw=True)
         )
-        self._set_status(self._status_to_badge(status))
+        self._set_status(status_to_badge(status))
         if status in {"completed", "finished"}:
             self.delete_document_id.clear()
         self._refresh_delete_document_state()
@@ -525,107 +532,12 @@ class IngestionView(QWidget):
         limit: int = 2,
     ) -> str:
         """Build a short UI summary for discarded and replaced document paths."""
-        incoming = deduplication.get("incoming_batch", {})
-        replaced = deduplication.get("replaced_existing", {})
-        if not isinstance(incoming, dict) or not isinstance(replaced, dict):
-            return "-"
-
-        skipped_paths = incoming.get("kept_paths", [])
-        replaced_paths = replaced.get("replaced_paths", [])
-
-        fragments: list[str] = []
-        if isinstance(skipped_paths, list) and skipped_paths:
-            shown = ", ".join(str(path) for path in skipped_paths[:limit])
-            extra = max(0, len(skipped_paths) - limit)
-            suffix = f" (+{extra})" if extra else ""
-            fragments.append(f"conservados: {shown}{suffix}")
-
-        if isinstance(replaced_paths, list) and replaced_paths:
-            shown = ", ".join(str(path) for path in replaced_paths[:limit])
-            extra = max(0, len(replaced_paths) - limit)
-            suffix = f" (+{extra})" if extra else ""
-            fragments.append(f"reemplazados: {shown}{suffix}")
-
-        return " | ".join(fragments) if fragments else "-"
+        return format_deduplication_paths(deduplication, limit=limit)
 
     @staticmethod
     def _format_ingestion_result(result: dict, include_raw: bool) -> str:
         """Return a readable ingestion trace for the UI text panel."""
-        lines: list[str] = []
-
-        status = str(result.get("status", "unknown"))
-        lines.append(f"Status: {status}")
-
-        progress_pct = result.get("progress_pct")
-        if isinstance(progress_pct, (int, float)):
-            lines.append(f"Progress: {round(float(progress_pct), 2)}%")
-
-        message = result.get("message")
-        if isinstance(message, str) and message.strip():
-            lines.append(f"Message: {message}")
-
-        source_id = result.get("source_id")
-        if isinstance(source_id, str) and source_id:
-            lines.append(f"Source ID: {source_id}")
-
-        documents = result.get("documents")
-        chunks = result.get("chunks")
-        if documents is not None and chunks is not None:
-            lines.append(f"Documents: {documents} | Chunks: {chunks}")
-
-        metrics = result.get("metrics")
-        if isinstance(metrics, dict) and metrics:
-            lines.append("\nMetrics:")
-            for key, value in metrics.items():
-                lines.append(f"- {key}: {value}")
-
-        deduplication = result.get("deduplication")
-        if isinstance(deduplication, dict) and deduplication:
-            lines.append("\nDeduplication:")
-            for section_name, section in deduplication.items():
-                if not isinstance(section, dict):
-                    continue
-                lines.append(f"- {section_name}:")
-                for key, value in section.items():
-                    lines.append(f"  - {key}: {value}")
-
-        steps = result.get("steps")
-        if isinstance(steps, list) and steps:
-            lines.append("\nIngestion Timeline:")
-            timed_steps = 0
-            total_elapsed = ""
-            for index, step in enumerate(steps, start=1):
-                if not isinstance(step, dict):
-                    continue
-                ordinal = step.get("ordinal")
-                display_index = int(ordinal) if isinstance(ordinal, int) else index
-                name = str(step.get("name", "step"))
-                step_status = str(step.get("status", "ok"))
-                elapsed_hhmmss = step.get("elapsed_hhmmss")
-                elapsed_hint = ""
-                if isinstance(elapsed_hhmmss, str) and elapsed_hhmmss:
-                    elapsed_hint = f" ({elapsed_hhmmss})"
-                    timed_steps += 1
-                    total_elapsed = elapsed_hhmmss
-                lines.append(
-                    f"{display_index}. [{step_status}] {name}{elapsed_hint}"
-                )
-                details = step.get("details", {})
-                if isinstance(details, dict):
-                    for key, value in details.items():
-                        if key == "progress_pct":
-                            continue
-                        lines.append(f"   - {key}: {value}")
-
-            if timed_steps > 0:
-                lines.append("\nProgress Summary:")
-                lines.append(f"- total_elapsed_hhmmss: {total_elapsed}")
-                lines.append(f"- recorded_steps: {timed_steps}")
-
-        if include_raw:
-            lines.append("\nRaw JSON:")
-            lines.append(json.dumps(result, indent=2, ensure_ascii=False))
-        return "\n".join(lines)
+        return format_ingestion_result(result, include_raw=include_raw)
 
     def _toggle_raw_output(self, checked: bool) -> None:
         """Toggle technical output visibility without touching summary panel."""
@@ -647,7 +559,7 @@ class IngestionView(QWidget):
     def _render_summary(self, result: dict) -> None:
         """Render concise status summary separate from technical timeline."""
         raw_status = str(result.get("status", "unknown"))
-        status = self._localize_status(raw_status)
+        status = localize_status(raw_status)
         message = str(result.get("message", "")).strip() or "No message provided."
         documents = result.get("documents", "-")
         chunks = result.get("chunks", "-")
@@ -665,7 +577,7 @@ class IngestionView(QWidget):
                 dedup_summary = (
                     f"lote={incoming_skipped} | reemplazos={replaced_deleted}"
                 )
-            dedup_paths = self._format_deduplication_paths(deduplication)
+            dedup_paths = format_deduplication_paths(deduplication)
 
         steps = result.get("steps")
         if isinstance(steps, list) and steps:
@@ -715,118 +627,22 @@ class IngestionView(QWidget):
     @staticmethod
     def _is_async_ready(payload: dict) -> bool:
         """Return True when async ingestion dependencies are reported ready."""
-        ready = payload.get("ready")
-        if isinstance(ready, bool):
-            return ready
-        return False
+        return IngestionPresenter.is_async_ready(payload)
 
     @staticmethod
     def _format_async_readiness(payload: dict) -> str:
         """Format readiness payload for operator-facing technical output."""
-        checks = payload.get("checks") if isinstance(payload, dict) else None
-        lines = ["Readiness de ingesta asincrona:"]
-        lines.append(f"- ready: {payload.get('ready')}")
-        lines.append(
-            f"- recommendation: {payload.get('recommendation', 'sync')}"
-        )
-        if isinstance(checks, dict):
-            for name, value in checks.items():
-                if not isinstance(value, dict):
-                    continue
-                line_parts = [
-                    f"{name}: ok={value.get('ok')}",
-                    f"required={value.get('required')}",
-                ]
-
-                signal = str(value.get("signal") or "").strip()
-                if signal:
-                    line_parts.append(f"signal={signal}")
-
-                mode = str(value.get("mode") or "").strip()
-                if mode:
-                    line_parts.append(f"mode={mode}")
-
-                target = str(value.get("target") or "").strip()
-                persist_dir = str(value.get("persist_dir") or "").strip()
-                if target:
-                    line_parts.append(f"target={target}")
-                elif persist_dir:
-                    line_parts.append(f"persist_dir={persist_dir}")
-
-                auth_mode = str(value.get("auth_mode") or "").strip()
-                if auth_mode:
-                    line_parts.append(f"auth={auth_mode}")
-
-                collection = str(value.get("collection") or "").strip()
-                if collection:
-                    line_parts.append(f"collection={collection}")
-
-                collections_count = value.get("collections_count")
-                if isinstance(collections_count, int):
-                    line_parts.append(f"collections={collections_count}")
-
-                heartbeat_ok = value.get("heartbeat_ok")
-                if isinstance(heartbeat_ok, bool):
-                    line_parts.append(f"heartbeat_ok={heartbeat_ok}")
-
-                hnsw_space = str(value.get("hnsw_space") or "").strip()
-                if hnsw_space:
-                    line_parts.append(f"hnsw={hnsw_space}")
-
-                expected_hnsw_space = str(
-                    value.get("expected_hnsw_space") or ""
-                ).strip()
-                if expected_hnsw_space:
-                    line_parts.append(
-                        f"expected_hnsw={expected_hnsw_space}"
-                    )
-
-                indexed = value.get("indexed")
-                if isinstance(indexed, bool):
-                    line_parts.append(f"indexed={indexed}")
-
-                corpus_rows = value.get("corpus_rows")
-                if isinstance(corpus_rows, int):
-                    line_parts.append(f"corpus_rows={corpus_rows}")
-
-                document_count = value.get("document_count")
-                if isinstance(document_count, int):
-                    line_parts.append(f"documents={document_count}")
-
-                source_count = value.get("source_count")
-                if isinstance(source_count, int):
-                    line_parts.append(f"sources={source_count}")
-
-                line_parts.append(f"detail={value.get('detail', '')}")
-                lines.append("- " + " ".join(line_parts))
-        return "\n".join(lines)
+        return format_async_readiness(payload)
 
     @staticmethod
     def _localize_status(status: str) -> str:
         """Map backend status values to UI-friendly Spanish labels."""
-        normalized = status.strip().lower()
-        mapping = {
-            "queued": "en cola",
-            "running": "en curso",
-            "started": "en curso",
-            "completed": "completado",
-            "finished": "completado",
-            "failed": "fallido",
-            "idle": "inactivo",
-        }
-        return mapping.get(normalized, normalized or "desconocido")
+        return localize_status(status)
 
     @staticmethod
     def _status_to_badge(status: object) -> str:
         """Map backend status string to known badge tokens."""
-        normalized = str(status or "").strip().lower()
-        if normalized in {"completed", "finished"}:
-            return "success"
-        if normalized == "failed":
-            return "error"
-        if normalized in {"queued", "running", "started"}:
-            return "running"
-        return "idle"
+        return status_to_badge(status)
 
     def _validate_inputs(self) -> str | None:
         """Validate source-specific fields before dispatching ingestion."""
@@ -834,58 +650,30 @@ class IngestionView(QWidget):
         ingestion_channel = str(
             self.ingestion_channel.currentData() or "json_folder"
         )
-        filters_raw = (self.filters.text() or "").strip()
+        filters_raw = self.filters.text() or ""
+        validation_error, invalid_fields = self._presenter.validate_inputs(
+            source_type=source_type,
+            ingestion_channel=ingestion_channel,
+            local_path=self.local_path.text() or "",
+            base_url=self.base_url.text() or "",
+            token=self.token.text() or "",
+            filters_raw=filters_raw,
+        )
 
-        if not source_type:
-            self.source_type.setProperty("invalid", True)
-            self._refresh_input_style(self.source_type)
-            return "El tipo de fuente es obligatorio."
+        self.source_type.setProperty("invalid", "source_type" in invalid_fields)
+        self.local_path.setProperty("invalid", "local_path" in invalid_fields)
+        self.base_url.setProperty("invalid", "base_url" in invalid_fields)
+        self.token.setProperty("invalid", "token" in invalid_fields)
+        self.filters.setProperty("invalid", "filters" in invalid_fields)
+        self.tags.setProperty("invalid", False)
 
-        self.source_type.setProperty("invalid", False)
         self._refresh_input_style(self.source_type)
-
-        if source_type == "folder":
-            if not (self.local_path.text() or "").strip():
-                self.local_path.setProperty("invalid", True)
-                self._refresh_input_style(self.local_path)
-                return "La ruta local es obligatoria cuando el tipo es folder."
-            self.local_path.setProperty("invalid", False)
-            self._refresh_input_style(self.local_path)
-
-        if ingestion_channel == "upload_file" and source_type != "folder":
-            return (
-                "El canal de upload por archivo requiere tipo de fuente "
-                "'folder'."
-            )
-
-        if source_type == "confluence":
-            has_base_url = bool((self.base_url.text() or "").strip())
-            has_token = bool((self.token.text() or "").strip())
-            self.base_url.setProperty("invalid", not has_base_url)
-            self.token.setProperty("invalid", not has_token)
-            self._refresh_input_style(self.base_url)
-            self._refresh_input_style(self.token)
-            if not has_base_url or not has_token:
-                return "URL base y token son obligatorios para fuentes confluence."
-
-        self.base_url.setProperty("invalid", False)
-        self.token.setProperty("invalid", False)
+        self._refresh_input_style(self.local_path)
         self._refresh_input_style(self.base_url)
         self._refresh_input_style(self.token)
-
-        if filters_raw:
-            parsed = self._safe_json(filters_raw)
-            is_invalid_json = parsed == {} and filters_raw not in {"{}", ""}
-            self.filters.setProperty("invalid", is_invalid_json)
-            self._refresh_input_style(self.filters)
-            if is_invalid_json:
-                return "Los filtros deben ser un objeto JSON valido."
-
-        self.filters.setProperty("invalid", False)
         self._refresh_input_style(self.filters)
-        self.tags.setProperty("invalid", False)
         self._refresh_input_style(self.tags)
-        return None
+        return validation_error
 
     @staticmethod
     def _refresh_input_style(widget: QLineEdit) -> None:
@@ -896,28 +684,9 @@ class IngestionView(QWidget):
 
     @staticmethod
     def _safe_json(raw: str) -> dict:
-        if not raw:
-            return {}
-        try:
-            value = json.loads(raw)
-            if isinstance(value, dict):
-                return value
-            return {}
-        except json.JSONDecodeError:
-            return {}
+        return IngestionPresenter.safe_json(raw)
 
     @staticmethod
     def _parse_tags(raw: str) -> list[str]:
         """Parse a comma-separated tag list from the ingestion form."""
-        normalized: list[str] = []
-        seen: set[str] = set()
-        for raw_tag in (raw or "").split(","):
-            tag = raw_tag.strip()
-            if not tag:
-                continue
-            tag_key = tag.casefold()
-            if tag_key in seen:
-                continue
-            seen.add(tag_key)
-            normalized.append(tag)
-        return normalized
+        return IngestionPresenter.parse_tags(raw)

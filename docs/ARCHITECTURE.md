@@ -67,6 +67,112 @@ retira SQLite y Chroma embebido del contrato operativo y elimina la dependencia 
   de batching para reducir latencia total en ingestas medianas/grandes.
 - Consistencia cross-process: en modo async con RQ, la API detecta cambios
   de `index_version` en SQLite y refresca indices en query sin reinicio.
+- Composicion por contratos: el runtime tipa store y artifact store con
+  protocolos explicitos (`core/protocols.py`) para desacoplar casos de uso de
+  implementaciones concretas.
+- Inicializacion centralizada: las dependencias de `RagApplicationService`
+  se construyen via `core/composition.py`, permitiendo inyeccion en pruebas
+  y reduciendo acoplamiento en el constructor del servicio.
+- Extraccion incremental de casos de uso: la fachada
+  `RagApplicationService` delega operaciones de ciclo de ingesta y estado de
+  jobs a `core/ingestion_service.py` y `core/job_service.py`, manteniendo
+  compatibilidad de contrato mientras avanza el desacople del monolito.
+  En este corte, la deduplicacion previa y la materializacion de
+  documentos/chunks/grafo para ingesta ya viven en metodos atomicos dentro de
+  `IngestionApplicationService`.
+  La construccion de chunks con snapshots de progreso tambien se ejecuta en
+  ese subservicio, mientras la fachada conserva solo la traduccion de eventos
+  hacia el timeline publico del job.
+  El rebuild post-ingesta de indices (lexico global + vector por source)
+  tambien se encapsula en ese subservicio para mantener la fachada enfocada
+  en orquestacion.
+  El armado del payload final de resultado y metricas de ingesta completada
+  tambien queda centralizado en ese subservicio.
+  La persistencia de pasos del timeline (`job_events`), actualizacion de
+  estado incremental del job y callback de progreso tambien se encapsulan en
+  ese subservicio para reducir acoplamiento en la fachada.
+  La construccion de mensajes de fallo por fuente vacia/no valida y el payload
+  final de respuesta `failed` de ingesta tambien se centralizan en ese
+  subservicio.
+  El mapeo de progreso del loader de documentos (banda de avance temprana)
+  tambien se encapsula en ese subservicio para mantener consistente la
+  telemetria de steps.
+- La consulta RAG hibrida tambien inicia su separacion en
+  `core/query_service.py`; la fachada conserva el refresh de indices y delega
+  la ejecucion de retrieval, expansion de grafo y grounding en ese servicio.
+- El bloque TDM de consulta/catalogo tambien inicia su separacion en
+  `core/tdm_query_service.py`; la fachada delega `query_tdm`, catalogos por
+  servicio/tabla y previews de virtualizacion/sinteticos manteniendo contratos.
+- La ingesta TDM tambien inicia su separacion en
+  `core/tdm_ingestion_service.py`; la fachada delega `ingest_tdm_assets(...)`
+  para mantener aislada la recomputacion de edges tipados y el update de
+  metricas de grafo TDM.
+- Los guardrails de habilitacion TDM (feature flag + requisito de grafo)
+  tambien se centralizan en `core/tdm_policy_service.py` para evitar logica
+  de validacion duplicada en la fachada y en subservicios TDM.
+- La coordinacion de versionado y refresh de indices de retrieval tambien se
+  encapsula en `core/index_coordinator_service.py`, dejando la fachada con
+  estado minimo (`_loaded_index_version`) y delegacion explicita.
+- La capa UI tambien inicia desacople por responsabilidades: transporte HTTP
+  en `ui/api_client.py` y logica de validacion/normalizacion en presenters
+  (`ui/ingestion_presenter.py`, `ui/query_presenter.py`,
+  `ui/tdm_presenter.py`) y controlador de catalogo
+  (`ui/document_catalog_controller.py`).
+
+## Checklist De Cierre Fase 2.3
+
+La siguiente matriz consolida trazabilidad verificable entre contratos publicos
+de la fachada, servicios extraidos y suites que protegen compatibilidad.
+
+| Estado | Metodo publico en fachada (`core/service.py`) | Servicio extraido | Cobertura unitaria directa | Cobertura de regresion/contrato |
+| --- | --- | --- | --- | --- |
+| Completado | `query(request)` | `QueryApplicationService.query(...)` | `tests/test_query_application_service.py` | `tests/test_query_view.py` |
+| Completado | `rebuild_indexes(...)` + refresh previo a `query(...)` | `RetrievalIndexCoordinator` | `tests/test_index_coordinator_service.py` | `tests/test_pipeline.py` |
+| Completado | `query_tdm(request)` | `TdmQueryApplicationService.query_tdm(...)` | `tests/test_tdm_query_application_service.py` | `tests/test_tdm_view.py`, `tests/test_tdm_api_routes.py`, `tests/test_tdm_compat_contract.py` |
+| Completado | `ingest_tdm_assets(request)` | `TdmIngestionApplicationService.ingest_tdm_assets(...)` | `tests/test_tdm_ingestion_application_service.py` | `tests/test_tdm_ingestion_pipeline.py`, `tests/test_tdm_api_routes.py` |
+| Completado | Guardrails `is_tdm_graph_enabled` / `ensure_*` | `TdmPolicyService` | `tests/test_tdm_policy_service.py` | `tests/test_tdm_api_routes.py`, `tests/test_tdm_service_planning.py` |
+| Completado | `get_tdm_service_catalog(...)` | `TdmQueryApplicationService.get_tdm_service_catalog(...)` | `tests/test_tdm_query_application_service.py` | `tests/test_tdm_view.py` |
+| Completado | `get_tdm_table_catalog(...)` | `TdmQueryApplicationService.get_tdm_table_catalog(...)` | `tests/test_tdm_query_application_service.py` | `tests/test_tdm_view.py` |
+| Completado | `preview_tdm_virtualization(...)` | `TdmQueryApplicationService.preview_tdm_virtualization(...)` | `tests/test_tdm_query_application_service.py` | `tests/test_tdm_api_routes.py`, `tests/test_tdm_view.py` |
+| Completado | `get_tdm_synthetic_profile(...)` | `TdmQueryApplicationService.get_tdm_synthetic_profile(...)` | `tests/test_tdm_query_application_service.py` | `tests/test_tdm_service_planning.py`, `tests/test_tdm_view.py` |
+
+### Criterios De Aceptacion De Cierre Fase 5
+
+- Las suites unitarias directas de `QueryApplicationService` y
+  `TdmQueryApplicationService` pasan en verde.
+- Las rutas API y vistas TDM/Query mantienen payloads y semantica sin
+  cambios contractuales observables.
+- Las pruebas de compatibilidad de modelos y contrato TDM se ejecutan en
+  verde antes de avanzar al siguiente corte de descomposicion.
+- Los guardrails TDM y el refresh por `index_version` quedan cubiertos por
+  pruebas unitarias directas de servicios extraidos.
+
+## Checklist De Cierre Fase 3 (UI)
+
+| Estado | Componente UI | Responsabilidad extraida | Cobertura |
+| --- | --- | --- | --- |
+| Completado | `ui/main_window.py` | Transporte HTTP delegado en `ui/api_client.py` | `tests/test_main_window_ingestion_mode.py`, `tests/test_ui_api_client.py` |
+| Completado | `ui/ingestion_view.py` | Validacion + payload + formateo en presenter/formatters | `tests/test_ingestion_view.py`, `tests/test_ingestion_presenter.py` |
+| Completado | `ui/query_view.py` | Validacion/payload y control de catalogo desacoplados | `tests/test_query_view.py`, `tests/test_query_presenter.py` |
+| Completado | `ui/tdm_view.py` | Payload builders y normalizacion de resultados en presenter | `tests/test_tdm_view.py`, `tests/test_tdm_presenter.py` |
+
+## Checklist De Cierre Fase 5 (Contratos y Regresion)
+
+| Estado | Objetivo | Cobertura principal |
+| --- | --- | --- |
+| Completado | Wiring por composicion en `core/composition.py` | `tests/test_composition.py` |
+| Completado | Seleccion de runtime store segun `POSTGRES_*` | `tests/test_runtime_store_selection.py` |
+| Completado | Ruteo del store hibrido (Postgres + fallback legacy) | `tests/test_hybrid_metadata_store.py` |
+| Completado | Delegacion UI shell -> cliente/presenters | `tests/test_ui_api_client.py`, `tests/test_ingestion_presenter.py`, `tests/test_query_presenter.py`, `tests/test_tdm_presenter.py`, `tests/test_main_window_ingestion_mode.py` |
+
+### Criterios De Aceptacion De Cierre
+
+- Los contratos de composicion y runtime deben tener pruebas especificas y
+  aisladas de la vista UI.
+- El fallback legacy a SQLite no debe activarse cuando exista DSN Postgres;
+  cualquier acceso no migrado debe fallar de forma explicita.
+- La UI debe mantener el patron shell + transporte + presenter/controlador,
+  evitando reintroducir logica de dominio en widgets Qt.
 
 ## Diagrama de infraestructura por capas
 

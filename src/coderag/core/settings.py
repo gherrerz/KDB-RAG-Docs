@@ -6,7 +6,7 @@ import base64
 import binascii
 import os
 from pathlib import Path
-from typing import Dict, Literal, Optional
+from typing import Literal
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 load_dotenv(override=False)
 
 
-def _env_str(name: str, default: Optional[str] = None) -> Optional[str]:
+def _env_str(name: str, default: str | None = None) -> str | None:
     """Read string value from environment with default handling."""
     value = os.getenv(name)
     if value is None or value.strip() == "":
@@ -88,13 +88,13 @@ class Settings(BaseSettings):
     chroma_port: int = Field(
         default_factory=lambda: _env_int("CHROMA_PORT", 8000)
     )
-    chroma_token: Optional[str] = Field(
+    chroma_token: str | None = Field(
         default_factory=lambda: _env_str("CHROMA_TOKEN")
     )
-    chroma_username: Optional[str] = Field(
+    chroma_username: str | None = Field(
         default_factory=lambda: _env_str("CHROMA_USERNAME")
     )
-    chroma_password: Optional[str] = Field(
+    chroma_password: str | None = Field(
         default_factory=lambda: _env_str("CHROMA_PASSWORD")
     )
     chroma_persist_dir: Path = Field(
@@ -149,10 +149,10 @@ class Settings(BaseSettings):
     llm_provider: str = Field(
         default_factory=lambda: _env_str("LLM_PROVIDER", "local") or "local"
     )
-    llm_embedding: Optional[str] = Field(
+    llm_embedding: str | None = Field(
         default_factory=lambda: _env_str("LLM_EMBEDDING")
     )
-    openai_api_key: Optional[str] = Field(
+    openai_api_key: str | None = Field(
         default_factory=lambda: _env_str("OPENAI_API_KEY")
     )
     openai_base_url: str = Field(
@@ -174,7 +174,7 @@ class Settings(BaseSettings):
         )
     )
 
-    gemini_api_key: Optional[str] = Field(
+    gemini_api_key: str | None = Field(
         default_factory=lambda: _env_str("GEMINI_API_KEY")
     )
     gemini_answer_model: str = Field(
@@ -190,13 +190,13 @@ class Settings(BaseSettings):
         )
     )
 
-    vertex_service_account_json_b64: Optional[str] = Field(
+    vertex_service_account_json_b64: str | None = Field(
         default_factory=lambda: _env_str("VERTEX_SERVICE_ACCOUNT_JSON_B64")
     )
-    vertex_service_account_json: Optional[str] = Field(
+    vertex_service_account_json: str | None = Field(
         default_factory=lambda: _env_str("VERTEX_SERVICE_ACCOUNT_JSON")
     )
-    vertex_project_id: Optional[str] = Field(
+    vertex_project_id: str | None = Field(
         default_factory=lambda: _env_str("VERTEX_PROJECT_ID")
     )
     vertex_location: str = Field(
@@ -263,13 +263,13 @@ class Settings(BaseSettings):
     use_neo4j: bool = Field(
         default_factory=lambda: _env_bool("USE_NEO4J", True)
     )
-    neo4j_uri: Optional[str] = Field(
+    neo4j_uri: str | None = Field(
         default_factory=lambda: _env_str("NEO4J_URI", "bolt://127.0.0.1:7687")
     )
-    neo4j_user: Optional[str] = Field(
+    neo4j_user: str | None = Field(
         default_factory=lambda: _env_str("NEO4J_USER", "neo4j")
     )
-    neo4j_password: Optional[str] = Field(
+    neo4j_password: str | None = Field(
         default_factory=lambda: _env_str("NEO4J_PASSWORD", "password")
     )
     neo4j_ingest_batch_size: int = Field(
@@ -426,8 +426,8 @@ class Settings(BaseSettings):
 
     def resolve_vertex_labels(
         self,
-        model_name: Optional[str] = None,
-    ) -> Dict[str, str]:
+        model_name: str | None = None,
+    ) -> dict[str, str]:
         """Resolve request labels sent with Vertex calls."""
         effective_model_name = model_name or self.vertex_label_model_name
         labels = {
@@ -444,7 +444,7 @@ class Settings(BaseSettings):
         }
         return {key: value for key, value in labels.items() if value}
 
-    def resolve_vertex_service_account_json(self) -> Optional[str]:
+    def resolve_vertex_service_account_json(self) -> str | None:
         """Resolve service-account JSON, preferring base64 env payload."""
         if (
             self.vertex_service_account_json
@@ -478,14 +478,14 @@ class Settings(BaseSettings):
             )
         return decoded
 
-    def resolve_llm_provider(self, override: Optional[str] = None) -> str:
+    def resolve_llm_provider(self, override: str | None = None) -> str:
         """Resolve effective provider considering request override."""
         provider_name = override or self.llm_provider
         return self._normalize_provider_name(provider_name)
 
     def resolve_embedding_provider(
         self,
-        override: Optional[str] = None,
+        override: str | None = None,
     ) -> str:
         """Resolve provider used for embeddings."""
         provider_name = override or self.llm_provider
@@ -493,8 +493,8 @@ class Settings(BaseSettings):
 
     def resolve_embedding_model(
         self,
-        provider_override: Optional[str] = None,
-        model_override: Optional[str] = None,
+        provider_override: str | None = None,
+        model_override: str | None = None,
     ) -> str:
         """Resolve embedding model with global override precedence."""
         if model_override and model_override.strip():
@@ -516,8 +516,8 @@ class Settings(BaseSettings):
 
     def resolve_answer_model(
         self,
-        provider_override: Optional[str] = None,
-    ) -> Optional[str]:
+        provider_override: str | None = None,
+    ) -> str | None:
         """Resolve answer model configured for the selected provider."""
         provider_name = self.resolve_llm_provider(provider_override)
         if provider_name == "local":
@@ -594,7 +594,7 @@ class Settings(BaseSettings):
 
     def require_embedding_provider_configured(
         self,
-        provider: Optional[str] = None,
+        provider: str | None = None,
     ) -> str:
         """Validate embedding provider and credentials in strict mode."""
         provider_name = self.resolve_embedding_provider(provider)

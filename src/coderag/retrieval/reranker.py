@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from collections import defaultdict
-from typing import Dict, Iterable, List, Set, Tuple
+from collections.abc import Iterable
 
 from coderag.core.models import ChunkRecord
 
@@ -59,9 +59,9 @@ def _normalize_token(token: str) -> str:
     return "".join(ch for ch in normalized if not unicodedata.combining(ch))
 
 
-def _tokenize(text: str) -> List[str]:
+def _tokenize(text: str) -> list[str]:
     """Tokenize plain text using unicode-aware word extraction."""
-    tokens: List[str] = []
+    tokens: list[str] = []
     for token in TOKEN_PATTERN.findall(text):
         normalized = _normalize_token(token)
         if len(normalized) < 2:
@@ -72,7 +72,7 @@ def _tokenize(text: str) -> List[str]:
     return tokens
 
 
-def _bigrams(tokens: Iterable[str]) -> Set[str]:
+def _bigrams(tokens: Iterable[str]) -> set[str]:
     """Build bigram signatures from normalized token sequence."""
     token_list = list(tokens)
     return {
@@ -81,7 +81,7 @@ def _bigrams(tokens: Iterable[str]) -> Set[str]:
     }
 
 
-def _query_is_complex(query: str, query_tokens: List[str]) -> bool:
+def _query_is_complex(query: str, query_tokens: list[str]) -> bool:
     """Estimate whether query likely requires multi-hop/multi-doc evidence."""
     if len(query_tokens) >= 8:
         return True
@@ -93,10 +93,10 @@ def _query_is_complex(query: str, query_tokens: List[str]) -> bool:
 
 
 def _diversify(
-    ranked: List[Tuple[ChunkRecord, float, Dict[str, float]]],
+    ranked: list[tuple[ChunkRecord, float, dict[str, float]]],
     top_k: int,
     query_is_complex: bool,
-) -> List[Tuple[ChunkRecord, float, Dict[str, float]]]:
+) -> list[tuple[ChunkRecord, float, dict[str, float]]]:
     """Apply soft per-document cap to avoid single-document collapse."""
     if top_k <= 0:
         return []
@@ -106,9 +106,9 @@ def _diversify(
         return ranked[:top_k]
 
     per_doc_cap = max(1, min(3, top_k // 2))
-    doc_counts: Dict[str, int] = defaultdict(int)
-    selected: List[Tuple[ChunkRecord, float, Dict[str, float]]] = []
-    selected_ids: Set[str] = set()
+    doc_counts: dict[str, int] = defaultdict(int)
+    selected: list[tuple[ChunkRecord, float, dict[str, float]]] = []
+    selected_ids: set[str] = set()
 
     for item in ranked:
         chunk = item[0]
@@ -152,7 +152,7 @@ def _diversify(
     return selected[:top_k]
 
 
-def _jaccard_similarity(left: Set[str], right: Set[str]) -> float:
+def _jaccard_similarity(left: set[str], right: set[str]) -> float:
     """Return token-set similarity used by MMR redundancy penalty."""
     if not left or not right:
         return 0.0
@@ -163,11 +163,11 @@ def _jaccard_similarity(left: Set[str], right: Set[str]) -> float:
 
 
 def _mmr_select(
-    ranked: List[Tuple[ChunkRecord, float, Dict[str, float]]],
-    token_sets: Dict[str, Set[str]],
+    ranked: list[tuple[ChunkRecord, float, dict[str, float]]],
+    token_sets: dict[str, set[str]],
     top_k: int,
     lambda_param: float = 0.72,
-) -> List[Tuple[ChunkRecord, float, Dict[str, float]]]:
+) -> list[tuple[ChunkRecord, float, dict[str, float]]]:
     """Select results with Maximal Marginal Relevance for query diversity."""
     if top_k <= 0:
         return []
@@ -225,16 +225,16 @@ def _mmr_select(
 
 def rerank_results(
     query: str,
-    items: List[Tuple[ChunkRecord, float, Dict[str, float]]],
+    items: list[tuple[ChunkRecord, float, dict[str, float]]],
     top_k: int,
-) -> List[Tuple[ChunkRecord, float, Dict[str, float]]]:
+) -> list[tuple[ChunkRecord, float, dict[str, float]]]:
     """Rerank hybrid hits with lexical semantics and diversity controls."""
     query_tokens = _tokenize(query)
     query_token_set = set(query_tokens)
     query_bigrams = _bigrams(query_tokens)
 
-    rescored: List[Tuple[ChunkRecord, float, Dict[str, float]]] = []
-    token_sets: Dict[str, Set[str]] = {}
+    rescored: list[tuple[ChunkRecord, float, dict[str, float]]] = []
+    token_sets: dict[str, set[str]] = {}
     for chunk, score, parts in items:
         chunk_tokens = _tokenize(chunk.text)
         chunk_token_set = set(chunk_tokens)

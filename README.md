@@ -42,6 +42,10 @@ Decisiones cerradas para la implementación:
 - UI para operacion de ingesta y consultas
 - UI renovada con tema visual editorial-industrial y mejor jerarquia
 - Validacion anticipada de formularios en Ingestion/Query con ayudas contextuales
+- MainWindow desacoplado de transporte HTTP: delegacion en `UiApiClient`
+- Presenters/controladores UI extraidos para Ingestion, Query y TDM
+- Contratos de composicion/runtime cubiertos con pruebas dedicadas para
+  proteger el wiring del servicio y el ruteo de stores durante el cutover
 - Seguimiento de ingesta con estado visual, barra de progreso y resumen ejecutivo
 - Vista de evidencia mejorada: tabla ordenable, detalle por fila y paths mas legibles
 - Paneles tecnicos colapsables (diagnostics/raw JSON) y atajos de teclado para operacion rapida
@@ -63,6 +67,10 @@ Nota de contrato: la arquitectura listada debajo todavía refleja en parte el es
 El contrato objetivo aprobado para el cutover es Postgres + Chroma remoto + Neo4j; ver [docs/DESIGN_DECISIONS.md](docs/DESIGN_DECISIONS.md).
 
 - UI: PySide6
+- Orquestacion UI: `src/coderag/ui/main_window.py` (shell) +
+  `src/coderag/ui/api_client.py` (transporte HTTP)
+- Presentacion UI: `ingestion_presenter.py`, `query_presenter.py`,
+  `tdm_presenter.py`, `document_catalog_controller.py`
 - API: FastAPI
 - Vector index: `ChromaVectorIndex` solo en modo `remote`
 - Lexical index: Postgres FTS sobre `Tbl_Documents_LexicalCorpus`
@@ -230,6 +238,11 @@ Variables opcionales para apuntar la UI a una API distinta:
   `Ctrl+Shift+E` (copiar endpoint/metodo), `Ctrl+Shift+L`
   (cargar fila en raw), `Ctrl+Shift+X` (exportar filas visibles).
 - Guia operativa detallada: [docs/TDM_UI_OPERATIONS.md](docs/TDM_UI_OPERATIONS.md).
+
+## Migration Guides
+
+- [docs/migration-guides/MIGRATION_UI_PHASE3_PRESENTERS.md](docs/migration-guides/MIGRATION_UI_PHASE3_PRESENTERS.md)
+- [docs/migration-guides/service-ui-refactor.md](docs/migration-guides/service-ui-refactor.md)
 
 ## API Endpoints
 

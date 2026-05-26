@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from html import escape
-from typing import List
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QAbstractItemView, QHeaderView
@@ -84,8 +83,8 @@ class EvidenceView(QWidget):
 
     def update_evidence(
         self,
-        citations: List[dict],
-        paths: List[dict],
+        citations: list[dict],
+        paths: list[dict],
     ) -> None:
         """Refresh evidence table and graph section."""
         self.table.setSortingEnabled(False)

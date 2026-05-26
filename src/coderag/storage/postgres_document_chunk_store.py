@@ -5,7 +5,8 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Iterable, Optional
+from collections.abc import Iterable
+from typing import Any
 
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert
@@ -26,7 +27,7 @@ class PostgresDocumentChunkStore:
         self,
         postgres_dsn: str,
         *,
-        session_factory: Optional[PostgresSessionFactory] = None,
+        session_factory: PostgresSessionFactory | None = None,
     ) -> None:
         """Create the store using a reusable SQLAlchemy session factory."""
         self._session_factory = session_factory or PostgresSessionFactory(
@@ -182,7 +183,7 @@ class PostgresDocumentChunkStore:
             if rows:
                 connection.execute(insert(chunks_table).values(rows))
 
-    def list_chunks(self, source_id: Optional[str] = None) -> list[ChunkRecord]:
+    def list_chunks(self, source_id: str | None = None) -> list[ChunkRecord]:
         """Return stored chunks, optionally filtered by source."""
         statement = select(
             chunks_table.c.chunk_id,
@@ -204,7 +205,7 @@ class PostgresDocumentChunkStore:
 
     def get_document_map(
         self,
-        source_id: Optional[str] = None,
+        source_id: str | None = None,
     ) -> dict[str, dict[str, Any]]:
         """Return quick metadata map keyed by document_id."""
         statement = select(
@@ -226,8 +227,8 @@ class PostgresDocumentChunkStore:
 
     def list_documents(
         self,
-        source_id: Optional[str] = None,
-        tags: Optional[Iterable[str]] = None,
+        source_id: str | None = None,
+        tags: Iterable[str] | None = None,
     ) -> list[DocumentCatalogEntry]:
         """Return lightweight document metadata for UI and API catalog views."""
         requested_tags = self._normalize_tags(tags or [])
@@ -275,7 +276,7 @@ class PostgresDocumentChunkStore:
     def get_document_by_id(
         self,
         document_id: str,
-    ) -> Optional[DocumentCatalogEntry]:
+    ) -> DocumentCatalogEntry | None:
         """Return one persisted document entry by document id."""
         statement = select(
             documents_table.c.document_id,
@@ -302,7 +303,7 @@ class PostgresDocumentChunkStore:
 
     def list_tag_facets(
         self,
-        source_id: Optional[str] = None,
+        source_id: str | None = None,
     ) -> list[tuple[str, int]]:
         """Return persisted tag facets with document counts."""
         statement = select(documents_table.c.tags_json)
@@ -327,7 +328,7 @@ class PostgresDocumentChunkStore:
         self,
         document_id: str,
         tags: Iterable[object],
-    ) -> Optional[dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Replace persisted tags for one document while keeping metadata aligned."""
         normalized_tags = self._normalize_tags(tags)
         statement = select(
@@ -445,7 +446,7 @@ class PostgresDocumentChunkStore:
 
     def list_graph_edges(
         self,
-        source_id: Optional[str] = None,
+        source_id: str | None = None,
     ) -> list[tuple[str, str, str]]:
         """Return graph edges with optional source filter."""
         statement = select(

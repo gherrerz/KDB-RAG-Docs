@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import coderag.core.runtime as runtime
+import coderag.storage.postgres_ingestion_artifact_store as artifact_module
 import coderag.storage.hybrid_metadata_store as hybrid_module
 
 
@@ -66,3 +67,41 @@ def test_build_runtime_store_does_not_instantiate_sqlite_when_postgres_exists(
         assert "SQLite fallback is disabled" in str(exc)
     else:  # pragma: no cover - defensive guard for regression clarity
         raise AssertionError("Expected disabled legacy fallback to raise")
+
+
+def test_build_ingestion_artifact_store_uses_null_without_postgres(
+    monkeypatch,
+) -> None:
+    """Runtime should expose no-op artifact store when Postgres is unset."""
+    monkeypatch.setattr(runtime, "resolve_postgres_dsn", lambda settings: "")
+
+    store = runtime._build_ingestion_artifact_store()
+
+    assert isinstance(store, runtime.NullIngestionArtifactStore)
+
+
+def test_build_ingestion_artifact_store_uses_postgres_when_configured(
+    monkeypatch,
+) -> None:
+    """Runtime should build Postgres artifact store when DSN is configured."""
+    captured: dict[str, object] = {}
+
+    class _FakeArtifactStore:
+        def __init__(self, postgres_dsn: str) -> None:
+            captured["postgres_dsn"] = postgres_dsn
+
+    monkeypatch.setattr(
+        runtime,
+        "resolve_postgres_dsn",
+        lambda settings: "postgresql://docs:secret@db.local/docs",
+    )
+    monkeypatch.setattr(
+        artifact_module,
+        "PostgresIngestionArtifactStore",
+        _FakeArtifactStore,
+    )
+
+    store = runtime._build_ingestion_artifact_store()
+
+    assert isinstance(store, _FakeArtifactStore)
+    assert captured["postgres_dsn"] == "postgresql://docs:secret@db.local/docs"

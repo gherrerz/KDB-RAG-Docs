@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from typing import Iterable, List
+from collections.abc import Iterable
 
 import networkx as nx
 
@@ -25,13 +25,13 @@ def expand_paths(
     graph: nx.Graph,
     hops: int,
     max_paths: int = 6,
-) -> List[GraphPath]:
+) -> list[GraphPath]:
     """Find graph paths connected to entities mentioned in query."""
     entities = list(dict.fromkeys(ENTITY_PATTERN.findall(query)))
     if not entities:
         entities = list(graph.nodes)[:3]
 
-    paths: List[GraphPath] = []
+    paths: list[GraphPath] = []
     for source in entities:
         if source not in graph:
             continue

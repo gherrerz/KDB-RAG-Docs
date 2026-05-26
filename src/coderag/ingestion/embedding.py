@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import List
-
 import requests
 
 from coderag.core.settings import SETTINGS
@@ -12,7 +10,7 @@ from coderag.core.vertex_auth import build_vertex_request_headers
 def _embed_text_openai(
     text: str,
     model: str,
-) -> List[float]:
+) -> list[float]:
     """Generate embeddings using OpenAI embeddings API."""
     if not SETTINGS.openai_api_key:
         raise RuntimeError("OPENAI_API_KEY is required for embeddings.")
@@ -38,7 +36,7 @@ def _embed_text_openai(
     return [float(v) for v in values]
 
 
-def _embed_text_gemini(text: str, model: str) -> List[float]:
+def _embed_text_gemini(text: str, model: str) -> list[float]:
     """Generate embeddings using Gemini embedContent API."""
     if not SETTINGS.gemini_api_key:
         raise RuntimeError("GEMINI_API_KEY is required for embeddings.")
@@ -64,7 +62,7 @@ def _embed_text_gemini(text: str, model: str) -> List[float]:
     return [float(v) for v in values]
 
 
-def _embed_text_vertex(text: str, model: str) -> List[float]:
+def _embed_text_vertex(text: str, model: str) -> list[float]:
     """Generate embeddings using Vertex AI publisher model endpoint."""
     if not SETTINGS.vertex_project_id:
         raise RuntimeError(
@@ -116,7 +114,7 @@ def embed_text(
     size: int = 256,
     provider: str | None = None,
     model: str | None = None,
-) -> List[float]:
+) -> list[float]:
     """Embed text through configured provider and model without local fallback."""
     _ = size
     effective_provider = SETTINGS.require_embedding_provider_configured(provider)

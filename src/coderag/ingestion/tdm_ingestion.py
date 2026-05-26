@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 from coderag.core.models import SourceConfig
 from coderag.storage.metadata_store import MetadataStore
@@ -27,9 +27,9 @@ def _stable_id(*parts: str) -> str:
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:20]
 
 
-def _discover_tdm_files(root: Path) -> List[Path]:
+def _discover_tdm_files(root: Path) -> list[Path]:
     """Return candidate TDM files from one root directory."""
-    discovered: List[Path] = []
+    discovered: list[Path] = []
     for file_path in root.rglob("*"):
         if not file_path.is_file():
             continue
@@ -50,7 +50,7 @@ def _read_text(file_path: Path) -> str:
 def ingest_tdm_assets(
     source: SourceConfig,
     store: MetadataStore,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Ingest TDM-specific metadata into additive SQLite tables."""
     if source.source_type not in {"tdm_folder", "tdm"}:
         raise ValueError(
@@ -80,9 +80,9 @@ def ingest_tdm_assets(
         "masking_rules": 0,
     }
 
-    schema_ids_by_name: Dict[str, str] = {}
-    table_ids_by_key: Dict[str, str] = {}
-    column_ids_by_key: Dict[str, str] = {}
+    schema_ids_by_name: dict[str, str] = {}
+    table_ids_by_key: dict[str, str] = {}
+    column_ids_by_key: dict[str, str] = {}
 
     for file_path in discovered_files:
         text = _read_text(file_path)

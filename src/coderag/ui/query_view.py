@@ -30,7 +30,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from coderag.ui.document_catalog_controller import DocumentCatalogController
 from coderag.ui.evidence_view import EvidenceView
+from coderag.ui.query_presenter import QueryPresenter
 
 
 class DocumentPickerDialog(QDialog):
@@ -202,6 +204,8 @@ class QueryView(QWidget):
         self._on_delete_document = on_delete_document
         self._on_list_document_tags = on_list_document_tags
         self._on_replace_document_tags = on_replace_document_tags
+        self._presenter = QueryPresenter()
+        self._catalog_controller = DocumentCatalogController()
         self._selected_documents: list[dict[str, Any]] = []
         self._available_documents: list[dict[str, Any]] = []
         self._available_tag_facets: list[dict[str, Any]] = []
@@ -472,13 +476,13 @@ class QueryView(QWidget):
             )
             return
 
-        payload = {
-            "question": self.question.text().strip(),
-            "source_id": self.source_id.text().strip() or None,
-            "document_ids": self.selected_document_ids(),
-            "hops": self._safe_int(self.hops.text().strip()),
-            "include_llm_answer": self.include_llm_answer.isChecked(),
-        }
+        payload = self._presenter.build_payload(
+            question=self.question.text(),
+            source_id=self.source_id.text(),
+            document_ids=self.selected_document_ids(),
+            hops_raw=self.hops.text(),
+            include_llm_answer=self.include_llm_answer.isChecked(),
+        )
 
         self._set_status("running", "Ejecutando consulta...")
         result = self._on_query(payload)
@@ -505,7 +509,7 @@ class QueryView(QWidget):
             )
             self._set_status("success", "Consulta completada")
         else:
-            error_text = self._build_actionable_error(result)
+            error_text = self._presenter.build_actionable_error(result)
             self.answer.setPlainText(error_text)
             self.diagnostics.setPlainText(
                 json.dumps(result.get("diagnostics", result), indent=2, ensure_ascii=False)
@@ -515,37 +519,21 @@ class QueryView(QWidget):
 
     def _validate_inputs(self) -> str | None:
         """Validate query form fields before calling backend."""
-        question = (self.question.text() or "").strip()
-        hops = (self.hops.text() or "").strip()
+        error_message, invalid_fields = self._presenter.validate_inputs(
+            question=self.question.text() or "",
+            hops_raw=self.hops.text() or "",
+        )
 
-        if not question:
-            self.question.setProperty("invalid", True)
-            self._refresh_input_style(self.question)
-            return "La pregunta es obligatoria."
-
-        self.question.setProperty("invalid", False)
+        self.question.setProperty("invalid", "question" in invalid_fields)
+        self.hops.setProperty("invalid", "hops" in invalid_fields)
         self._refresh_input_style(self.question)
-
-        parsed_hops = self._safe_int(hops)
-        is_invalid_hops = parsed_hops is None or parsed_hops < 1 or parsed_hops > 6
-        self.hops.setProperty("invalid", is_invalid_hops)
         self._refresh_input_style(self.hops)
-        if is_invalid_hops:
-            return "Los saltos de grafo deben ser un entero entre 1 y 6."
-
-        return None
+        return error_message
 
     @staticmethod
     def _build_actionable_error(result: dict) -> str:
         """Compose a readable, actionable error message for failed queries."""
-        detail = str(result.get("detail") or result.get("error") or "").strip()
-        if not detail:
-            detail = "La consulta no pudo completarse por un error desconocido."
-        return (
-            "La consulta fallo.\n"
-            f"Detalle: {detail}\n"
-            "Accion sugerida: verifica API activa, parametros de entrada y estado de indices."
-        )
+        return QueryPresenter.build_actionable_error(result)
 
     def _set_status(self, state: str, text: str) -> None:
         """Set status badge token and visible status text."""
@@ -591,10 +579,7 @@ class QueryView(QWidget):
 
     @staticmethod
     def _safe_int(raw: str) -> int | None:
-        try:
-            return int(raw)
-        except ValueError:
-            return None
+        return QueryPresenter.safe_int(raw)
 
     def _open_document_picker(self) -> None:
         """Load ingested documents and let the user multi-select them."""
@@ -761,7 +746,7 @@ class QueryView(QWidget):
             return
 
         document = documents[0]
-        current_tags = self._parse_tags_payload(document.get("tags"))
+        current_tags = self._catalog_controller.parse_tags_payload(document.get("tags"))
         current_text = ", ".join(current_tags)
         if len(documents) > 1:
             current_text = ""
@@ -775,7 +760,7 @@ class QueryView(QWidget):
         if not accepted:
             return
 
-        new_tags = self._parse_tags_payload(new_text)
+        new_tags = self._catalog_controller.parse_tags_payload(new_text)
         updated_ids: list[str] = []
         failed_ids: list[str] = []
         for selected_document in documents:
@@ -784,7 +769,7 @@ class QueryView(QWidget):
             if "error" in result or "detail" in result:
                 failed_ids.append(document_id)
                 continue
-            updated_tags = self._parse_tags_payload(
+            updated_tags = self._catalog_controller.parse_tags_payload(
                 result.get("new_tags", new_tags)
             )
             for collection in (self._selected_documents, self._available_documents):
@@ -822,53 +807,25 @@ class QueryView(QWidget):
         documents: Sequence[dict[str, Any]],
     ) -> None:
         """Store a normalized list of selected document metadata rows."""
-        normalized: list[dict[str, Any]] = []
-        seen_ids: set[str] = set()
-        for item in documents:
-            if not isinstance(item, dict):
-                continue
-            document_id = str(item.get("document_id") or "").strip()
-            if not document_id or document_id in seen_ids:
-                continue
-            seen_ids.add(document_id)
-            normalized.append(
-                {
-                    "document_id": document_id,
-                    "title": str(item.get("title") or document_id),
-                    "path_or_url": str(item.get("path_or_url") or ""),
-                    "source_id": str(item.get("source_id") or ""),
-                    "tags": self._parse_tags_payload(item.get("tags")),
-                }
-            )
-        self._selected_documents = normalized
+        self._selected_documents = self._catalog_controller.normalize_selected_documents(
+            documents
+        )
         self._refresh_selected_documents_label()
         self._refresh_document_catalog_state()
 
     def _refresh_selected_documents_label(self) -> None:
         """Render a compact human-readable summary of document filter state."""
-        if not self._selected_documents:
-            self.selected_documents_label.setText("Sin filtro por documento")
-            return
-
-        labels = [
-            str(item.get("title") or item.get("document_id") or "")
-            for item in self._selected_documents
-        ]
-        if len(labels) == 1:
-            summary = labels[0]
-        elif len(labels) == 2:
-            summary = f"{labels[0]} y {labels[1]}"
-        else:
-            summary = f"{labels[0]}, {labels[1]} y {len(labels) - 2} mas"
-        self.selected_documents_label.setText(summary)
+        self.selected_documents_label.setText(
+            self._catalog_controller.summarize_selected_documents(
+                self._selected_documents
+            )
+        )
 
     def selected_document_ids(self) -> list[str]:
         """Return selected document ids in UI order for payload wiring."""
-        return [
-            str(item.get("document_id") or "")
-            for item in self._selected_documents
-            if str(item.get("document_id") or "")
-        ]
+        return self._catalog_controller.selected_document_ids(
+            self._selected_documents
+        )
 
     def _refresh_document_catalog_silent(self) -> None:
         """Refresh available document catalog without noisy user messaging."""
@@ -989,20 +946,10 @@ class QueryView(QWidget):
         """Remove selected documents that are no longer present in catalog."""
         if not self._selected_documents:
             return
-        allowed_ids = {
-            str(item.get("document_id") or "")
-            for item in self._available_documents
-            if str(item.get("document_id") or "")
-        }
-        if not allowed_ids:
-            self._selected_documents = []
-            self._refresh_selected_documents_label()
-            return
-        kept = [
-            item
-            for item in self._selected_documents
-            if str(item.get("document_id") or "") in allowed_ids
-        ]
+        kept = self._catalog_controller.prune_selected_documents(
+            self._selected_documents,
+            self._available_documents,
+        )
         if len(kept) != len(self._selected_documents):
             self._selected_documents = kept
             self._refresh_selected_documents_label()
@@ -1062,25 +1009,9 @@ class QueryView(QWidget):
 
     def _parse_catalog_tags_input(self) -> list[str]:
         """Return normalized tag filter values from the catalog input."""
-        return self._parse_tags_payload(self.catalog_tags.text())
+        return self._catalog_controller.parse_tags_payload(self.catalog_tags.text())
 
     @staticmethod
     def _parse_tags_payload(raw_tags: object) -> list[str]:
         """Normalize tag values coming from UI text or API payloads."""
-        if isinstance(raw_tags, list):
-            values = raw_tags
-        else:
-            values = str(raw_tags or "").split(",")
-
-        normalized: list[str] = []
-        seen: set[str] = set()
-        for raw_tag in values:
-            tag = str(raw_tag or "").strip()
-            if not tag:
-                continue
-            tag_key = tag.casefold()
-            if tag_key in seen:
-                continue
-            seen.add(tag_key)
-            normalized.append(tag)
-        return normalized
+        return DocumentCatalogController.parse_tags_payload(raw_tags)

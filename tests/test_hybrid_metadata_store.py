@@ -23,6 +23,10 @@ class _FakeSqliteStore:
             "deleted_jobs": 5,
         }
 
+    def legacy_passthrough(self, value: str) -> str:
+        """Expose one unported method to verify `__getattr__` delegation."""
+        return f"sqlite:{value}"
+
 
 class _FakeDocumentStore:
     """Capture document routing calls without touching PostgreSQL."""
@@ -305,3 +309,32 @@ def test_tdm_calls_route_to_postgres_tdm_store(
             {"owner": "qa"},
         ),
     ]
+
+
+def test_unported_methods_delegate_to_sqlite_store(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Hybrid store should delegate unknown methods to legacy SQLite object."""
+    monkeypatch.setattr(
+        hybrid_module,
+        "PostgresDocumentChunkStore",
+        _FakeDocumentStore,
+    )
+    monkeypatch.setattr(
+        hybrid_module,
+        "PostgresJobStateStore",
+        _FakeJobStore,
+    )
+    monkeypatch.setattr(
+        hybrid_module,
+        "PostgresTdmStore",
+        _FakeTdmStore,
+    )
+
+    sqlite_store = _FakeSqliteStore()
+    store = hybrid_module.HybridMetadataStore(
+        sqlite_store=sqlite_store,
+        postgres_dsn="postgresql://docs:secret@db.local/docs",
+    )
+
+    assert store.legacy_passthrough("ok") == "sqlite:ok"

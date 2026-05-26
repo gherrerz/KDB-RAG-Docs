@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from typing import Iterable, List, Tuple
+from collections.abc import Iterable
 
 from coderag.core.models import ChunkRecord
 
@@ -18,9 +18,9 @@ ENTITY_PATTERN = re.compile(
 def build_graph_edges(
     source_id: str,
     chunks: Iterable[ChunkRecord],
-) -> List[Tuple[str, str, str, str]]:
+) -> list[tuple[str, str, str, str, str]]:
     """Create RELATES_TO edges for entities co-occurring in chunks."""
-    edges: List[Tuple[str, str, str, str]] = []
+    edges: list[tuple[str, str, str, str, str]] = []
     for chunk in chunks:
         entities = list(dict.fromkeys(ENTITY_PATTERN.findall(chunk.text)))
         for idx in range(len(entities)):

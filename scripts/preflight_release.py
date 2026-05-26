@@ -10,7 +10,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterable, List
+from collections.abc import Iterable
 
 
 LEGACY_PATHS = {
@@ -55,9 +55,9 @@ def _env_flag(name: str, default: bool = False) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _flag_checks() -> List[CheckResult]:
+def _flag_checks() -> list[CheckResult]:
     """Validate TDM feature flag dependencies before rollout checks."""
-    checks: List[CheckResult] = []
+    checks: list[CheckResult] = []
 
     enable_tdm = _env_flag("ENABLE_TDM", False)
     enable_masking = _env_flag("TDM_ENABLE_MASKING", False)
@@ -101,7 +101,7 @@ def _flag_checks() -> List[CheckResult]:
     return checks
 
 
-def _http_get_json(url: str, timeout_sec: float) -> Dict[str, object]:
+def _http_get_json(url: str, timeout_sec: float) -> dict[str, object]:
     """Fetch JSON payload from URL using urllib with explicit timeout."""
     request = urllib.request.Request(url=url, method="GET")
     with urllib.request.urlopen(request, timeout=timeout_sec) as response:
@@ -115,10 +115,10 @@ def _http_get_json(url: str, timeout_sec: float) -> Dict[str, object]:
 def evaluate_openapi_paths(
     discovered_paths: Iterable[str],
     expect_tdm_enabled: bool,
-) -> List[CheckResult]:
+) -> list[CheckResult]:
     """Evaluate OpenAPI path set for legacy and TDM contract expectations."""
     path_set = {str(path) for path in discovered_paths}
-    checks: List[CheckResult] = []
+    checks: list[CheckResult] = []
 
     missing_legacy = sorted(path for path in LEGACY_PATHS if path not in path_set)
     checks.append(
@@ -166,9 +166,9 @@ def _http_checks(
     base_url: str,
     timeout_sec: float,
     expect_tdm_enabled: bool,
-) -> List[CheckResult]:
+) -> list[CheckResult]:
     """Run HTTP preflight against live API endpoint and OpenAPI contract."""
-    checks: List[CheckResult] = []
+    checks: list[CheckResult] = []
 
     try:
         health = _http_get_json(f"{base_url}/health", timeout_sec)
@@ -212,7 +212,7 @@ def _http_checks(
     return checks
 
 
-def _print_results(results: List[CheckResult]) -> None:
+def _print_results(results: list[CheckResult]) -> None:
     """Render check results in a CI-friendly line-oriented format."""
     for result in results:
         status = "PASS" if result.passed else "FAIL"

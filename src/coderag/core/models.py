@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -12,14 +12,14 @@ class SourceConfig(BaseModel):
     """Configuration for a source ingestion request."""
 
     source_type: str = "folder"
-    source_url: Optional[str] = None
-    base_url: Optional[str] = None
-    token: Optional[str] = None
-    local_path: Optional[str] = None
-    logical_root: Optional[str] = None
-    artifact_id: Optional[str] = None
-    filters: Dict[str, Any] = Field(default_factory=dict)
-    tags: List[str] = Field(default_factory=list)
+    source_url: str | None = None
+    base_url: str | None = None
+    token: str | None = None
+    local_path: str | None = None
+    logical_root: str | None = None
+    artifact_id: str | None = None
+    filters: dict[str, Any] = Field(default_factory=dict)
+    tags: list[str] = Field(default_factory=list)
 
 
 class IngestionRequest(BaseModel):
@@ -58,7 +58,7 @@ class DeleteDocumentResponse(BaseModel):
 class ReplaceDocumentTagsRequest(BaseModel):
     """Request payload for replacing document tags."""
 
-    tags: List[str] = Field(default_factory=list)
+    tags: list[str] = Field(default_factory=list)
 
 
 class DocumentTagFacet(BaseModel):
@@ -71,10 +71,10 @@ class DocumentTagFacet(BaseModel):
 class ListDocumentTagsResponse(BaseModel):
     """Response payload for aggregated document tags."""
 
-    source_id: Optional[str] = None
+    source_id: str | None = None
     count: int
-    tags: List[str] = Field(default_factory=list)
-    items: List[DocumentTagFacet] = Field(default_factory=list)
+    tags: list[str] = Field(default_factory=list)
+    items: list[DocumentTagFacet] = Field(default_factory=list)
 
 
 class ReplaceDocumentTagsResponse(BaseModel):
@@ -84,8 +84,8 @@ class ReplaceDocumentTagsResponse(BaseModel):
     message: str
     document_id: str
     source_id: str
-    old_tags: List[str] = Field(default_factory=list)
-    new_tags: List[str] = Field(default_factory=list)
+    old_tags: list[str] = Field(default_factory=list)
+    new_tags: list[str] = Field(default_factory=list)
 
 
 class DocumentRecord(BaseModel):
@@ -98,8 +98,8 @@ class DocumentRecord(BaseModel):
     path_or_url: str
     content_type: str
     updated_at: datetime
-    tags: List[str] = Field(default_factory=list)
-    metadata: Dict[str, Any] = Field(default_factory=dict)
+    tags: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class DocumentCatalogEntry(BaseModel):
@@ -111,7 +111,7 @@ class DocumentCatalogEntry(BaseModel):
     path_or_url: str
     content_type: str
     updated_at: datetime
-    tags: List[str] = Field(default_factory=list)
+    tags: list[str] = Field(default_factory=list)
 
 
 class ChunkRecord(BaseModel):
@@ -124,9 +124,9 @@ class ChunkRecord(BaseModel):
     text: str
     start_ref: int
     end_ref: int
-    entity_name: Optional[str] = None
-    entity_type: Optional[str] = None
-    metadata: Dict[str, Any] = Field(default_factory=dict)
+    entity_name: str | None = None
+    entity_type: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class Evidence(BaseModel):
@@ -145,18 +145,18 @@ class Evidence(BaseModel):
 class GraphPath(BaseModel):
     """Graph traversal path shown as supporting rationale."""
 
-    nodes: List[str]
-    relationships: List[str]
+    nodes: list[str]
+    relationships: list[str]
 
 
 class QueryRequest(BaseModel):
     """Query API payload."""
 
     question: str
-    source_id: Optional[str] = None
-    document_ids: List[str] = Field(default_factory=list)
-    hops: Optional[int] = None
-    llm_provider: Optional[str] = None
+    source_id: str | None = None
+    document_ids: list[str] = Field(default_factory=list)
+    hops: int | None = None
+    llm_provider: str | None = None
     force_fallback: bool = False
     include_llm_answer: bool = True
 
@@ -165,9 +165,9 @@ class QueryResponse(BaseModel):
     """Query API output payload."""
 
     answer: str
-    citations: List[Evidence]
-    graph_paths: List[GraphPath]
-    diagnostics: Dict[str, Any]
+    citations: list[Evidence]
+    graph_paths: list[GraphPath]
+    diagnostics: dict[str, Any]
 
 
 class JobStatus(BaseModel):
@@ -187,7 +187,7 @@ class TdmSchemaAsset(BaseModel):
     source_id: str
     database_name: str
     schema_name: str
-    metadata: Dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class TdmTableAsset(BaseModel):
@@ -198,7 +198,7 @@ class TdmTableAsset(BaseModel):
     schema_id: str
     table_name: str
     table_type: str = "table"
-    metadata: Dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class TdmColumnAsset(BaseModel):
@@ -210,8 +210,8 @@ class TdmColumnAsset(BaseModel):
     column_name: str
     data_type: str
     nullable: bool = True
-    pii_class: Optional[str] = None
-    metadata: Dict[str, Any] = Field(default_factory=dict)
+    pii_class: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class TdmServiceMapping(BaseModel):
@@ -223,7 +223,7 @@ class TdmServiceMapping(BaseModel):
     endpoint: str
     method: str
     table_id: str
-    metadata: Dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class TdmMaskingRule(BaseModel):
@@ -234,10 +234,10 @@ class TdmMaskingRule(BaseModel):
     rule_name: str
     policy_type: str
     scope: str
-    table_id: Optional[str] = None
-    column_id: Optional[str] = None
+    table_id: str | None = None
+    column_id: str | None = None
     priority: int = 100
-    metadata: Dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class TdmSyntheticProfile(BaseModel):
@@ -246,9 +246,9 @@ class TdmSyntheticProfile(BaseModel):
     profile_id: str
     source_id: str
     profile_name: str
-    target_table_id: Optional[str] = None
+    target_table_id: str | None = None
     strategy: str = "template"
-    metadata: Dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class TdmVirtualizationArtifact(BaseModel):
@@ -258,8 +258,8 @@ class TdmVirtualizationArtifact(BaseModel):
     source_id: str
     service_name: str
     artifact_type: str
-    content_json: Dict[str, Any] = Field(default_factory=dict)
-    metadata: Dict[str, Any] = Field(default_factory=dict)
+    content_json: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class TdmIngestRequest(BaseModel):
@@ -274,9 +274,9 @@ class TdmQueryRequest(BaseModel):
     """Request payload for TDM agent-facing query routes."""
 
     question: str
-    source_id: Optional[str] = None
-    service_name: Optional[str] = None
-    table_name: Optional[str] = None
+    source_id: str | None = None
+    service_name: str | None = None
+    table_name: str | None = None
     include_virtualization_preview: bool = False
 
 
@@ -284,5 +284,5 @@ class TdmQueryResponse(BaseModel):
     """Response payload for additive TDM query routes."""
 
     answer: str
-    findings: List[Dict[str, Any]] = Field(default_factory=list)
-    diagnostics: Dict[str, Any] = Field(default_factory=dict)
+    findings: list[dict[str, Any]] = Field(default_factory=list)
+    diagnostics: dict[str, Any] = Field(default_factory=dict)

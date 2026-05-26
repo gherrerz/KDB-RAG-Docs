@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from typing import Iterable, List
+from collections.abc import Iterable
 
 from coderag.core.models import ChunkRecord, DocumentRecord
 
@@ -33,9 +33,9 @@ def _split_by_sections(text: str) -> Iterable[tuple[str, str]]:
 def build_chunks(
     doc: DocumentRecord,
     max_chars: int = 900,
-) -> List[ChunkRecord]:
+) -> list[ChunkRecord]:
     """Build semantic chunks from one document."""
-    chunks: List[ChunkRecord] = []
+    chunks: list[ChunkRecord] = []
     seq = 0
     for section_name, body in _split_by_sections(doc.content):
         pointer = 0

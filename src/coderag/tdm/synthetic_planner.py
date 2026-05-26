@@ -2,16 +2,17 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, List
+from collections.abc import Iterable
+from typing import Any
 
 
 def build_synthetic_profile_plan(
     table_name: str,
-    columns: Iterable[Dict[str, Any]],
+    columns: Iterable[dict[str, Any]],
     target_rows: int = 1000,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Build a deterministic synthetic profile plan from table metadata."""
-    column_plans: List[Dict[str, Any]] = []
+    column_plans: list[dict[str, Any]] = []
     for column in columns:
         column_name = str(column.get("column_name") or "")
         data_type = str(column.get("data_type") or "text")

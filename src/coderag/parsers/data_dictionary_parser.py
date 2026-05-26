@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List
+from typing import Any
 
 COLUMN_HINT_PATTERN = re.compile(
     r"\b(?:column|columna)\s*[:\-]?\s*(?P<name>[\w\.\-]+)",
@@ -23,9 +23,9 @@ TABLE_CONTEXT_PATTERN = re.compile(
 )
 
 
-def parse_data_dictionary(text: str) -> Dict[str, Any]:
+def parse_data_dictionary(text: str) -> dict[str, Any]:
     """Extract masking and sensitivity hints from plain governance text."""
-    rules: List[Dict[str, Any]] = []
+    rules: list[dict[str, Any]] = []
     table_name = None
 
     table_match = TABLE_CONTEXT_PATTERN.search(text)

@@ -7,7 +7,8 @@ import sqlite3
 import time
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from collections.abc import Iterable
+from typing import Any
 
 from coderag.core.models import (
     ChunkRecord,
@@ -256,9 +257,9 @@ class MetadataStore:
             )
 
     @staticmethod
-    def _normalize_tags(tags: Iterable[object]) -> List[str]:
+    def _normalize_tags(tags: Iterable[object]) -> list[str]:
         """Return stable, deduplicated tags suitable for persistence."""
-        normalized: List[str] = []
+        normalized: list[str] = []
         seen: set[str] = set()
         for raw_tag in tags:
             tag = str(raw_tag or "").strip()
@@ -272,14 +273,14 @@ class MetadataStore:
         return normalized
 
     @classmethod
-    def _document_metadata_payload(cls, doc: DocumentRecord) -> Dict[str, Any]:
+    def _document_metadata_payload(cls, doc: DocumentRecord) -> dict[str, Any]:
         """Keep document metadata and explicit tag payload aligned."""
         metadata = dict(doc.metadata)
         metadata["tags"] = cls._normalize_tags(doc.tags)
         return metadata
 
     @classmethod
-    def _parse_tags_json(cls, raw_tags: str) -> List[str]:
+    def _parse_tags_json(cls, raw_tags: str) -> list[str]:
         """Decode persisted tags payload into a normalized list."""
         try:
             parsed = json.loads(raw_tags)
@@ -295,7 +296,7 @@ class MetadataStore:
         return datetime.now(UTC).isoformat()
 
     @staticmethod
-    def _json_dump(value: Dict[str, Any]) -> str:
+    def _json_dump(value: dict[str, Any]) -> str:
         """Serialize metadata dictionaries with ASCII-safe JSON output."""
         return json.dumps(value, ensure_ascii=True)
 
@@ -426,8 +427,8 @@ class MetadataStore:
 
     def list_chunks(
         self,
-        source_id: Optional[str] = None,
-    ) -> List[ChunkRecord]:
+        source_id: str | None = None,
+    ) -> list[ChunkRecord]:
         """Return stored chunks, optionally by source."""
         conn = self._connect()
         try:
@@ -459,7 +460,7 @@ class MetadataStore:
     def replace_graph_edges(
         self,
         source_id: str,
-        edges: Iterable[Tuple[str, str, str, str]],
+        edges: Iterable[tuple[str, str, str, str]],
     ) -> None:
         """Replace graph edges for source with generated edges."""
         conn = self._connect()
@@ -482,8 +483,8 @@ class MetadataStore:
 
     def list_graph_edges(
         self,
-        source_id: Optional[str] = None,
-    ) -> List[Tuple[str, str, str]]:
+        source_id: str | None = None,
+    ) -> list[tuple[str, str, str]]:
         """Return graph edges with optional source filter."""
         conn = self._connect()
         try:
@@ -532,7 +533,7 @@ class MetadataStore:
         finally:
             conn.close()
 
-    def get_job(self, job_id: str) -> Optional[JobStatus]:
+    def get_job(self, job_id: str) -> JobStatus | None:
         """Fetch one job by id."""
         conn = self._connect()
         try:
@@ -574,7 +575,7 @@ class MetadataStore:
         name: str,
         status: str,
         elapsed_ms: float,
-        details: Dict[str, Any],
+        details: dict[str, Any],
     ) -> None:
         """Persist one ingestion timeline event for live progress polling."""
         conn = self._connect()
@@ -606,7 +607,7 @@ class MetadataStore:
         finally:
             conn.close()
 
-    def list_job_events(self, job_id: str) -> List[Dict[str, Any]]:
+    def list_job_events(self, job_id: str) -> list[dict[str, Any]]:
         """Return ordered ingestion timeline events for one job."""
         conn = self._connect()
         try:
@@ -619,7 +620,7 @@ class MetadataStore:
                 """,
                 (job_id,),
             ).fetchall()
-            events: List[Dict[str, Any]] = []
+            events: list[dict[str, Any]] = []
             for row in rows:
                 raw_details = row["details_json"]
                 try:
@@ -644,8 +645,8 @@ class MetadataStore:
 
     def get_document_map(
         self,
-        source_id: Optional[str] = None,
-    ) -> Dict[str, Dict[str, Any]]:
+        source_id: str | None = None,
+    ) -> dict[str, dict[str, Any]]:
         """Return quick metadata map by document_id."""
         conn = self._connect()
         try:
@@ -671,9 +672,9 @@ class MetadataStore:
 
     def list_documents(
         self,
-        source_id: Optional[str] = None,
-        tags: Optional[Iterable[str]] = None,
-    ) -> List[DocumentCatalogEntry]:
+        source_id: str | None = None,
+        tags: Iterable[str] | None = None,
+    ) -> list[DocumentCatalogEntry]:
         """Return lightweight document metadata for UI/API catalog views."""
         requested_tags = self._normalize_tags(tags or [])
         requested_tag_keys = {tag.casefold() for tag in requested_tags}
@@ -699,7 +700,7 @@ class MetadataStore:
                     ORDER BY lower(title) ASC, lower(path_or_url) ASC
                     """
                 ).fetchall()
-            documents: List[DocumentCatalogEntry] = []
+            documents: list[DocumentCatalogEntry] = []
             for row in rows:
                 row_tags = self._parse_tags_json(str(row["tags_json"] or "[]"))
                 if requested_tag_keys:
@@ -724,7 +725,7 @@ class MetadataStore:
     def get_document_by_id(
         self,
         document_id: str,
-    ) -> Optional[DocumentCatalogEntry]:
+    ) -> DocumentCatalogEntry | None:
         """Return one persisted document entry by document id."""
         conn = self._connect()
         try:
@@ -753,8 +754,8 @@ class MetadataStore:
 
     def list_tag_facets(
         self,
-        source_id: Optional[str] = None,
-    ) -> List[Tuple[str, int]]:
+        source_id: str | None = None,
+    ) -> list[tuple[str, int]]:
         """Return persisted tag facets with document counts."""
         conn = self._connect()
         try:
@@ -784,8 +785,8 @@ class MetadataStore:
 
     def list_unique_tags(
         self,
-        source_id: Optional[str] = None,
-    ) -> List[str]:
+        source_id: str | None = None,
+    ) -> list[str]:
         """Return the distinct normalized tags present in persisted documents."""
         return [tag for tag, _count in self.list_tag_facets(source_id=source_id)]
 
@@ -793,7 +794,7 @@ class MetadataStore:
         self,
         document_id: str,
         tags: Iterable[object],
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Replace persisted tags for one document while keeping metadata aligned."""
         normalized_tags = self._normalize_tags(tags)
         conn = self._connect()
@@ -843,7 +844,7 @@ class MetadataStore:
         self,
         title: str,
         content_type: str,
-    ) -> List[DocumentCatalogEntry]:
+    ) -> list[DocumentCatalogEntry]:
         """Return ingested documents matching title and content type."""
         conn = self._connect()
         try:
@@ -899,7 +900,7 @@ class MetadataStore:
         finally:
             conn.close()
 
-    def clear_all_data(self) -> Dict[str, int]:
+    def clear_all_data(self) -> dict[str, int]:
         """Delete all persisted rows while keeping schema intact."""
         conn = self._connect()
         try:
@@ -933,7 +934,7 @@ class MetadataStore:
         finally:
             conn.close()
 
-    def get_runtime_state(self, key: str) -> Optional[str]:
+    def get_runtime_state(self, key: str) -> str | None:
         """Return persisted runtime state value by key."""
         conn = self._connect()
         try:
@@ -1015,7 +1016,7 @@ class MetadataStore:
         source_id: str,
         database_name: str,
         schema_name: str,
-        metadata: Optional[Dict[str, Any]] = None,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         """Insert or update one TDM schema asset."""
         conn = self._connect()
@@ -1050,8 +1051,8 @@ class MetadataStore:
 
     def list_tdm_schemas(
         self,
-        source_id: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
+        source_id: str | None = None,
+    ) -> list[dict[str, Any]]:
         """Return stored TDM schema assets, optionally filtered by source."""
         conn = self._connect()
         try:
@@ -1082,7 +1083,7 @@ class MetadataStore:
         schema_id: str,
         table_name: str,
         table_type: str = "table",
-        metadata: Optional[Dict[str, Any]] = None,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         """Insert or update one TDM table asset."""
         conn = self._connect()
@@ -1119,8 +1120,8 @@ class MetadataStore:
 
     def list_tdm_tables(
         self,
-        source_id: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
+        source_id: str | None = None,
+    ) -> list[dict[str, Any]]:
         """Return stored TDM table assets, optionally filtered by source."""
         conn = self._connect()
         try:
@@ -1153,8 +1154,8 @@ class MetadataStore:
         column_name: str,
         data_type: str,
         nullable: bool = True,
-        pii_class: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        pii_class: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         """Insert or update one TDM column asset."""
         conn = self._connect()
@@ -1195,8 +1196,8 @@ class MetadataStore:
 
     def list_tdm_columns(
         self,
-        source_id: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
+        source_id: str | None = None,
+    ) -> list[dict[str, Any]]:
         """Return stored TDM column assets, optionally filtered by source."""
         conn = self._connect()
         try:
@@ -1231,7 +1232,7 @@ class MetadataStore:
         endpoint: str,
         method: str,
         table_id: str,
-        metadata: Optional[Dict[str, Any]] = None,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         """Insert or update one service-to-table mapping for TDM."""
         conn = self._connect()
@@ -1270,8 +1271,8 @@ class MetadataStore:
 
     def list_tdm_service_mappings(
         self,
-        source_id: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
+        source_id: str | None = None,
+    ) -> list[dict[str, Any]]:
         """Return stored service mappings, optionally filtered by source."""
         conn = self._connect()
         try:
@@ -1306,10 +1307,10 @@ class MetadataStore:
         rule_name: str,
         policy_type: str,
         scope: str,
-        table_id: Optional[str] = None,
-        column_id: Optional[str] = None,
+        table_id: str | None = None,
+        column_id: str | None = None,
         priority: int = 100,
-        metadata: Optional[Dict[str, Any]] = None,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         """Insert or update one TDM masking rule."""
         conn = self._connect()
@@ -1353,8 +1354,8 @@ class MetadataStore:
 
     def list_tdm_masking_rules(
         self,
-        source_id: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
+        source_id: str | None = None,
+    ) -> list[dict[str, Any]]:
         """Return stored masking rules, optionally filtered by source."""
         conn = self._connect()
         try:
@@ -1388,8 +1389,8 @@ class MetadataStore:
         source_id: str,
         service_name: str,
         artifact_type: str,
-        content: Optional[Dict[str, Any]] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        content: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         """Insert or update one virtualization artifact for TDM."""
         conn = self._connect()
@@ -1426,8 +1427,8 @@ class MetadataStore:
 
     def list_tdm_virtualization_artifacts(
         self,
-        source_id: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
+        source_id: str | None = None,
+    ) -> list[dict[str, Any]]:
         """Return virtualization artifacts, optionally filtered by source."""
         conn = self._connect()
         try:
@@ -1463,8 +1464,8 @@ class MetadataStore:
         source_id: str,
         profile_name: str,
         strategy: str = "template",
-        target_table_id: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        target_table_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         """Insert or update one synthetic data profile for TDM."""
         conn = self._connect()
@@ -1501,8 +1502,8 @@ class MetadataStore:
 
     def list_tdm_synthetic_profiles(
         self,
-        source_id: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
+        source_id: str | None = None,
+    ) -> list[dict[str, Any]]:
         """Return synthetic profiles, optionally filtered by source."""
         conn = self._connect()
         try:

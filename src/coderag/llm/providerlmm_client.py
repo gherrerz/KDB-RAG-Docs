@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import requests
 
@@ -27,12 +27,12 @@ class ProviderLlmClient:
     def answer(
         self,
         question: str,
-        chunks: List[ChunkRecord],
+        chunks: list[ChunkRecord],
         context: str | None = None,
         provider: str = "local",
         force_fallback: bool = False,
         strict: bool = False,
-        doc_map: Optional[Dict[str, Dict[str, Any]]] = None,
+        doc_map: dict[str, dict[str, Any]] | None = None,
     ) -> str:
         """Generate answer grounded in retrieved chunks."""
         provider_name = provider.strip().lower()
@@ -91,7 +91,7 @@ class ProviderLlmClient:
     @staticmethod
     def _resolve_document_name(
         chunk: ChunkRecord,
-        doc_map: Optional[Dict[str, Dict[str, Any]]] = None,
+        doc_map: dict[str, dict[str, Any]] | None = None,
     ) -> str:
         """Resolve a human-readable document name for citations."""
         doc_map = doc_map or {}
@@ -118,9 +118,9 @@ class ProviderLlmClient:
     def _local_answer(
         self,
         question: str,
-        chunks: List[ChunkRecord],
+        chunks: list[ChunkRecord],
         context: str | None = None,
-        doc_map: Optional[Dict[str, Dict[str, Any]]] = None,
+        doc_map: dict[str, dict[str, Any]] | None = None,
     ) -> str:
         """Return extractive local answer that always works offline."""
         _ = question
@@ -134,8 +134,8 @@ class ProviderLlmClient:
             return "No se encontro informacion en las fuentes indexadas."
 
         # Keep one high-value finding per document first, then fill by rank.
-        findings: List[ChunkRecord] = []
-        findings_by_doc: Dict[str, int] = defaultdict(int)
+        findings: list[ChunkRecord] = []
+        findings_by_doc: dict[str, int] = defaultdict(int)
         for chunk in clean_chunks:
             if findings_by_doc[chunk.document_id] >= 1:
                 continue
@@ -221,7 +221,7 @@ class ProviderLlmClient:
 
     @staticmethod
     def _context_from_chunks(
-        chunks: List[ChunkRecord],
+        chunks: list[ChunkRecord],
         max_chars: int = 6000,
     ) -> str:
         """Build plain context from top chunks for remote providers."""

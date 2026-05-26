@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 import unicodedata
 import time
-from typing import Iterable, List, Optional, Tuple
+from collections.abc import Iterable
 
 from coderag.core.models import GraphPath
 from coderag.core.settings import SETTINGS
@@ -157,14 +157,14 @@ class GraphStore:
         return "Entity" in labels and relationship_type in relationship_types
 
     @staticmethod
-    def _chunk_rows(rows: List[dict[str, str]], size: int) -> Iterable[List[dict[str, str]]]:
+    def _chunk_rows(rows: list[dict[str, str]], size: int) -> Iterable[list[dict[str, str]]]:
         """Yield rows in bounded chunks for transaction-sized writes."""
         batch_size = max(1, size)
         for start in range(0, len(rows), batch_size):
             yield rows[start:start + batch_size]
 
     @staticmethod
-    def _write_batch(tx_or_session, rows: List[dict[str, str]]) -> None:
+    def _write_batch(tx_or_session, rows: list[dict[str, str]]) -> None:
         """Write one relationship batch using the active Neo4j context."""
         tx_or_session.run(
             """
@@ -188,7 +188,7 @@ class GraphStore:
     def _write_batch_with_retries(
         self,
         session,
-        rows: List[dict[str, str]],
+        rows: list[dict[str, str]],
     ) -> int:
         """Write one batch with bounded retries for transient failures."""
         retries_done = 0
@@ -211,7 +211,7 @@ class GraphStore:
     def replace_edges(
         self,
         source_id: str,
-        edges: Iterable[Tuple[str, str, str, str, str]],
+        edges: Iterable[tuple[str, str, str, str, str]],
     ) -> dict[str, int]:
         """Replace edge set for one source in Neo4j."""
         if not self.is_enabled():
@@ -281,7 +281,7 @@ class GraphStore:
             )
 
     @staticmethod
-    def _write_tdm_batch(tx_or_session, rows: List[dict[str, str]]) -> None:
+    def _write_tdm_batch(tx_or_session, rows: list[dict[str, str]]) -> None:
         """Write one typed TDM relationship batch in Neo4j."""
         tx_or_session.run(
             """
@@ -299,7 +299,7 @@ class GraphStore:
     def _write_tdm_batch_with_retries(
         self,
         session,
-        rows: List[dict[str, str]],
+        rows: list[dict[str, str]],
     ) -> int:
         """Write one TDM edge batch with bounded retries."""
         retries_done = 0
@@ -322,7 +322,7 @@ class GraphStore:
     def replace_tdm_edges(
         self,
         source_id: str,
-        typed_edges: Iterable[Tuple[str, str, str, str]],
+        typed_edges: Iterable[tuple[str, str, str, str]],
     ) -> dict[str, int]:
         """Replace typed TDM edges for one source in Neo4j."""
         if not self.is_enabled():
@@ -353,7 +353,7 @@ class GraphStore:
                 metrics["nodes_deleted"] = self._delete_orphan_entities(session)
                 return metrics
 
-            normalized_rows: List[dict[str, str]] = []
+            normalized_rows: list[dict[str, str]] = []
             for src, rel, tgt, src_id in edge_rows:
                 relation = rel.strip().upper()
                 if relation not in TDM_RELATIONSHIP_TYPES:
@@ -389,9 +389,9 @@ class GraphStore:
         query: str,
         hops: int,
         max_paths: int,
-        source_id: Optional[str] = None,
-        rel_types: Optional[List[str]] = None,
-    ) -> List[GraphPath]:
+        source_id: str | None = None,
+        rel_types: list[str] | None = None,
+    ) -> list[GraphPath]:
         """Expand typed TDM graph paths using relation filters when provided."""
         if not self.is_enabled():
             return []
@@ -409,7 +409,7 @@ class GraphStore:
         if not entities:
             return []
 
-        normalized_rel_types: List[str] = []
+        normalized_rel_types: list[str] = []
         if rel_types:
             normalized_rel_types = [
                 rel.strip().upper()
@@ -432,7 +432,7 @@ class GraphStore:
             "LIMIT $limit"
         )
 
-        paths: List[GraphPath] = []
+        paths: list[GraphPath] = []
         with driver.session() as session:
             records = session.run(
                 cypher,
@@ -458,8 +458,8 @@ class GraphStore:
         query: str,
         hops: int,
         max_paths: int,
-        source_id: Optional[str] = None,
-    ) -> List[GraphPath]:
+        source_id: str | None = None,
+    ) -> list[GraphPath]:
         """Expand multi-hop graph paths using Neo4j runtime."""
         if not self.is_enabled():
             return []
@@ -494,7 +494,7 @@ class GraphStore:
             "LIMIT $limit"
         )
 
-        paths: List[GraphPath] = []
+        paths: list[GraphPath] = []
         with driver.session() as session:
             records = session.run(
                 cypher,
@@ -515,7 +515,7 @@ class GraphStore:
         return paths
 
     @staticmethod
-    def _query_tokens(query: str) -> List[str]:
+    def _query_tokens(query: str) -> list[str]:
         """Extract normalized query tokens for entity seed fallback."""
         tokens = [
             _normalize_token(token)
@@ -529,8 +529,8 @@ class GraphStore:
         driver,
         query: str,
         max_entities: int,
-        source_id: Optional[str] = None,
-    ) -> List[str]:
+        source_id: str | None = None,
+    ) -> list[str]:
         """Resolve likely entity names from lowercase query tokens."""
         tokens = self._query_tokens(query)
         if not tokens:

@@ -61,6 +61,161 @@
   como modo operativo final: el runtime exige Chroma remoto, y readiness
   devuelve `signal=chroma_mode_unsupported` sin exponer `persist_dir` local.
 
+- Se introdujo composicion tipada por contratos en `core/protocols.py` y
+  `core/composition.py`; `RuntimeState` ahora declara store/artifacts con
+  protocolos explicitos y `RagApplicationService` consume dependencias
+  inyectables en lugar de construir concretos dentro de su constructor.
+
+- Se extrajeron `core/ingestion_service.py` y `core/job_service.py` como
+  primer paso de separacion del servicio monolitico; la fachada
+  `RagApplicationService` delega reset/delete/estado de job y la cola async
+  consume el servicio de ingestion delegado sin cambiar el contrato externo.
+
+- La deduplicacion pre-ingesta y la materializacion de
+  documentos/chunks/grafo por `source_id` quedaron encapsuladas en metodos
+  atomicos de `IngestionApplicationService`, reduciendo complejidad en
+  `_ingest_impl` y manteniendo el contrato de fachada `service.ingest(...)`
+  para compatibilidad con workers y tests.
+
+- La construccion de chunks con snapshots de progreso (`chunk_progress`)
+  tambien se movio a `IngestionApplicationService`; la fachada principal
+  conserva la emision del timeline publico y los mismos porcentajes de avance.
+
+- El rebuild de indices posterior a la persistencia de ingesta tambien se
+  delega a `IngestionApplicationService`, preservando el mismo paso publico
+  `rebuild_indexes` y el contrato de salida del job.
+
+- El armado del payload final de ingesta completada (metricas y resumen de
+  deduplicacion) tambien se delega a `IngestionApplicationService`, dejando
+  la fachada centrada en orquestacion y emision de eventos.
+
+- La logica de timeline/progreso de ingesta (`append_job_event`, transiciones
+  `running`/`failed` y callback de progreso) se centraliza en
+  `IngestionApplicationService.append_ingest_step()`, reduciendo complejidad
+  de `_ingest_impl` sin alterar el contrato de pasos publicado.
+
+- La construccion del mensaje de error cuando una fuente no produce
+  documentos, junto con el payload final `failed` de ingesta, se delega a
+  `IngestionApplicationService` para mantener `_ingest_impl` orientado a
+  orquestacion.
+
+- El calculo de progreso del loader de documentos tambien se delega a
+  `IngestionApplicationService.build_loader_progress_step()`, preservando la
+  misma banda de porcentaje y formato de step publicado.
+
+- Se agregaron pruebas unitarias directas para helpers de
+  `IngestionApplicationService` en
+  `tests/test_ingestion_application_service.py`.
+
+- Se agregaron pruebas unitarias directas para los servicios extraidos de
+  consulta (`tests/test_query_application_service.py`) y TDM
+  (`tests/test_tdm_query_application_service.py`), validando modos fallback,
+  firmas legacy de expansion de grafo, filtros de catalogo y persistencia de
+  artefactos de virtualizacion/perfiles sinteticos.
+
+- Se introdujo `core/query_service.py` y la fachada `RagApplicationService`
+  ahora delega la ejecucion de `query(...)` en `QueryApplicationService`
+  despues del refresh de indices, manteniendo el mismo contrato de
+  `QueryResponse`.
+
+- Se introdujo `core/tdm_query_service.py` y la fachada `RagApplicationService`
+  ahora delega `query_tdm`, catalogos TDM y previews de virtualizacion/
+  sinteticos en `TdmQueryApplicationService`, manteniendo payloads y
+  contratos existentes.
+
+- Se introdujo `core/tdm_ingestion_service.py` y la fachada
+  `RagApplicationService` ahora delega `ingest_tdm_assets(...)` en
+  `TdmIngestionApplicationService`, encapsulando la sincronizacion de edges
+  tipados TDM y el enriquecimiento de metricas de grafo sin cambiar el
+  contrato publico del endpoint.
+
+- Se agregaron pruebas unitarias directas para
+  `TdmIngestionApplicationService` en
+  `tests/test_tdm_ingestion_application_service.py`, cubriendo guardrails,
+  persistencia de metricas de grafo y branch sin `source_id`.
+
+- Se introdujo `core/tdm_policy_service.py` y la fachada
+  `RagApplicationService` ahora delega en este servicio los guardrails TDM
+  (`ENABLE_TDM` + disponibilidad de Neo4j) para evitar validaciones
+  duplicadas entre metodos TDM.
+
+- Se introdujo `core/index_coordinator_service.py` y la fachada delega la
+  reconstruccion/sincronizacion de indices (`rebuild_indexes`, refresh
+  lexical por cambios externos y chequeo de `index_version`) en
+  `RetrievalIndexCoordinator`.
+
+- Se agregaron pruebas unitarias directas para servicios extraidos de policy
+  y coordinacion de indices en `tests/test_tdm_policy_service.py` y
+  `tests/test_index_coordinator_service.py`.
+
+- La UI desktop completa la Fase 3 de desacople: `MainWindow` ahora delega
+  transporte/polling HTTP en `src/coderag/ui/api_client.py`, y las vistas
+  de Ingestion/Query/TDM delegan validaciones y normalizacion en
+  presenters/controladores dedicados.
+
+- Se agregaron pruebas unitarias para los nuevos componentes UI extraidos:
+  `tests/test_ui_api_client.py`, `tests/test_ingestion_presenter.py`,
+  `tests/test_query_presenter.py`, `tests/test_tdm_presenter.py`, y se
+  reoriento `tests/test_main_window_ingestion_mode.py` al contrato de
+  delegacion por cliente.
+
+- Se agrego `tests/test_composition.py` para validar el wiring de
+  `core/composition.py` con dependencias inyectables.
+
+- Se reforzo la cobertura contractual de runtime/composicion en Fase 5:
+  `tests/test_runtime_store_selection.py` ahora valida seleccion de artifact
+  store (null vs Postgres), `tests/test_hybrid_metadata_store.py` protege
+  delegacion legacy por `__getattr__`, y `tests/test_composition.py` valida
+  el guardrail `require_chroma_enabled()` durante wiring.
+
+- Se inicio la migracion de anotaciones legacy `typing` hacia tipos built-in
+  en componentes de fase 4 (`src/coderag/jobs/queue.py`,
+  `src/coderag/core/graph_store.py`, `scripts/preflight_release.py`,
+  `scripts/run_multihop_benchmark.py`).
+
+- Se extendio la migracion de tipado moderno en Fase 4 a
+  `src/coderag/core/service.py`, `src/coderag/core/settings.py`,
+  `src/coderag/api/upload_ingestion.py` y
+  `src/coderag/ingestion/index_chroma.py`, y se valido con pruebas
+  focalizadas de core/API/ingestion.
+
+- Se continuo Fase 4 con migracion de anotaciones legacy en retrieval y
+  query (`src/coderag/retrieval/*`, `src/coderag/core/query_service.py`),
+  ingestion/parsers (`src/coderag/ingestion/chunker.py`,
+  `src/coderag/ingestion/embedding.py`,
+  `src/coderag/ingestion/confluence_client.py`,
+  `src/coderag/ingestion/repo_scanner.py`,
+  `src/coderag/ingestion/graph_builder.py`,
+  `src/coderag/ingestion/tdm_graph_builder.py`, `src/coderag/parsers/*`) y
+  utilitarios/store acotados (`src/coderag/core/vertex_auth.py`,
+  `src/coderag/tdm/*`, `src/coderag/ui/evidence_view.py`,
+  `src/coderag/storage/postgres_job_state_store.py`,
+  `src/coderag/storage/postgres_ingestion_artifact_store.py`).
+
+- Esta continuidad de Fase 4 se valido con pruebas focalizadas en query,
+  pipeline, TDM, parsers, UI evidence, auth Vertex y stores Postgres.
+
+- Se completo el cierre tecnico de Fase 4 para migracion de typing legacy en
+  `src/` y `scripts/`, incluyendo los modulos remanentes
+  `src/coderag/storage/metadata_store.py`,
+  `src/coderag/storage/postgres_document_chunk_store.py`,
+  `src/coderag/storage/postgres_tdm_store.py`,
+  `src/coderag/llm/providerlmm_client.py`,
+  `src/coderag/ingestion/document_loader.py`,
+  `src/coderag/ingestion/tdm_ingestion.py` y
+  `src/coderag/core/models.py`.
+
+- Se validaron los ultimos cambios de cierre de Fase 4 con bateria focalizada
+  de pipeline, fallback LLM, auth Vertex y stores metadata/Postgres/TDM.
+
+- Se agrego la guia de migracion
+  `docs/migration-guides/MIGRATION_UI_PHASE3_PRESENTERS.md` con el detalle
+  operativo del split UI por capas.
+
+- Se agrego `docs/migration-guides/service-ui-refactor.md` para consolidar
+  el estado final del refactor de servicios/UI, el contrato de composicion,
+  y la matriz de pruebas focalizadas para regresion de Fase 5.
+
 - La documentacion operativa y de API ahora refleja el snapshot lexico de
   readiness y su uso en UI, incluyendo `README.md`,
   `docs/API_REFERENCE.md` y `docs/UI_RELEASE_CHECKLIST.md`.

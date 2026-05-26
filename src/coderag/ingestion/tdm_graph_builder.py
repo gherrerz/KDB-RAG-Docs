@@ -2,19 +2,19 @@
 
 from __future__ import annotations
 
-from typing import Dict, Iterable, List, Tuple
+from collections.abc import Iterable
 
 
 def build_tdm_typed_edges(
     source_id: str,
-    schemas: Iterable[Dict[str, object]],
-    tables: Iterable[Dict[str, object]],
-    columns: Iterable[Dict[str, object]],
-    mappings: Iterable[Dict[str, object]],
-    masking_rules: Iterable[Dict[str, object]],
-) -> List[Tuple[str, str, str, str]]:
+    schemas: Iterable[dict[str, object]],
+    tables: Iterable[dict[str, object]],
+    columns: Iterable[dict[str, object]],
+    mappings: Iterable[dict[str, object]],
+    masking_rules: Iterable[dict[str, object]],
+) -> list[tuple[str, str, str, str]]:
     """Create typed graph edges from TDM catalog entities."""
-    edges: List[Tuple[str, str, str, str]] = []
+    edges: list[tuple[str, str, str, str]] = []
 
     table_name_by_id = {
         str(row.get("table_id")): str(row.get("table_name"))

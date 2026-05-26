@@ -7,7 +7,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 import tempfile
-from typing import Any, Optional
+from typing import Any
 from uuid import uuid4
 
 from sqlalchemy import delete, insert, select, update
@@ -26,7 +26,7 @@ class PostgresIngestionArtifactStore:
         self,
         postgres_dsn: str,
         *,
-        session_factory: Optional[PostgresSessionFactory] = None,
+        session_factory: PostgresSessionFactory | None = None,
     ) -> None:
         """Create the store using a reusable SQLAlchemy session factory."""
         self._session_factory = session_factory or PostgresSessionFactory(

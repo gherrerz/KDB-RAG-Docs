@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Dict, List
+from typing import Any
 
 HTTP_METHODS = {
     "get",
@@ -27,7 +27,7 @@ TABLE_HINT_PATTERN = re.compile(
 )
 
 
-def _derive_service_name(path_hint: str, payload: Dict[str, Any]) -> str:
+def _derive_service_name(path_hint: str, payload: dict[str, Any]) -> str:
     """Resolve service name from OpenAPI info section or path hint."""
     info = payload.get("info") if isinstance(payload, dict) else None
     if isinstance(info, dict):
@@ -44,7 +44,7 @@ def _derive_service_name(path_hint: str, payload: Dict[str, Any]) -> str:
 def _parse_openapi_json(
     text: str,
     path_hint: str,
-) -> Dict[str, Any] | None:
+) -> dict[str, Any] | None:
     """Parse OpenAPI JSON payload using native json module."""
     try:
         payload = json.loads(text)
@@ -59,7 +59,7 @@ def _parse_openapi_json(
         return None
 
     service_name = _derive_service_name(path_hint, payload)
-    mappings: List[Dict[str, Any]] = []
+    mappings: list[dict[str, Any]] = []
     for endpoint, methods in paths.items():
         if not isinstance(endpoint, str) or not isinstance(methods, dict):
             continue
@@ -91,13 +91,13 @@ def _parse_openapi_json(
 def _parse_openapi_yaml_like(
     text: str,
     path_hint: str,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Best-effort parser for YAML-like OpenAPI files without dependencies."""
     service_name = ""
     current_path = ""
     current_method = ""
     current_table: str | None = None
-    mappings: List[Dict[str, Any]] = []
+    mappings: list[dict[str, Any]] = []
 
     for line in text.splitlines():
         stripped = line.strip()
@@ -144,7 +144,7 @@ def _parse_openapi_yaml_like(
 def parse_openapi_service_contract(
     text: str,
     path_hint: str,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Extract endpoint-to-service mappings from OpenAPI JSON/YAML text."""
     parsed_json = _parse_openapi_json(text=text, path_hint=path_hint)
     if parsed_json is not None:
