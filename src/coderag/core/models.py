@@ -16,6 +16,8 @@ class SourceConfig(BaseModel):
     base_url: Optional[str] = None
     token: Optional[str] = None
     local_path: Optional[str] = None
+    logical_root: Optional[str] = None
+    artifact_id: Optional[str] = None
     filters: Dict[str, Any] = Field(default_factory=dict)
     tags: List[str] = Field(default_factory=list)
 

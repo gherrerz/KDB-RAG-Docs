@@ -136,6 +136,7 @@ def load_documents(
 
     root = Path(source.local_path).expanduser()
     resolved_root = root.resolve(strict=False)
+    logical_root = str(source.logical_root or "").strip().replace("\\", "/")
     source_id = _source_id_from_path(str(resolved_root))
     documents: List[DocumentRecord] = []
     discovered_files, scan_stats = scan_folder_with_diagnostics(resolved_root)
@@ -181,13 +182,23 @@ def load_documents(
         ).hexdigest()[:16]
         extension = file_path.suffix.lower().lstrip(".")
         extensions[extension] = extensions.get(extension, 0) + 1
+        try:
+            relative_path = file_path.relative_to(resolved_root).as_posix()
+        except ValueError:
+            relative_path = file_path.name
+
+        logical_path = relative_path
+        if logical_root:
+            logical_path = (
+                f"{logical_root.rstrip('/')}" f"/{relative_path}"
+            )
         documents.append(
             DocumentRecord(
                 document_id=document_id,
                 source_id=source_id,
                 title=file_path.stem,
                 content=text,
-                path_or_url=str(file_path),
+                path_or_url=logical_path,
                 content_type=extension,
                 updated_at=datetime.now(UTC),
                 metadata={"origin": "folder"},

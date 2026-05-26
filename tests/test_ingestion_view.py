@@ -233,6 +233,28 @@ def test_ingestion_view_async_readiness_helpers() -> None:
         "ready": False,
         "recommendation": "sync",
         "checks": {
+            "lexical": {
+                "required": True,
+                "ok": True,
+                "signal": "lexical_ready",
+                "target": "127.0.0.1:5432/coderag_docs",
+                "indexed": False,
+                "corpus_rows": 0,
+                "document_count": 0,
+                "source_count": 0,
+                "detail": "lexical backend reachable indexed=false corpus_rows=0",
+            },
+            "chroma": {
+                "required": True,
+                "ok": False,
+                "signal": "chroma_auth_failed",
+                "mode": "remote",
+                "target": "chroma.internal:9000",
+                "auth_mode": "bearer",
+                "collection": "coderag_chunks",
+                "expected_hnsw_space": "cosine",
+                "detail": "remote chroma unavailable signal=chroma_auth_failed",
+            },
             "redis": {
                 "required": True,
                 "ok": False,
@@ -244,7 +266,60 @@ def test_ingestion_view_async_readiness_helpers() -> None:
     assert IngestionView._is_async_ready(payload) is False
     rendered = IngestionView._format_async_readiness(payload)
     assert "recommendation: sync" in rendered
+    assert "signal=lexical_ready" in rendered
+    assert "target=127.0.0.1:5432/coderag_docs" in rendered
+    assert "indexed=False" in rendered
+    assert "corpus_rows=0" in rendered
+    assert "documents=0" in rendered
+    assert "sources=0" in rendered
+    assert "signal=chroma_auth_failed" in rendered
+    assert "target=chroma.internal:9000" in rendered
+    assert "collection=coderag_chunks" in rendered
+    assert "expected_hnsw=cosine" in rendered
     assert "redis" in rendered
+
+
+def test_ingestion_view_keeps_fallback_note_when_async_is_not_ready() -> None:
+    """The summary should keep the async->sync fallback note visible."""
+    _ensure_app()
+
+    def _fake_readiness() -> dict:
+        return {
+            "ready": False,
+            "recommendation": "sync",
+            "checks": {
+                "redis": {
+                    "required": True,
+                    "ok": False,
+                    "detail": "Timeout connecting to server",
+                }
+            },
+        }
+
+    view = IngestionView(
+        on_ingest=lambda payload, on_update=None: {
+            "status": "completed",
+            "progress_pct": 100,
+            "message": "ok",
+            "documents": 1,
+            "chunks": 2,
+            "steps": [],
+        },
+        on_reset_all=lambda: {"status": "completed"},
+        on_ingestion_readiness=_fake_readiness,
+    )
+    view.local_path.setText("sample_data")
+    view.execution_mode.setCurrentIndex(0)
+
+    with patch("coderag.ui.ingestion_view.QThread.start", lambda self: None):
+        view._run_ingestion()
+
+    assert str(view.execution_mode.currentData()) == "sync"
+    summary = view.summary.toPlainText()
+    assert "Dependencias async no listas" in summary
+    assert "Ejecutando ingesta sincrona" in summary
+    output = view.output.toPlainText()
+    assert "recommendation: sync" in output
 
 
 def test_ingestion_view_deletes_document_by_id_and_renders_summary() -> None:

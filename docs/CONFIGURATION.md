@@ -2,10 +2,37 @@
 
 La configuracion principal se define en `src/coderag/core/settings.py`.
 
+## Target Contract Approved For Cutover
+
+La configuración final aprobada para este proyecto está orientada a:
+
+- Postgres como backend obligatorio de metadata operacional.
+- Chroma remoto como backend obligatorio de vectores.
+- Neo4j como backend de grafo y TDM.
+
+Durante el cutover todavía pueden aparecer en esta página parámetros que describen el runtime actual.
+Cuando haya conflicto entre parámetros legacy y contrato objetivo, prevalece [docs/DESIGN_DECISIONS.md](DESIGN_DECISIONS.md).
+
+Decisiones cerradas relevantes para configuración:
+
+- `workspace_dir` no forma parte del contrato final como dependencia operativa persistente.
+- `CHROMA_PERSIST_DIR` no forma parte del contrato final como storage vectorial objetivo.
+- La ingesta async de archivos locales no debe depender de `UPLOAD_STAGING_SHARED` como requisito final del runtime; el target es rehidratación desde artifacts temporales en Postgres.
+
+## Bootstrap Actual Del Cutover
+
+El runtime ya acepta el contrato nuevo de configuración para preparar el cutover,
+pero todavía no usa Postgres como store efectivo de metadata documental.
+
+- `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_DB`, `POSTGRES_USER` y `POSTGRES_PASSWORD` ya están soportados por `settings.py`.
+- `POSTGRES_POOL_SIZE`, `POSTGRES_POOL_TIMEOUT` y `RUNTIME_ENVIRONMENT` ya controlan el bootstrap y la policy de startup de Alembic/Postgres.
+- `CHROMA_MODE`, `CHROMA_HOST`, `CHROMA_PORT`, `CHROMA_TOKEN`, `CHROMA_USERNAME` y `CHROMA_PASSWORD` ya están soportados por el contrato de settings.
+- Estado actual: el arranque puede resolver DSN de Postgres y validar heads de Alembic cuando esa ruta se active. En el corte actual, jobs, job_events, runtime_state/index_version, documents, chunks, graph_edges, catálogo TDM y los upload artifacts async ya pueden rutearse a Postgres. El endpoint multipart async persiste artifacts directamente en Postgres al encolar y los workers rehidratan batches desde esos artifacts, por lo que `UPLOAD_STAGING_SHARED` deja de ser un requisito funcional; el staging temporal en filesystem queda sólo para flujos locales legacy fuera de ese path async. La capa vectorial operativa final usa cliente remoto; `embedded` queda sólo como valor legacy no soportado operativamente.
+
 ## Parameters
 
-- `workspace_dir`: carpeta de trabajo
-- `data_dir`: carpeta donde se guarda `metadata.db`
+- `data_dir`: carpeta de trabajo local; `metadata.db` solo se usa como
+  fallback legacy cuando `POSTGRES_*` no esta configurado
 - `max_context_chars`: limite de contexto ensamblado
 - `graph_hops`: cantidad de saltos para expansion en grafo
 - `retrieval_top_n`: candidatos iniciales del retrieval hibrido
@@ -14,10 +41,32 @@ La configuracion principal se define en `src/coderag/core/settings.py`.
 - `ingest_embed_workers`: concurrencia para embeddings durante ingesta
 - `chroma_upsert_batch_size`: lote de escritura para upserts en Chroma
 
+## Docker Compose local
+
+- `CHROMA_IMAGE`: override opcional solo para `docker-compose.yml`; si no se
+  define, el compose usa `chromadb/chroma:0.5.5`.
+- `NEO4J_IMAGE`: override opcional solo para `docker-compose.yml`; si no se
+  define, el compose usa `neo4j:5`.
+- `REDIS_IMAGE`: override opcional solo para `docker-compose.yml`; si no se
+  define, el compose usa `redis:7.2.4-alpine`.
+- `USE_RQ`: en `docker-compose.yml` controla el modo async de la API; para el
+  profile `async`, exportarlo como `true` para que `/sources/ingest/async`
+  use Redis RQ en vez del worker local en proceso.
+- `API_HOST` y `API_PORT`: bind host/port usados por `python src/main.py`
+  fuera de Docker Compose; `PORT` funciona como fallback si `API_PORT` no
+  esta definido.
+- `API_BASE_URL`: URL base que usa `python src/run_ui.py` para hablar con la
+  API; si no esta definido, la UI deriva la URL desde `API_HOST` y
+  `API_PORT`, normalizando `0.0.0.0` a `127.0.0.1`.
+- `UI_API_HOST` y `UI_API_PORT`: overrides opcionales para la UI cuando debe
+  hablar con una API distinta al bind compartido.
+- `CHROMA_HOST_PORT`, `POSTGRES_HOST_PORT`, `NEO4J_HTTP_HOST_PORT`,
+  `NEO4J_BOLT_HOST_PORT`, `API_HOST_PORT` y `REDIS_HOST_PORT` permiten mover
+  bindings host para convivencia con otros stacks locales como KDB-RAG-Repo.
+
 ### Resolucion de rutas de almacenamiento
 
-- `workspace_dir`, `data_dir` y `CHROMA_PERSIST_DIR` aceptan rutas relativas
-  o absolutas.
+- `data_dir` y `CHROMA_PERSIST_DIR` aceptan rutas relativas o absolutas.
 - Si son relativas, el runtime las normaliza contra el root del repositorio
   para evitar drift al iniciar API/UI desde directorios distintos.
 - Recomendacion operativa: en ambientes multi-servicio o scripts externos,
@@ -26,7 +75,10 @@ La configuracion principal se define en `src/coderag/core/settings.py`.
 ## Vector store actual
 
 - `USE_CHROMA`: debe estar en `true` para habilitar runtime vectorial.
-- `CHROMA_PERSIST_DIR`: directorio de persistencia local de ChromaDB.
+- `CHROMA_MODE`: el runtime final soporta `remote`; si recibe `embedded`, readiness y operaciones fallan de forma explicita para forzar el cutover.
+- `CHROMA_PERSIST_DIR`: ruta legacy de compatibilidad; ya no se usa como backend vectorial operativo.
+- `CHROMA_HOST` y `CHROMA_PORT`: destino del servicio Chroma cuando `CHROMA_MODE=remote`.
+- `CHROMA_TOKEN` o `CHROMA_USERNAME` + `CHROMA_PASSWORD`: autenticación opcional para Chroma remoto.
 - `CHROMA_COLLECTION`: coleccion activa donde se guardan chunks+embeddings.
 - `INGEST_EMBED_WORKERS`: numero de workers para generar embeddings en
   paralelo durante `rebuild` de indice vectorial.
@@ -66,6 +118,7 @@ La configuracion principal se define en `src/coderag/core/settings.py`.
 ### Plantillas .env por provider
 
 El repositorio incluye plantillas listas para copiar segun provider:
+
 - `.env.openai.example`
 - `.env.gemini.example`
 - `.env.vertex.example`
@@ -82,6 +135,7 @@ las credenciales necesarias.
 ### Resolucion de modelo de embedding
 
 Precedencia:
+
 1. `LLM_EMBEDDING` (si esta definido)
 2. Modelo por proveedor segun `LLM_PROVIDER`
    (`OPENAI_EMBEDDING_MODEL`, `GEMINI_EMBEDDING_MODEL`,
@@ -148,19 +202,19 @@ La aplicacion carga automaticamente variables desde `.env` en runtime.
 - `RQ_INGEST_JOB_TIMEOUT_SEC`: timeout (segundos) para jobs de ingesta en
   RQ. Default `900`. Aumentar en ingestas largas para evitar errores por
   timeout de worker.
-- `UPLOAD_STAGING_SHARED`: habilita uploads async con RQ cuando `api` y
-  `worker` comparten el mismo volumen/ruta de staging de archivos.
 - `UPLOAD_MAX_BYTES`: limite maximo por archivo para endpoints de upload
   multipart (`/sources/ingest/files*`). Default `26214400` (25 MB).
 
-Para ingesta `folder`, la UI hace staging automatico del directorio elegido
-por el usuario hacia `DATA_DIR/ingestion_staging`.
-El backend consume esa ruta staged, visible tanto para `api` como `worker`
-en Docker Compose por el montaje del repo (`./:/app`).
+Para ingesta `folder`, la UI enumera recursivamente los archivos soportados del
+directorio elegido y los envia por multipart al backend.
+`DATA_DIR/ingestion_staging` queda solo como compatibilidad para limpieza de
+documentos legacy ya staged o para flujos locales que aun usen rutas staged.
+El reset solo toca ese mirror cuando existen documentos historicos bajo esa
+ruta.
 
 Para upload async (`POST /sources/ingest/files/async`) con `USE_RQ=true`,
-requiere `UPLOAD_STAGING_SHARED=true` para asegurar que el worker puede leer
-la ruta staged creada por el API.
+el API persiste artifacts temporales en Postgres y el worker rehidrata esos
+archivos sin requerir staging compartido por filesystem.
 
 Ejemplo rapido Neo4j local:
 

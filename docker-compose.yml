@@ -4,24 +4,32 @@ services:
     container_name: kdb-rag-docs-api
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "127.0.0.1:${API_HOST_PORT:-8000}:8000"
     volumes:
       - ./:/app
     environment:
       - PYTHONUNBUFFERED=1
       - DATA_DIR=storage
-      - WORKSPACE_DIR=workspace
       - USE_CHROMA=true
-      - CHROMA_PERSIST_DIR=storage/chromadb
+      - CHROMA_MODE=remote
+      - CHROMA_HOST=chroma
+      - CHROMA_PORT=8000
       - CHROMA_COLLECTION=coderag_chunks
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB:-coderag_docs}
+      - POSTGRES_USER=${POSTGRES_USER:-coderag}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-coderag}
       - USE_NEO4J=true
-      - USE_RQ=true
+      - USE_RQ=${USE_RQ:-false}
       - REDIS_URL=redis://redis:6379/0
       - NEO4J_URI=bolt://neo4j:7687
       - NEO4J_USER=neo4j
-      - NEO4J_PASSWORD=${NEO4J_PASSWORD:?Set NEO4J_PASSWORD}
+      - NEO4J_PASSWORD=${NEO4J_PASSWORD:-password}
     depends_on:
-      redis:
+      chroma:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
       neo4j:
         condition: service_healthy
@@ -46,6 +54,7 @@ services:
   worker:
     build: .
     container_name: kdb-rag-docs-worker
+    profiles: ["async"]
     restart: unless-stopped
     command: rq worker --url redis://redis:6379/0 ingestion
     volumes:
@@ -53,18 +62,28 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - DATA_DIR=storage
-      - WORKSPACE_DIR=workspace
       - USE_CHROMA=true
-      - CHROMA_PERSIST_DIR=storage/chromadb
+      - CHROMA_MODE=remote
+      - CHROMA_HOST=chroma
+      - CHROMA_PORT=8000
       - CHROMA_COLLECTION=coderag_chunks
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB:-coderag_docs}
+      - POSTGRES_USER=${POSTGRES_USER:-coderag}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-coderag}
       - USE_NEO4J=true
       - USE_RQ=true
       - REDIS_URL=redis://redis:6379/0
       - NEO4J_URI=bolt://neo4j:7687
       - NEO4J_USER=neo4j
-      - NEO4J_PASSWORD=${NEO4J_PASSWORD:?Set NEO4J_PASSWORD}
+      - NEO4J_PASSWORD=${NEO4J_PASSWORD:-password}
     depends_on:
       redis:
+        condition: service_healthy
+      chroma:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
       neo4j:
         condition: service_healthy
@@ -87,11 +106,12 @@ services:
         max-file: "3"
 
   redis:
-    image: redis:7.2.4-alpine
+    image: ${REDIS_IMAGE:-redis:7.2.4-alpine}
     container_name: kdb-rag-docs-redis
+    profiles: ["async"]
     restart: unless-stopped
     ports:
-      - "127.0.0.1:6379:6379"
+      - "127.0.0.1:${REDIS_HOST_PORT:-6379}:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -105,19 +125,21 @@ services:
         max-file: "3"
 
   neo4j:
-    image: neo4j:5
+    image: ${NEO4J_IMAGE:-neo4j:5}
     container_name: kdb-rag-docs-neo4j
     restart: unless-stopped
+    volumes:
+      - neo4j_data:/data
     ports:
-      - "127.0.0.1:7474:7474"
-      - "127.0.0.1:7687:7687"
+      - "127.0.0.1:${NEO4J_HTTP_HOST_PORT:-7474}:7474"
+      - "127.0.0.1:${NEO4J_BOLT_HOST_PORT:-7687}:7687"
     environment:
-      - NEO4J_AUTH=neo4j/${NEO4J_PASSWORD:?Set NEO4J_PASSWORD}
+      - NEO4J_AUTH=neo4j/${NEO4J_PASSWORD:-password}
     healthcheck:
       test:
         [
           "CMD-SHELL",
-          "cypher-shell -a bolt://localhost:7687 -u neo4j -p \"${NEO4J_PASSWORD:?Set NEO4J_PASSWORD}\" \"RETURN 1\" >/dev/null 2>&1",
+          "cypher-shell -a bolt://localhost:7687 -u neo4j -p \"${NEO4J_PASSWORD:-password}\" \"RETURN 1\" >/dev/null 2>&1",
         ]
       interval: 20s
       timeout: 10s
@@ -128,3 +150,62 @@ services:
       options:
         max-size: "50m"
         max-file: "3"
+
+  chroma:
+    image: ${CHROMA_IMAGE:-chromadb/chroma:0.5.5}
+    container_name: kdb-rag-docs-chroma
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${CHROMA_HOST_PORT:-8002}:8000"
+    environment:
+      - IS_PERSISTENT=TRUE
+    volumes:
+      - chroma_data:/chroma/chroma
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "bash -lc 'echo > /dev/tcp/127.0.0.1/8000'",
+        ]
+      interval: 20s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+  postgres:
+    image: postgres:16
+    container_name: kdb-rag-docs-postgres
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-5433}:5432"
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB:-coderag_docs}
+      - POSTGRES_USER=${POSTGRES_USER:-coderag}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-coderag}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-coderag} -d ${POSTGRES_DB:-coderag_docs}",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+volumes:
+  chroma_data:
+  neo4j_data:
+  postgres_data:

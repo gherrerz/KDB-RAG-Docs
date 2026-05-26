@@ -19,8 +19,8 @@
 
 | Case | Type | Pass | Retrieval docs | Reranked docs | Citation docs | Graph paths | Terms hit |
 |---|---|---|---:|---:|---:|---:|---:|
-| es_relacion_ingenieria_finanzas | cross_doc_relacional | yes | 2 | 2 | 2 | 0 | 0/0 |
-| es_trazabilidad_proc_policy_budget | cadena_normativa | yes | 2 | 2 | 2 | 0 | 0/0 |
-| es_personas_project_atlas | persona_proyecto_presupuesto | yes | 2 | 2 | 2 | 0 | 0/0 |
-| es_procurement_to_delivery | cross_doc_relacional | yes | 2 | 2 | 2 | 0 | 0/0 |
-| es_control_single_doc | single_doc_control | yes | 2 | 2 | 2 | 0 | 0/0 |
+| es_relacion_ingenieria_finanzas | cross_doc_relacional | yes | 4 | 4 | 4 | 0 | 0/0 |
+| es_trazabilidad_proc_policy_budget | cadena_normativa | yes | 4 | 4 | 4 | 6 | 0/0 |
+| es_personas_project_atlas | persona_proyecto_presupuesto | yes | 4 | 4 | 4 | 6 | 0/0 |
+| es_procurement_to_delivery | cross_doc_relacional | yes | 4 | 4 | 4 | 0 | 0/0 |
+| es_control_single_doc | single_doc_control | yes | 4 | 4 | 4 | 3 | 0/0 |

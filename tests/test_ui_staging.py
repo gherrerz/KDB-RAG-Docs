@@ -1,4 +1,4 @@
-"""Tests for local folder staging before ingestion requests."""
+"""Tests for local folder ingestion preparation in the desktop UI."""
 
 from __future__ import annotations
 
@@ -7,69 +7,74 @@ from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from coderag.core.settings import SETTINGS
 from coderag.ui import main_window
-from coderag.ui import staging
 
 
-def test_stage_folder_source_returns_data_dir_backed_runtime_path(
+def test_collect_upload_file_paths_expands_directories_recursively(
     tmp_path: Path,
 ) -> None:
-    """Stage selected folder and return runtime path rooted in data_dir."""
+    """Expand selected directories into supported files for multipart upload."""
     source = tmp_path / "docs"
-    source.mkdir(parents=True, exist_ok=True)
+    nested = source / "nested"
+    nested.mkdir(parents=True, exist_ok=True)
     (source / "a.md").write_text("content", encoding="utf-8")
+    (nested / "b.txt").write_text("content", encoding="utf-8")
+    (nested / "ignore.bin").write_bytes(b"x")
 
-    original_root = staging.REPO_ROOT
-    original_data_dir = SETTINGS.data_dir
-    staging.REPO_ROOT = tmp_path
-    SETTINGS.data_dir = tmp_path / "runtime-storage"
-    expected_staging_root = SETTINGS.data_dir / "ingestion_staging"
-    try:
-        runtime_path, metadata = staging.stage_folder_source("docs")
-    finally:
-        staging.REPO_ROOT = original_root
-        SETTINGS.data_dir = original_data_dir
+    collected = main_window._collect_upload_file_paths(str(source))
 
-    staged_dir = Path(runtime_path)
-    assert staged_dir.parent == expected_staging_root
-    assert staged_dir.exists()
-    assert (staged_dir / "a.md").exists()
-    assert metadata["runtime_local_path"] == runtime_path
+    assert collected == [source / "a.md", nested / "b.txt"]
 
 
-def test_prepare_ingestion_payload_stages_folder(monkeypatch) -> None:
-    """Rewrite folder payload path to staging runtime path before API call."""
+def test_collect_upload_entries_preserves_logical_folder_prefix(
+    tmp_path: Path,
+) -> None:
+    """Directory uploads should preserve one stable logical root prefix."""
+    source = tmp_path / "sample_data"
+    nested = source / "nested"
+    nested.mkdir(parents=True, exist_ok=True)
+    (source / "a.md").write_text("content", encoding="utf-8")
+    (nested / "b.txt").write_text("content", encoding="utf-8")
 
-    def _fake_stage(local_path: str):
-        return (
-            "storage/ingestion_staging/test_case",
-            {
-                "source_path": local_path,
-                "staged_path": "X",
-                "runtime_local_path": "storage/ingestion_staging/test_case",
-            },
-        )
+    entries = main_window._collect_upload_entries(str(source))
 
-    monkeypatch.setattr(main_window, "stage_folder_source", _fake_stage)
+    assert entries == [
+        (source / "a.md", "sample_data/a.md"),
+        (nested / "b.txt", "sample_data/nested/b.txt"),
+    ]
+
+
+def test_ingest_routes_folder_source_via_upload() -> None:
+    """Folder sources should route through multipart upload instead of JSON."""
+    calls: list[str] = []
+
+    class _Window:
+        def _ingest_via_upload(self, payload, on_update=None):  # type: ignore[no-untyped-def]
+            calls.append("upload")
+            return {"status": "queued", "job_id": "job-1"}
+
+        def _post_json(self, path, payload, timeout):  # type: ignore[no-untyped-def]
+            calls.append("json")
+            return {"status": "completed"}
+
     payload = {
         "source": {
             "source_type": "folder",
             "local_path": "C:/storage/example",
             "filters": {},
-        }
+        },
+        "_ingestion_channel": "json_folder",
+        "_ingestion_mode": "async",
     }
 
-    prepared, update = main_window._prepare_ingestion_payload(payload)
+    result = main_window.MainWindow.ingest(_Window(), payload)
 
-    assert prepared["source"]["local_path"] == "storage/ingestion_staging/test_case"
-    assert isinstance(update, dict)
-    assert update.get("status") == "running"
-    assert payload["source"]["local_path"] == "C:/storage/example"
+    assert result["status"] == "queued"
+    assert calls == ["upload"]
 
 
 def test_prepare_ingestion_payload_keeps_confluence_unchanged() -> None:
-    """Skip staging for non-folder sources."""
+    """Non-folder sources should keep using JSON ingestion path."""
     payload = {
         "source": {
             "source_type": "confluence",
@@ -79,7 +84,18 @@ def test_prepare_ingestion_payload_keeps_confluence_unchanged() -> None:
         }
     }
 
-    prepared, update = main_window._prepare_ingestion_payload(payload)
+    calls: list[str] = []
 
-    assert prepared == payload
-    assert update is None
+    class _Window:
+        def _ingest_via_upload(self, payload, on_update=None):  # type: ignore[no-untyped-def]
+            calls.append("upload")
+            return {"status": "failed"}
+
+        def _post_json(self, path, body, timeout):  # type: ignore[no-untyped-def]
+            calls.append(path)
+            return {"status": "completed", "path": path, "payload": body}
+
+    result = main_window.MainWindow.ingest(_Window(), payload)
+
+    assert result["status"] == "completed"
+    assert calls == ["/sources/ingest/async"]

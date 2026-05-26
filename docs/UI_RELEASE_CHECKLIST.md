@@ -34,6 +34,10 @@ Checklist operativo para validar la experiencia UI antes de publicar una version
 - Confirmar toggles de panel tecnico funcionan sin perder informacion:
   - Ingestion: timeline + JSON crudo.
   - Query: diagnosticos + JSON crudo.
+- Si Ingestion fuerza fallback de `async` a `sync`, confirmar que el panel
+  tecnico muestra el snapshot del backend lexico (`target`, `indexed`,
+  `corpus_rows`, `documents`, `sources`) para distinguir corpus vacio de
+  backend caido.
 - Verificar que los errores muestren detalle y accion sugerida.
 
 ## 5. Regresion minima recomendada

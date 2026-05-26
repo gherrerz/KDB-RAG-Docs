@@ -1,5 +1,20 @@
 # Arquitectura Tecnica
 
+## Estado Del Cutover
+
+Este documento mezcla la arquitectura actual con el contrato objetivo aprobado para el cutover.
+Mientras la implementación siga migrando, las referencias a SQLite, BM25 operativo, Chroma embebido
+o staging persistente deben leerse como estado actual o legacy, no como contrato final.
+
+El runtime objetivo aprobado es:
+
+- Postgres para metadata operacional y soporte de retrieval léxico.
+- Chroma remoto para persistencia y búsqueda vectorial.
+- Neo4j para grafo y TDM.
+
+Las decisiones de alcance y storage que gobiernan la implementación están consolidadas en
+[DESIGN_DECISIONS.md](DESIGN_DECISIONS.md).
+
 ## Resena de arquitectura
 
 RAG Hybrid Response Validator implementa una arquitectura modular orientada a
@@ -7,7 +22,7 @@ servicios para resolver dos capacidades principales:
 
 - Ingesta de conocimiento documental (carpeta local o Confluence) hacia
   estructuras consultables.
-- Consulta con RAG hibrido (vector + BM25 + grafo) con trazabilidad de
+- Consulta con RAG hibrido (vector + lexical + grafo) con trazabilidad de
   evidencia.
 
 El sistema esta disenado para operar con ChromaDB activo en runtime para la
@@ -18,6 +33,9 @@ adicionales de produccion:
 - Proveedores de embedding/answer externos (OpenAI, Gemini, Vertex AI).
 
 ## Descripcion general
+
+Antes del cutover completo, esta seccion sigue describiendo componentes actuales. El target final aprobado
+retira SQLite y Chroma embebido del contrato operativo y elimina la dependencia de workspace persistente.
 
 ### Runtime principal
 
@@ -120,7 +138,7 @@ graph LR
     Parsers[parsers/*]
     Chunker[ingestion/chunker.py]
     GraphBuilder[ingestion/graph_builder.py]
-    BM25[ingestion/index_bm25.py]
+    Lexical[storage/lexical_store.py\nPostgres LexicalStore]
     Vector[ingestion/index_chroma.py\nChromaVectorIndex]
     Embedding[ingestion/embedding.py\nProvider Embeddings API]
 
@@ -144,7 +162,7 @@ graph LR
     Service --> GraphBuilder
     Service --> Store
 
-    Service --> BM25
+    Service --> Lexical
     Service --> Vector
     Vector --> Embedding
     Service --> Retrieval
@@ -172,7 +190,7 @@ sequenceDiagram
     participant DB as SQLite MetadataStore
     participant EMB as Embedding Provider API
     participant GS as GraphStore (Neo4j obligatorio)
-    participant IDX as BM25 + ChromaVectorIndex
+    participant IDX as LexicalStore + ChromaVectorIndex
 
     User->>API: POST /sources/ingest o /sources/ingest/async
     API->>SVC: ingest(request)
@@ -202,7 +220,7 @@ sequenceDiagram
         SVC->>GS: replace_edges(source_id, edges)
         Note over SVC,GS: UNWIND por bloques + transaccion por lote + retry acotado
         Note over SVC,GS: replace_edges limpia nodos Entity huerfanos tras resincronizar Neo4j
-        SVC->>IDX: rebuild BM25 global + vector del source actual
+        SVC->>IDX: rebuild lexical global + vector del source actual
         IDX->>EMB: embeddings en paralelo por lote
         EMB-->>IDX: vectors
         IDX->>IDX: upsert por lotes en Chroma
@@ -229,7 +247,7 @@ sequenceDiagram
     participant User as Usuario/UI
     participant API as FastAPI
     participant SVC as RagApplicationService
-    participant BM25 as BM25Index
+    participant LEX as LexicalStore Postgres
     participant VEC as ChromaVectorIndex
     participant EMB as Embedding Provider API
     participant RET as hybrid_search_reranker
@@ -242,13 +260,13 @@ sequenceDiagram
     SVC->>DB: get_index_version()
     alt Version cambio por ingesta async
         SVC->>DB: list_chunks()
-        SVC->>BM25: rebuild(chunks)
+      SVC->>LEX: rebuild(chunks, document_map)
         Note over SVC,VEC: Chroma ya persistio vectores en worker
         Note over SVC,VEC: API evita reindexacion vectorial global
     end
 
     SVC->>RET: hybrid_search(question, source_id?, document_ids?)
-    RET->>BM25: search(top_n, source_id?, document_ids?)
+    RET->>LEX: search(top_n, source_id?, document_ids?)
     RET->>VEC: search(top_n, source_id?, document_ids?)
     VEC->>EMB: embed(question)
     EMB-->>VEC: query vector
@@ -283,10 +301,10 @@ Notas del filtro de Query:
 
 ## Consideraciones de despliegue
 
-- Modo local (default): API + UI + SQLite + Chroma persistente.
+- Modo local (default): API + UI + Postgres + Chroma remoto + Neo4j opcional.
 - Modo expandido: activar `USE_RQ=true` para procesamiento asincrono.
 - Docker Compose incluye servicios `redis` y `neo4j`; la capa vectorial usa
-  Chroma embebido en disco dentro de la API (`CHROMA_PERSIST_DIR`).
+  Chroma remoto por HTTP (`CHROMA_HOST`/`CHROMA_PORT`).
 
 ## Consistencia post-ingesta async
 
@@ -294,7 +312,7 @@ Notas del filtro de Query:
   luego incrementa `index_version` en `runtime_state`.
 - La API mantiene un `loaded_index_version` en memoria por proceso.
 - En el siguiente `/query`, si detecta mismatch de version:
-  - reconstruye BM25 desde SQLite,
+  - reconstruye el corpus lexico desde chunks persistidos,
   - reutiliza vectores ya persistidos en Chroma,
   - actualiza su version cargada y continua el retrieval.
 - Este enfoque evita reinicio manual de API y reduce el riesgo de timeout en

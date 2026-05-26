@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import shutil
 import uuid
-from pathlib import Path
+from dataclasses import dataclass
+from pathlib import Path, PurePosixPath
 from typing import Any, Dict, List
 
 from fastapi import UploadFile
@@ -22,6 +24,27 @@ class UploadIngestionError(ValueError):
     """Domain error raised when upload ingestion payload is invalid."""
 
 
+@dataclass(frozen=True)
+class StagedUploadFile:
+    """One uploaded file captured for staging and artifact persistence."""
+
+    ordinal: int
+    original_filename: str
+    staged_filename: str
+    media_type: str | None
+    size_bytes: int
+    content_hash: str
+    payload: bytes
+
+
+@dataclass(frozen=True)
+class StagedUploadBatch:
+    """One staged upload batch plus the captured per-file payloads."""
+
+    staged_dir: Path
+    files: list[StagedUploadFile]
+
+
 class UploadIngestionAdapter:
     """Stage uploaded files and build compatible ingestion requests."""
 
@@ -34,38 +57,57 @@ class UploadIngestionAdapter:
         self.base_dir = base_dir
         self.max_upload_bytes = max_upload_bytes
 
-    def stage_uploads_batch(self, files: list[UploadFile]) -> Path:
+    def stage_uploads_batch(self, files: list[UploadFile]) -> StagedUploadBatch:
         """Persist uploaded files into one isolated temporary directory."""
+        captured_files = self.collect_uploads(files)
+        upload_dir = self.base_dir / uuid.uuid4().hex
+        upload_dir.mkdir(parents=True, exist_ok=False)
+        try:
+            for staged_file in captured_files:
+                destination = upload_dir / staged_file.staged_filename
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_bytes(staged_file.payload)
+        except Exception:
+            shutil.rmtree(upload_dir, ignore_errors=True)
+            raise
+
+        return StagedUploadBatch(staged_dir=upload_dir, files=captured_files)
+
+    def collect_uploads(self, files: list[UploadFile]) -> list[StagedUploadFile]:
+        """Read uploaded files into memory for artifact-backed flows."""
         if not files:
             raise UploadIngestionError(
                 "Upload ingestion requires at least one file."
             )
 
-        upload_dir = self.base_dir / uuid.uuid4().hex
-        upload_dir.mkdir(parents=True, exist_ok=False)
-
         used_names: set[str] = set()
-        try:
-            for upload in files:
-                raw_name = upload.filename or "upload.txt"
-                safe_base_name = self._sanitize_filename(raw_name)
-                safe_name = self._dedupe_filename(safe_base_name, used_names)
-                self._validate_extension(safe_name)
+        captured_files: list[StagedUploadFile] = []
+        for ordinal, upload in enumerate(files):
+            raw_name = upload.filename or "upload.txt"
+            safe_base_name = self._sanitize_filename(raw_name)
+            safe_name = self._dedupe_filename(safe_base_name, used_names)
+            self._validate_extension(safe_name)
 
-                payload = upload.file.read(self.max_upload_bytes + 1)
-                if len(payload) > self.max_upload_bytes:
-                    raise UploadIngestionError(
-                        "Uploaded file exceeds maximum size "
-                        f"({self.max_upload_bytes} bytes): {safe_name}"
-                    )
+            payload = upload.file.read(self.max_upload_bytes + 1)
+            if len(payload) > self.max_upload_bytes:
+                raise UploadIngestionError(
+                    "Uploaded file exceeds maximum size "
+                    f"({self.max_upload_bytes} bytes): {safe_name}"
+                )
 
-                destination = upload_dir / safe_name
-                destination.write_bytes(payload)
-        except Exception:
-            shutil.rmtree(upload_dir, ignore_errors=True)
-            raise
+            captured_files.append(
+                StagedUploadFile(
+                    ordinal=ordinal,
+                    original_filename=raw_name,
+                    staged_filename=safe_name,
+                    media_type=upload.content_type,
+                    size_bytes=len(payload),
+                    content_hash=hashlib.sha256(payload).hexdigest(),
+                    payload=payload,
+                )
+            )
 
-        return upload_dir
+        return captured_files
 
     def parse_filters(self, filters_raw: str | None) -> Dict[str, Any]:
         """Parse optional JSON filters string from multipart form field."""
@@ -108,10 +150,11 @@ class UploadIngestionAdapter:
 
     def build_request(
         self,
-        staged_dir: Path,
+        staged_dir: Path | None,
         source_type: str,
         filters: Dict[str, Any],
         tags: List[str] | None = None,
+        artifact_id: str | None = None,
     ) -> IngestionRequest:
         """Build canonical ingestion request from staged upload content."""
         normalized_source_type = (source_type or "folder").strip().lower()
@@ -122,7 +165,9 @@ class UploadIngestionAdapter:
 
         source = SourceConfig(
             source_type="folder",
-            local_path=str(staged_dir),
+            local_path=(str(staged_dir) if staged_dir is not None else None),
+            logical_root="",
+            artifact_id=artifact_id,
             filters=filters,
             tags=self._normalize_tags(tags or []),
         )
@@ -147,24 +192,39 @@ class UploadIngestionAdapter:
     @staticmethod
     def _dedupe_filename(filename: str, used_names: set[str]) -> str:
         """Avoid collisions inside one upload batch after sanitization."""
-        stem = Path(filename).stem
-        suffix = Path(filename).suffix
+        normalized = PurePosixPath(filename)
+        stem = normalized.stem
+        suffix = normalized.suffix
+        parent = str(normalized.parent)
         candidate = filename
         counter = 2
         while candidate.casefold() in used_names:
-            candidate = f"{stem}_{counter}{suffix}"
+            if parent and parent != ".":
+                candidate = f"{parent}/{stem}_{counter}{suffix}"
+            else:
+                candidate = f"{stem}_{counter}{suffix}"
             counter += 1
         used_names.add(candidate.casefold())
         return candidate
 
     @staticmethod
     def _sanitize_filename(filename: str) -> str:
-        """Normalize filename and remove unsafe characters."""
-        base_name = Path(filename).name.strip() or "upload.txt"
-        sanitized = _SAFE_FILENAME_PATTERN.sub("_", base_name)
-        if sanitized in {"", ".", ".."}:
+        """Normalize uploaded logical path and remove unsafe characters."""
+        normalized = str(filename or "").replace("\\", "/").strip()
+        raw_parts = [part.strip() for part in normalized.split("/")]
+        safe_parts: list[str] = []
+
+        for part in raw_parts:
+            if part in {"", ".", ".."}:
+                continue
+            sanitized = _SAFE_FILENAME_PATTERN.sub("_", part)
+            if sanitized in {"", ".", ".."}:
+                continue
+            safe_parts.append(sanitized)
+
+        if not safe_parts:
             return "upload.txt"
-        return sanitized
+        return "/".join(safe_parts)
 
     @staticmethod
     def _normalize_tags(raw_tags: list[object]) -> List[str]:

@@ -53,8 +53,14 @@ Variables minimas para un arranque funcional:
 - credenciales del provider elegido (`OPENAI_API_KEY`, `GEMINI_API_KEY` o
     `VERTEX_SERVICE_ACCOUNT_JSON_B64` + `VERTEX_PROJECT_ID`)
 - `USE_CHROMA=true`
+- `CHROMA_MODE=remote`
 - `USE_NEO4J=true`
 - `NEO4J_URI`, `NEO4J_USER`, `NEO4J_PASSWORD`
+
+Para el vector store remoto:
+
+- Define `CHROMA_HOST` y `CHROMA_PORT`.
+- Opcionalmente define `CHROMA_TOKEN` o `CHROMA_USERNAME` + `CHROMA_PASSWORD`.
 
 Si usas `LLM_PROVIDER=vertex`:
 
@@ -83,46 +89,91 @@ Para ejecutar API/UI locales, levanta primero la infraestructura.
 
 Imagenes usadas por `docker-compose.yml`:
 
-- `neo4j:5` (obligatorio)
-- `redis:7.2.4-alpine` (opcional, solo async con RQ)
+- `chromadb/chroma:0.5.5` (vector store remoto)
+- `postgres:16` (metadata/job state/artifacts)
+- `neo4j:5` (grafo)
+- `redis:7.2.4-alpine` (opcional, solo profile `async`)
 
-Antes de levantar compose, define password de Neo4j (evita defaults inseguros):
+Defaults locales de desarrollo en compose:
+
+- `NEO4J_PASSWORD=password`
+- `POSTGRES_DB=coderag_docs`
+- `POSTGRES_USER=coderag`
+- `POSTGRES_PASSWORD=coderag`
+- `CHROMA_HOST_PORT=8002`
+- `POSTGRES_HOST_PORT=5433`
+
+Overrides opcionales de imagen para validacion local/offline:
+
+- `CHROMA_IMAGE=chromadb/chroma:latest`
+- `NEO4J_IMAGE=neo4j:5.24`
+- `REDIS_IMAGE=redis:7.4-alpine`
+
+Si quieres sobreescribirlos en la sesion actual:
 
 ```powershell
 $env:NEO4J_PASSWORD="<neo4j-password-seguro>"
+$env:POSTGRES_PASSWORD="<postgres-password-seguro>"
 ```
 
 Descarga recomendada previa de imagenes:
 
 ```powershell
-docker compose pull neo4j redis
+docker compose pull chroma postgres neo4j
+```
+
+Si tu maquina ya tiene imagenes locales utilizables y no quieres depender del
+registry en esa sesion:
+
+```powershell
+$env:CHROMA_IMAGE = "chromadb/chroma:latest"
+$env:NEO4J_IMAGE = "neo4j:5.24"
+$env:REDIS_IMAGE = "redis:7.4-alpine"
+docker compose up -d --build api chroma postgres neo4j
 ```
 
 Arranque recomendado minimo:
 
 ```powershell
-docker compose up -d neo4j
+docker compose up -d chroma postgres neo4j
 ```
 
-Si vas a usar async con RQ:
+Si tambien quieres la API en contenedor sobre ese stack remoto:
 
 ```powershell
-docker compose up -d neo4j redis
+docker compose up -d --build api chroma postgres neo4j
+```
+
+Si vas a usar async con RQ/worker:
+
+```powershell
+$env:USE_RQ = "true"
+$env:REDIS_IMAGE = "redis:7.4-alpine"
+docker compose --profile async up -d --build api worker redis chroma postgres neo4j
 ```
 
 Puertos esperados:
 
+- Chroma HTTP remoto: `http://127.0.0.1:8002`
+- Postgres: `127.0.0.1:5433`
 - Neo4j Browser: `http://127.0.0.1:7474`
 - Neo4j Bolt: `127.0.0.1:7687`
 - Redis: `127.0.0.1:6379`
 
-Nota: Redis y Neo4j quedan bind a localhost por defecto en compose para
+Si quieres reutilizar el stack vivo de KDB-RAG-Repo en vez del compose de Docs:
+
+- `CHROMA_PORT=8001`
+- `POSTGRES_PORT=5432`
+- `NEO4J_URI=bolt://127.0.0.1:17687`
+
+Nota: Chroma, Postgres, Redis y Neo4j quedan bind a localhost por defecto en compose para
 reducir exposicion de red en desarrollo.
 
 Credenciales por defecto en compose:
 
 - Neo4j user: `neo4j`
-- Neo4j password: valor de `NEO4J_PASSWORD`
+- Neo4j password: valor de `NEO4J_PASSWORD` o `password`
+- Postgres db/user/password: `coderag_docs` / `coderag` / `coderag`
 
 ## 5. Run API
 
@@ -167,15 +218,25 @@ En Windows, el worker usa `SimpleWorker` para evitar problemas de `os.fork`.
 Si prefieres API/worker tambien en contenedores:
 
 ```powershell
-docker compose up -d --build api worker redis neo4j
+docker compose up -d --build api chroma postgres neo4j
+```
+
+Para incluir worker+Redis del path async:
+
+```powershell
+$env:USE_RQ = "true"
+$env:REDIS_IMAGE = "redis:7.4-alpine"
+docker compose --profile async up -d --build api worker redis chroma postgres neo4j
 ```
 
 Servicios definidos en [docker-compose.yml](../docker-compose.yml):
 
 - `api` (build local, expone `8000`)
-- `worker` (RQ worker)
-- `redis` (`redis:7-alpine`)
+- `chroma` (`chromadb/chroma:0.5.5`, expone `8001` en host)
+- `postgres` (`postgres:16`, expone `5432` en host)
 - `neo4j` (`neo4j:5`)
+- `worker` (profile `async`)
+- `redis` (profile `async`)
 
 La imagen de contenedor usa el baseline de `requirements.txt` (alineado a
 runtime API/worker), por lo que no instala dependencias de escritorio ni
@@ -234,6 +295,12 @@ En sesiones con politica que bloquea `Remove-Item`, usa:
 
 ```powershell
 .venv\Scripts\python.exe scripts/clean_artifacts.py --remove-metadata-db
+```
+
+Si usas Postgres para artifacts async, puedes purgar los expirados con:
+
+```powershell
+.venv\Scripts\python.exe scripts/purge_expired_ingestion_artifacts.py
 ```
 
 ## 14. Related documentation

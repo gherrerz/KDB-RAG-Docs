@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import base64
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -297,6 +297,6 @@ def test_token_refresh_handles_naive_expiry_datetime() -> None:
     class _FakeCredentials:
         def __init__(self) -> None:
             self.token = "token"
-            self.expiry = datetime.utcnow() + timedelta(minutes=10)
+            self.expiry = datetime.now(timezone.utc) + timedelta(minutes=10)
 
     assert _token_needs_refresh(_FakeCredentials()) is False

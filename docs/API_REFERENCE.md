@@ -1,5 +1,21 @@
 # API Reference
 
+## Contract Note
+
+Esta referencia documenta la API actual del proyecto. Durante el cutover pueden convivir aquí detalles
+del comportamiento implementado hoy con el contrato objetivo aprobado para la arquitectura final.
+
+Para decisiones de target runtime y alcance del cutover, la referencia autoritativa es
+[docs/DESIGN_DECISIONS.md](DESIGN_DECISIONS.md).
+
+En particular, el target aprobado establece que:
+
+- El runtime final usa Postgres + Chroma remoto + Neo4j.
+- La ingesta async de archivos locales debe terminar usando artifacts temporales en Postgres.
+- El flujo multipart async ya persiste upload artifacts temporales en Postgres al momento de encolar, y los workers materializan esos archivos sólo al ejecutar el job sin depender de un shared staging volume.
+- `path_or_url` ya se publica como origen logico estable para fuentes `folder`
+  y multipart; no debe interpretarse como path absoluto o temporal del host.
+
 ## API docs entrypoints
 
 Con el backend levantado con [src/main.py](../src/main.py), la API local expone:
@@ -27,12 +43,12 @@ de la red puede consumirse usando la IP del host.
 | Servicio HTTP | Metodo | Path | Handler FastAPI | Servicio interno | Schema request | Schema response |
 | --- | --- | --- | --- | --- | --- | --- |
 | Health | GET | `/health` | `health` | N/A | N/A | `{"status": "ok"}` |
-| Readiness | GET | `/readiness` | `readiness` | `SERVICE.store.get_index_version` | N/A | `{"status": "ready"}` |
+| Readiness | GET | `/readiness` | `readiness` | checks runtime store + Chroma crítico | N/A | `{"status": "ready"}` |
 | Ingestion sync | POST | `/sources/ingest` | `ingest_source` | `SERVICE.ingest` | `IngestionRequest` | `dict` (estado de job + metricas) |
 | Ingestion uploads batch sync | POST | `/sources/ingest/files` | `ingest_source_files` | `UploadIngestionAdapter` + `SERVICE.ingest` | `multipart/form-data` (`files`, `source_type?`, `filters?`, `tags?`) | `dict` (estado de job + metricas) |
 | Ingestion uploads batch async | POST | `/sources/ingest/files/async` | `ingest_source_files_async` | `UploadIngestionAdapter` + `enqueue_ingest_job/enqueue_local_ingest_job` | `multipart/form-data` (`files`, `source_type?`, `filters?`, `tags?`) | `{"job_id", "status", "message"}` |
 | Ingestion async | POST | `/sources/ingest/async` | `ingest_source_async` | `enqueue_ingest_job` o `enqueue_local_ingest_job` | `IngestionRequest` | `{"job_id", "status", "message"}` |
-| Ingestion readiness | GET | `/sources/ingest/readiness` | `ingest_readiness` | checks runtime + Neo4j + Redis + RQ worker | N/A | `{"ready", "recommendation", "checks"}` |
+| Ingestion readiness | GET | `/sources/ingest/readiness` | `ingest_readiness` | checks runtime + Chroma + Neo4j + Redis + RQ worker | N/A | `{"ready", "recommendation", "checks"}` |
 | Documents catalog | GET | `/sources/documents` | `list_documents` | `SERVICE.list_documents` | `source_id?`, `tags?` | `{"source_id", "tags", "count", "documents"}` |
 | Document tags catalog | GET | `/sources/tags` | `list_document_tags` | `SERVICE.list_document_tags` | `source_id?` | `ListDocumentTagsResponse` |
 | Replace document tags | PUT | `/sources/documents/{document_id}/tags` | `replace_document_tags` | `SERVICE.replace_document_tags` | `document_id` en path + `ReplaceDocumentTagsRequest` | `ReplaceDocumentTagsResponse` |
@@ -60,11 +76,17 @@ de la red puede consumirse usando la IP del host.
     "base_url": null,
     "token": null,
     "local_path": "sample_data",
+    "artifact_id": null,
     "filters": {},
     "tags": ["finance", "urgent"]
   }
 }
 ```
+
+Notas de contrato:
+
+- `source.artifact_id` es opcional y hoy se usa para enlazar uploads async con artifacts temporales persistidos en Postgres durante el cutover.
+- Los clientes JSON existentes no necesitan enviarlo; cuando aplica, el backend lo inyecta en los flujos multipart async.
 
 ### QueryRequest
 
@@ -167,6 +189,9 @@ Codigos comunes:
 Valida que el proceso este listo para recibir trafico y que el estado de
 runtime principal sea accesible.
 
+Cuando Chroma corre en remoto, el detalle operativo del fallo incluye al
+menos `target`, `auth`, `signal` y una `hint` corta para diagnostico.
+
 Response:
 
 ```json
@@ -203,7 +228,7 @@ Comportamiento:
 - Resincroniza el grafo gestionado para el `source_id` afectado.
 - Tras la resincronizacion, elimina nodos `Entity` huerfanos en Neo4j para
   evitar residuos de documentos ya borrados.
-- Reconstuye BM25 para que la consulta refleje el borrado inmediatamente.
+- Reconstruye el corpus lexico para que la consulta refleje el borrado inmediatamente.
 
 Response (ejemplo exitoso):
 
@@ -233,8 +258,8 @@ Comportamiento adicional:
 - Si el lote actual contiene duplicados con esa misma clave, conserva solo una
   version antes de tocar almacenamiento persistente.
 - Si encuentra coincidencias, elimina la version previa de SQLite, Chroma y del
-  mirror local en `storage/ingestion_staging` cuando el archivo reemplazado
-  provenia de staging.
+  mirror local legacy en `storage/ingestion_staging` cuando el archivo
+  reemplazado provenia de un path staged antiguo.
 - Si la coincidencia pertenecia a otro `source_id`, el grafo gestionado de esa
   fuente se reconstruye para evitar duplicados residuales.
 
@@ -368,8 +393,8 @@ Campos del formulario:
 Comportamiento segun modo async:
 
 - Con `USE_RQ=false`: crea worker local en background y encola el job del lote.
-- Con `USE_RQ=true`: requiere `UPLOAD_STAGING_SHARED=true` para garantizar
-  que `api` y `worker` leen el mismo staging del lote.
+- Con `USE_RQ=true`: persiste artifacts temporales en Postgres y el worker
+  rehidrata el lote sin requerir staging compartido.
 
 Para un solo archivo, tambien se usa esta misma ruta con el campo `files`.
 
@@ -407,7 +432,6 @@ Response (shape):
 Codigos comunes:
 
 - `200`: job aceptado.
-- `409`: `USE_RQ=true` sin staging compartido (`UPLOAD_STAGING_SHARED=false`).
 - `422`: formulario invalido, extension no soportada o `filters` no parseable.
 - `500`: error al encolar o iniciar worker.
 
@@ -465,6 +489,25 @@ Codigos comunes:
 
 Expone readiness operativo para decidir entre ingesta `async` o `sync`.
 
+El check de `chroma` informa el destino remoto, modo de auth, coleccion
+gestionada, espacio HNSW detectado cuando existe, y una senal operativa
+como `chroma_auth_failed`, `chroma_timeout`, `chroma_dns_failed` o
+`chroma_hnsw_space_mismatch`.
+
+El check de `lexical` informa el destino Postgres configurado, el backend
+activo, el idioma FTS y un snapshot ligero del corpus (`indexed`,
+`corpus_rows`, `document_count`, `source_count`) para distinguir entre un
+backend reachable y un corpus aun vacio durante cutover o reindexacion.
+
+Ademas de `detail`, el payload de `checks.chroma` expone campos
+estructurados como `signal`, `mode`, `target`,
+`auth_mode`, `collection`, `collections_count`, `heartbeat_ok`,
+`hnsw_space` y `expected_hnsw_space` cuando aplican.
+
+Ademas de `detail`, el payload de `checks.lexical` expone campos
+estructurados como `signal`, `backend`, `fts_language`, `target`,
+`indexed`, `corpus_rows`, `document_count` y `source_count`.
+
 Response (shape):
 
 ```json
@@ -478,6 +521,33 @@ Response (shape):
       "required": true,
       "ok": true,
       "detail": "metadata store reachable"
+    },
+    "lexical": {
+      "required": true,
+      "ok": true,
+      "detail": "lexical backend reachable backend=lexical fts_language=english target=127.0.0.1:5432/coderag_docs indexed=true corpus_rows=7 documents=3 sources=2",
+      "signal": "lexical_ready",
+      "backend": "lexical",
+      "fts_language": "english",
+      "target": "127.0.0.1:5432/coderag_docs",
+      "indexed": true,
+      "corpus_rows": 7,
+      "document_count": 3,
+      "source_count": 2
+    },
+    "chroma": {
+      "required": true,
+      "ok": true,
+      "detail": "remote chroma reachable target=chroma.internal:9000 auth=bearer collections=2 collection=coderag_chunks hnsw=cosine",
+      "signal": "chroma_ready",
+      "mode": "remote",
+      "target": "chroma.internal:9000",
+      "auth_mode": "bearer",
+      "collections_count": 2,
+      "collection": "coderag_chunks",
+      "heartbeat_ok": true,
+      "hnsw_space": "cosine",
+      "expected_hnsw_space": "cosine"
     },
     "neo4j": {
       "required": true,
@@ -498,7 +568,7 @@ Response (shape):
 }
 ```
 
-## DELETE /sources/reset
+## DELETE /sources/reset Details
 
 Borra repositorios de ingesta y deja el sistema listo para primera ingesta.
 
@@ -507,7 +577,8 @@ Incluye:
 - documentos/chunks/aristas/jobs en SQLite
 - metadatos TDM aditivos en SQLite
 - reset de indices en memoria
-- limpieza de staging espejo local en `DATA_DIR/ingestion_staging`
+- limpieza condicional de staging espejo local legacy en
+  `DATA_DIR/ingestion_staging` cuando existen documentos historicos staged
 - limpieza de relaciones administradas y nodos huerfanos en Neo4j
 
 Request:
@@ -596,6 +667,11 @@ Response shape:
   ]
 }
 ```
+
+Nota: `path_or_url` representa el origen logico estable que se usa en catalogo,
+evidencias y deduplicacion visible. Para carpetas locales se deriva desde la
+raiz configurada; para uploads multipart se preserva la ruta relativa enviada
+por el cliente cuando aplica.
 
 Ejemplo:
 

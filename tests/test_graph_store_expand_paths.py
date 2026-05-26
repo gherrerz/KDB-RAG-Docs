@@ -23,9 +23,18 @@ class _FakeSession:
         self,
         seed_names: List[str],
         path_rows: List[Dict[str, Any]],
+        *,
+        labels: List[str] | None = None,
+        relationship_types: List[str] | None = None,
     ) -> None:
         self.seed_names = seed_names
         self.path_rows = path_rows
+        self.labels = ["Entity"] if labels is None else labels
+        self.relationship_types = (
+            ["RELATES_TO"]
+            if relationship_types is None
+            else relationship_types
+        )
         self.calls: List[_Call] = []
 
     def __enter__(self) -> "_FakeSession":
@@ -36,6 +45,13 @@ class _FakeSession:
 
     def run(self, query: str, **params: Any):
         self.calls.append(_Call(query=query, params=params))
+        if "CALL db.labels()" in query:
+            return [{"label": label} for label in self.labels]
+        if "CALL db.relationshipTypes()" in query:
+            return [
+                {"relationshipType": rel_type}
+                for rel_type in self.relationship_types
+            ]
         if "RETURN DISTINCT e.name AS name" in query:
             return [{"name": name} for name in self.seed_names]
         return self.path_rows
@@ -135,5 +151,32 @@ def test_expand_paths_passes_source_filter_to_neo4j_calls() -> None:
 
     assert len(paths) == 1
     assert paths[0].nodes == ["Gobierno de Datos", "Calidad"]
-    for call in session.calls:
+    match_calls = [call for call in session.calls if call.query.startswith("MATCH")]
+    for call in match_calls:
         assert call.params.get("source_id") == "source-xyz"
+
+
+def test_expand_paths_returns_empty_when_relates_to_graph_is_absent() -> None:
+    """Skip seed/path queries when the core graph projection is missing."""
+    session = _FakeSession(
+        seed_names=["unused"],
+        path_rows=[
+            {
+                "nodes": ["Gobierno de Datos", "Calidad"],
+                "relationships": ["RELATES_TO"],
+            }
+        ],
+        relationship_types=[],
+    )
+    store = GraphStore()
+    store._get_driver = lambda: _FakeDriver(session)
+
+    paths = store.expand_paths(
+        query="gobierno de datos y calidad",
+        hops=2,
+        max_paths=6,
+    )
+
+    assert paths == []
+    match_calls = [call for call in session.calls if call.query.startswith("MATCH")]
+    assert match_calls == []

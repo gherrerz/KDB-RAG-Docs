@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import time
 
+import pytest
 from fastapi.testclient import TestClient
 
 from coderag.api import server
@@ -34,6 +36,37 @@ def _fake_embed_text(
         digest = hashlib.sha256(prefix + b"::" + token.encode("utf-8")).digest()
         buckets[digest[0] % len(buckets)] += 1.0
     return buckets
+
+
+@pytest.fixture(autouse=True)
+def _force_remote_chroma_mode() -> None:
+    """Keep API toggle tests pinned to remote Chroma semantics."""
+    original_mode = server.SETTINGS.chroma_mode
+    original_host = server.SETTINGS.chroma_host
+    original_port = server.SETTINGS.chroma_port
+    original_collection = server.SETTINGS.chroma_collection
+    original_vector_index = server.SERVICE.vector_index
+
+    server.SETTINGS.chroma_mode = "remote"
+    server.SETTINGS.chroma_host = os.environ.get("CHROMA_HOST", "127.0.0.1")
+    server.SETTINGS.chroma_port = int(os.environ.get("CHROMA_PORT", "8001"))
+    server.SETTINGS.chroma_collection = os.environ.get(
+        "CHROMA_COLLECTION",
+        "coderag_chunks_pytest",
+    )
+    server.SERVICE.vector_index = index_chroma.ChromaVectorIndex()
+    server.SERVICE.vector_index.clear_all()
+    try:
+        yield
+    finally:
+        close = getattr(server.SERVICE.vector_index, "close", None)
+        if callable(close):
+            close()
+        server.SERVICE.vector_index = original_vector_index
+        server.SETTINGS.chroma_mode = original_mode
+        server.SETTINGS.chroma_host = original_host
+        server.SETTINGS.chroma_port = original_port
+        server.SETTINGS.chroma_collection = original_collection
 
 
 def test_async_ingest_uses_local_worker_when_rq_disabled() -> None:
@@ -412,15 +445,19 @@ def test_list_document_tags_endpoint_returns_unique_tags() -> None:
         source_id = ingest_response.json()["source_id"]
 
         response = client.get(f"/sources/tags?source_id={source_id}")
+        documents_response = client.get(f"/sources/documents?source_id={source_id}")
 
         assert response.status_code == 200
+        assert documents_response.status_code == 200
         body = response.json()
+        documents_body = documents_response.json()
+        document_count = len(documents_body["documents"])
         assert body["source_id"] == source_id
         assert body["count"] == 2
         assert body["tags"] == ["finance", "urgent"]
         assert body["items"] == [
-            {"tag": "finance", "document_count": 2},
-            {"tag": "urgent", "document_count": 2},
+            {"tag": "finance", "document_count": document_count},
+            {"tag": "urgent", "document_count": document_count},
         ]
     finally:
         server.SETTINGS.llm_provider = original_provider

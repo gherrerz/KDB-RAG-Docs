@@ -9,6 +9,23 @@ from fastapi.testclient import TestClient
 from coderag.api import server
 
 
+class _RecordingArtifactStore:
+    """Capture artifact creation calls made by the async upload endpoint."""
+
+    def __init__(self) -> None:
+        """Initialize empty call capture."""
+        self.calls: list[tuple[str, object]] = []
+
+    def create_uploaded_batch_artifact(self, **kwargs):  # type: ignore[no-untyped-def]
+        """Record artifact creation payload and return one deterministic id."""
+        self.calls.append(("create", kwargs))
+        return "artifact-upload-1"
+
+    def mark_processing_failed(self, artifact_id: str, error_message: str) -> None:
+        """Record failure fallback calls for diagnostics."""
+        self.calls.append(("failed", {"artifact_id": artifact_id, "error_message": error_message}))
+
+
 def test_upload_files_ingest_stages_single_file_and_runs_service() -> None:
     """Ingest one uploaded file through plural multipart endpoint."""
     client = TestClient(server.app)
@@ -54,6 +71,45 @@ def test_upload_files_ingest_stages_single_file_and_runs_service() -> None:
     assert response.json().get("status") == "completed"
     staged_dir = captured["staged_dir"]
     assert not staged_dir.exists()
+
+
+def test_upload_files_ingest_preserves_nested_logical_names() -> None:
+    """Multipart upload should preserve nested logical paths within staging."""
+    client = TestClient(server.app)
+    original_ingest = server.SERVICE.ingest
+    captured: dict[str, object] = {}
+
+    def _fake_ingest(request):  # type: ignore[no-untyped-def]
+        staged_dir = Path(request.source.local_path or "")
+        nested_file = staged_dir / "sample_data" / "nested" / "notes.md"
+        assert nested_file.exists()
+        captured["logical_root"] = request.source.logical_root
+        return {
+            "job_id": "upload-job-nested-1",
+            "status": "completed",
+            "message": "ok",
+        }
+
+    server.SERVICE.ingest = _fake_ingest  # type: ignore[assignment]
+    try:
+        response = client.post(
+            "/sources/ingest/files",
+            files=[
+                (
+                    "files",
+                    (
+                        "sample_data/nested/notes.md",
+                        b"# Notes\nOwner: Project Atlas\n",
+                        "text/markdown",
+                    ),
+                )
+            ],
+        )
+    finally:
+        server.SERVICE.ingest = original_ingest  # type: ignore[assignment]
+
+    assert response.status_code == 200
+    assert captured["logical_root"] == ""
 
 
 def test_upload_files_ingest_rejects_invalid_filters_json() -> None:
@@ -126,11 +182,12 @@ def test_upload_files_async_uses_local_queue_for_single_file() -> None:
     client = TestClient(server.app)
     original_use_rq = server.SETTINGS.use_rq
     original_enqueue_local = server.enqueue_local_ingest_job
-    captured: dict[str, str] = {}
+    captured: dict[str, object] = {}
 
     def _fake_enqueue_local(payload, cleanup_staging_dir=None):  # type: ignore[no-untyped-def]
-        captured["local_path"] = str(payload["source"]["local_path"])
-        captured["cleanup"] = str(cleanup_staging_dir)
+        captured["local_path"] = payload["source"].get("local_path")
+        captured["artifact_id"] = payload["source"].get("artifact_id")
+        captured["cleanup"] = cleanup_staging_dir
         return "upload-local-job-1"
 
     server.SETTINGS.use_rq = False
@@ -149,47 +206,26 @@ def test_upload_files_async_uses_local_queue_for_single_file() -> None:
     body = response.json()
     assert body.get("status") == "queued"
     assert body.get("job_id") == "upload-local-job-1"
-    assert captured["local_path"] == captured["cleanup"]
+    assert captured["local_path"] is None
+    assert isinstance(captured["artifact_id"], str)
+    assert captured["artifact_id"]
+    assert captured["cleanup"] is None
 
 
-def test_upload_files_async_rejects_rq_without_shared_staging_single_file() -> None:
-    """Block plural async upload for one file when staging is not shared."""
+def test_upload_files_async_uses_rq_single_file() -> None:
+    """Allow RQ async upload for one file via persisted artifacts."""
     client = TestClient(server.app)
     original_use_rq = server.SETTINGS.use_rq
-    original_shared = server.SETTINGS.upload_staging_shared
-
-    server.SETTINGS.use_rq = True
-    server.SETTINGS.upload_staging_shared = False
-    try:
-        response = client.post(
-            "/sources/ingest/files/async",
-            files=[("files", ("notes.md", b"hello", "text/markdown"))],
-        )
-    finally:
-        server.SETTINGS.use_rq = original_use_rq
-        server.SETTINGS.upload_staging_shared = original_shared
-
-    assert response.status_code == 409
-    assert "upload_staging_shared" in str(
-        response.json().get("detail", "")
-    ).lower()
-
-
-def test_upload_files_async_uses_rq_when_staging_is_shared_single_file() -> None:
-    """Enqueue one uploaded file through plural async route with RQ."""
-    client = TestClient(server.app)
-    original_use_rq = server.SETTINGS.use_rq
-    original_shared = server.SETTINGS.upload_staging_shared
     original_enqueue_rq = server.enqueue_ingest_job
-    captured: dict[str, str] = {}
+    captured: dict[str, object] = {}
 
     def _fake_enqueue_rq(payload, cleanup_staging_dir=None):  # type: ignore[no-untyped-def]
-        captured["local_path"] = str(payload["source"]["local_path"])
-        captured["cleanup"] = str(cleanup_staging_dir)
-        return "upload-rq-job-1"
+        captured["local_path"] = payload["source"].get("local_path")
+        captured["artifact_id"] = payload["source"].get("artifact_id")
+        captured["cleanup"] = cleanup_staging_dir
+        return "upload-rq-job-0"
 
     server.SETTINGS.use_rq = True
-    server.SETTINGS.upload_staging_shared = True
     server.enqueue_ingest_job = _fake_enqueue_rq  # type: ignore[assignment]
     try:
         response = client.post(
@@ -198,14 +234,14 @@ def test_upload_files_async_uses_rq_when_staging_is_shared_single_file() -> None
         )
     finally:
         server.SETTINGS.use_rq = original_use_rq
-        server.SETTINGS.upload_staging_shared = original_shared
         server.enqueue_ingest_job = original_enqueue_rq  # type: ignore[assignment]
 
     assert response.status_code == 200
-    body = response.json()
-    assert body.get("status") == "queued"
-    assert body.get("job_id") == "upload-rq-job-1"
-    assert captured["local_path"] == captured["cleanup"]
+    assert response.json().get("job_id") == "upload-rq-job-0"
+    assert captured["local_path"] is None
+    assert isinstance(captured["artifact_id"], str)
+    assert captured["artifact_id"]
+    assert captured["cleanup"] is None
 
 
 def test_upload_files_ingest_returns_structured_500_details() -> None:
@@ -334,16 +370,17 @@ def test_upload_files_ingest_rejects_empty_batch() -> None:
     assert response.status_code == 422
 
 
-def test_upload_files_async_uses_local_queue_and_passes_cleanup_dir() -> None:
-    """Enqueue one staged batch in local async mode."""
+def test_upload_files_async_uses_local_queue_batch_upload() -> None:
+    """Enqueue one uploaded batch in local async mode via artifacts."""
     client = TestClient(server.app)
     original_use_rq = server.SETTINGS.use_rq
     original_enqueue_local = server.enqueue_local_ingest_job
-    captured: dict[str, str] = {}
+    captured: dict[str, object] = {}
 
     def _fake_enqueue_local(payload, cleanup_staging_dir=None):  # type: ignore[no-untyped-def]
-        captured["local_path"] = str(payload["source"]["local_path"])
-        captured["cleanup"] = str(cleanup_staging_dir)
+        captured["local_path"] = payload["source"].get("local_path")
+        captured["artifact_id"] = payload["source"].get("artifact_id")
+        captured["cleanup"] = cleanup_staging_dir
         return "upload-files-local-job-1"
 
     server.SETTINGS.use_rq = False
@@ -365,20 +402,75 @@ def test_upload_files_async_uses_local_queue_and_passes_cleanup_dir() -> None:
     body = response.json()
     assert body.get("status") == "queued"
     assert body.get("job_id") == "upload-files-local-job-1"
-    assert captured["local_path"] == captured["cleanup"]
-    staged_dir = Path(captured["local_path"])
-    assert staged_dir.exists()
-    server.UPLOAD_INGESTION.cleanup(staged_dir)
+    assert captured["local_path"] is None
+    assert isinstance(captured["artifact_id"], str)
+    assert captured["artifact_id"]
+    assert captured["cleanup"] is None
 
 
-def test_upload_files_async_rejects_rq_without_shared_staging() -> None:
-    """Block RQ async batch upload when staging volume is not shared."""
+def test_upload_files_async_persists_artifact_and_passes_artifact_id() -> None:
+    """Async upload should persist one artifact and forward artifact_id."""
     client = TestClient(server.app)
     original_use_rq = server.SETTINGS.use_rq
-    original_shared = server.SETTINGS.upload_staging_shared
+    original_enqueue_local = server.enqueue_local_ingest_job
+    original_artifact_store = server.RUNTIME.ingestion_artifact_store
+    captured: dict[str, object] = {}
+    artifact_store = _RecordingArtifactStore()
+
+    def _fake_enqueue_local(payload, cleanup_staging_dir=None):  # type: ignore[no-untyped-def]
+        captured["payload"] = payload
+        captured["cleanup"] = cleanup_staging_dir
+        return "upload-artifact-job-1"
+
+    server.SETTINGS.use_rq = False
+    server.enqueue_local_ingest_job = _fake_enqueue_local  # type: ignore[assignment]
+    server.RUNTIME.ingestion_artifact_store = artifact_store  # type: ignore[assignment]
+    try:
+        response = client.post(
+            "/sources/ingest/files/async",
+            files=[
+                ("files", ("one.md", b"a", "text/markdown")),
+                ("files", ("two.md", b"b", "text/markdown")),
+            ],
+            data={"filters": '{"domain":"qa"}'},
+        )
+    finally:
+        server.SETTINGS.use_rq = original_use_rq
+        server.enqueue_local_ingest_job = original_enqueue_local  # type: ignore[assignment]
+        server.RUNTIME.ingestion_artifact_store = original_artifact_store  # type: ignore[assignment]
+
+    assert response.status_code == 200
+    payload = captured["payload"]
+    assert isinstance(payload, dict)
+    assert payload["source"]["artifact_id"] == "artifact-upload-1"
+    assert artifact_store.calls
+    created_call = artifact_store.calls[0]
+    assert created_call[0] == "create"
+    created_kwargs = created_call[1]
+    assert isinstance(created_kwargs, dict)
+    assert created_kwargs["source_type"] == "folder"
+    files_payload = created_kwargs["files"]
+    assert isinstance(files_payload, list)
+    assert len(files_payload) == 2
+
+    assert captured["cleanup"] is None
+
+
+def test_upload_files_async_uses_rq_batch_upload() -> None:
+    """Allow RQ async batch upload because workers rehydrate artifacts."""
+    client = TestClient(server.app)
+    original_use_rq = server.SETTINGS.use_rq
+    original_enqueue_rq = server.enqueue_ingest_job
+    captured: dict[str, object] = {}
+
+    def _fake_enqueue_rq(payload, cleanup_staging_dir=None):  # type: ignore[no-untyped-def]
+        captured["local_path"] = payload["source"].get("local_path")
+        captured["artifact_id"] = payload["source"].get("artifact_id")
+        captured["cleanup"] = cleanup_staging_dir
+        return "upload-rq-job-2"
 
     server.SETTINGS.use_rq = True
-    server.SETTINGS.upload_staging_shared = False
+    server.enqueue_ingest_job = _fake_enqueue_rq  # type: ignore[assignment]
     try:
         response = client.post(
             "/sources/ingest/files/async",
@@ -389,9 +481,11 @@ def test_upload_files_async_rejects_rq_without_shared_staging() -> None:
         )
     finally:
         server.SETTINGS.use_rq = original_use_rq
-        server.SETTINGS.upload_staging_shared = original_shared
+        server.enqueue_ingest_job = original_enqueue_rq  # type: ignore[assignment]
 
-    assert response.status_code == 409
-    assert "upload_staging_shared" in str(
-        response.json().get("detail", "")
-    ).lower()
+    assert response.status_code == 200
+    assert response.json().get("job_id") == "upload-rq-job-2"
+    assert captured["local_path"] is None
+    assert isinstance(captured["artifact_id"], str)
+    assert captured["artifact_id"]
+    assert captured["cleanup"] is None

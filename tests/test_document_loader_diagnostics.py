@@ -49,3 +49,23 @@ def test_load_documents_reports_no_supported_documents(tmp_path: Path) -> None:
     assert stats.get("path_is_dir") is True
     assert int(stats.get("total_files_seen", 0)) == 2
     assert int(stats.get("discovered_files", 0)) == 0
+
+
+def test_load_documents_uses_stable_logical_path_for_folder_source(
+    tmp_path: Path,
+) -> None:
+    """Folder loads should expose a logical path_or_url instead of temp paths."""
+    root = tmp_path / "incoming"
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "engineering.md").write_text("Owner: Atlas", encoding="utf-8")
+
+    source = SourceConfig(
+        source_type="folder",
+        local_path=str(root),
+        logical_root="sample_data",
+    )
+    docs, stats = load_documents(source)
+
+    assert len(docs) == 1
+    assert docs[0].path_or_url == "sample_data/engineering.md"
+    assert stats.get("parsed_documents") == 1

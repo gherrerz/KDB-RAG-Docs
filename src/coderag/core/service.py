@@ -11,6 +11,7 @@ from pathlib import Path
 from time import perf_counter
 from typing import Callable, Dict, List, Optional
 
+from coderag.core.lexical_index import build_query_lexical_index
 from coderag.core.models import (
     DeleteDocumentResponse,
     DocumentTagFacet,
@@ -35,7 +36,6 @@ from coderag.ingestion.chunker import build_chunks
 from coderag.ingestion.document_loader import load_documents
 from coderag.ingestion.tdm_graph_builder import build_tdm_typed_edges
 from coderag.ingestion.graph_builder import build_graph_edges
-from coderag.ingestion.index_bm25 import BM25Index
 from coderag.ingestion.index_chroma import LocalVectorIndex
 from coderag.ingestion.tdm_ingestion import ingest_tdm_assets
 from coderag.llm.providerlmm_client import ProviderLlmClient
@@ -64,6 +64,21 @@ def _normalize_tags(tags: List[str] | None) -> List[str]:
         seen.add(tag_key)
         normalized.append(tag)
     return normalized
+
+
+def _default_logical_root_for_source(source) -> str | None:
+    """Infer one stable logical root label for folder sources."""
+    local_path = str(getattr(source, "local_path", "") or "").strip()
+    if not local_path:
+        return None
+
+    candidate = Path(local_path).expanduser()
+    if candidate.is_absolute():
+        name = candidate.name.strip()
+        return name or None
+
+    normalized = local_path.replace("\\", "/").strip("/")
+    return normalized or None
 
 
 def _apply_tags_to_documents(
@@ -97,7 +112,7 @@ def _on_rmtree_error(func, path, _exc_info) -> None:
 
 
 def _clear_local_staging_mirror(data_dir: Path) -> tuple[int, list[str]]:
-    """Delete staged ingestion mirror entries and keep the root folder."""
+    """Delete legacy staged mirror entries and keep the root folder."""
     staging_dir = data_dir / "ingestion_staging"
     warnings: list[str] = []
     deleted_entries = 0
@@ -122,25 +137,55 @@ def _clear_local_staging_mirror(data_dir: Path) -> tuple[int, list[str]]:
     return deleted_entries, warnings
 
 
+def _resolve_legacy_staged_candidate(
+    data_dir: Path,
+    path_or_url: str,
+) -> Path | None:
+    """Resolve one persisted path against the managed legacy staging mirror."""
+    if not path_or_url.strip():
+        return None
+
+    staging_dir = (data_dir / "ingestion_staging").resolve(strict=False)
+    candidate = Path(path_or_url).expanduser()
+    if candidate.is_absolute():
+        resolved = candidate.resolve(strict=False)
+        try:
+            resolved.relative_to(staging_dir)
+        except ValueError:
+            return None
+        return resolved
+
+    staged_candidate = (staging_dir / candidate).resolve(strict=False)
+    if staged_candidate.exists() or staged_candidate.parent.exists():
+        try:
+            staged_candidate.relative_to(staging_dir)
+        except ValueError:
+            return None
+        return staged_candidate
+
+    repo_candidate = (REPO_ROOT / candidate).resolve(strict=False)
+    try:
+        repo_candidate.relative_to(staging_dir)
+    except ValueError:
+        return None
+    return repo_candidate
+
+
+def _is_legacy_staged_path(data_dir: Path, path_or_url: str) -> bool:
+    """Return true when one persisted document path points into legacy staging."""
+    return _resolve_legacy_staged_candidate(data_dir, path_or_url) is not None
+
+
 def _delete_staged_document_copy(
     data_dir: Path,
     path_or_url: str,
 ) -> tuple[bool, Optional[str]]:
     """Delete one staged document copy and prune empty parent folders."""
-    if not path_or_url.strip():
+    candidate = _resolve_legacy_staged_candidate(data_dir, path_or_url)
+    if candidate is None:
         return False, None
 
     staging_dir = (data_dir / "ingestion_staging").resolve(strict=False)
-    candidate = Path(path_or_url).expanduser()
-    if not candidate.is_absolute():
-        candidate = (REPO_ROOT / candidate).resolve(strict=False)
-    else:
-        candidate = candidate.resolve(strict=False)
-
-    try:
-        candidate.relative_to(staging_dir)
-    except ValueError:
-        return False, None
 
     if not candidate.exists() or candidate.is_dir():
         return False, None
@@ -209,7 +254,7 @@ class RagApplicationService:
     def __init__(self) -> None:
         SETTINGS.require_chroma_enabled()
         self.store = RUNTIME.store
-        self.bm25_index = BM25Index()
+        self.lexical_index = build_query_lexical_index(SETTINGS)
         self.vector_index = LocalVectorIndex(
             size=SETTINGS.embedding_size,
             provider=SETTINGS.llm_provider,
@@ -218,18 +263,28 @@ class RagApplicationService:
         self.llm = ProviderLlmClient()
         self.graph_store = GraphStore()
         self._loaded_index_version = -1
-        self.rebuild_indexes()
+        try:
+            self.rebuild_indexes()
+        except RuntimeError:
+            # Keep imports/startup usable when the configured vector backend
+            # is temporarily unavailable. Runtime operations that need Chroma
+            # will still fail explicitly on use.
+            self._loaded_index_version = self.store.get_index_version()
 
     def rebuild_indexes(self, source_id: Optional[str] = None) -> None:
         """Rebuild retrieval indexes from persisted chunks."""
         chunks = self.store.list_chunks(source_id=source_id)
-        self.bm25_index.rebuild(chunks)
+        document_map = self.store.get_document_map(source_id=source_id)
+        self.lexical_index.rebuild(chunks, document_map)
         self.vector_index.rebuild(chunks)
         self._loaded_index_version = self.store.get_index_version()
 
-    def _rebuild_bm25_from_store(self) -> None:
-        """Refresh BM25 from all persisted chunks without re-embedding all data."""
-        self.bm25_index.rebuild(self.store.list_chunks())
+    def _rebuild_lexical_from_store(self) -> None:
+        """Refresh lexical retrieval from persisted chunks without re-embedding."""
+        self.lexical_index.rebuild(
+            self.store.list_chunks(),
+            self.store.get_document_map(),
+        )
         self._loaded_index_version = self.store.get_index_version()
 
     def _sync_graph_for_source(
@@ -315,7 +370,7 @@ class RagApplicationService:
                 neo4j_nodes_deleted += nodes_deleted
 
         self.store.bump_index_version()
-        self._rebuild_bm25_from_store()
+        self._rebuild_lexical_from_store()
 
         return {
             "matched_documents": len(documents),
@@ -390,13 +445,12 @@ class RagApplicationService:
         """Refresh in-memory retrieval state after external ingestion.
 
         The async worker already persists vector updates into Chroma. During
-        API-side refresh we only need to rebuild BM25 from SQLite chunks and
-        update the loaded version marker. This avoids re-embedding all chunks
-        on the first query after async ingestion.
+        API-side refresh we only need to rebuild the Postgres lexical corpus
+        from persisted chunks and update the loaded version marker. This
+        avoids re-embedding all chunks on the first query after async
+        ingestion.
         """
-        chunks = self.store.list_chunks()
-        self.bm25_index.rebuild(chunks)
-        self._loaded_index_version = self.store.get_index_version()
+        self._rebuild_lexical_from_store()
 
     def _ensure_fresh_indexes(self) -> None:
         """Refresh indexes when a different process updated persisted state."""
@@ -429,11 +483,20 @@ class RagApplicationService:
 
     def reset_all(self) -> ResetAllResponse:
         """Reset all persisted indexing artifacts across storage layers."""
+        legacy_staged_documents = [
+            document
+            for document in self.store.list_documents()
+            if _is_legacy_staged_path(SETTINGS.data_dir, document.path_or_url)
+        ]
         deleted = self.store.clear_all_data()
+        RUNTIME.ingestion_artifact_store.clear_uploaded_artifacts()
         self.vector_index.clear_all()
-        deleted_staging_entries, staging_warnings = _clear_local_staging_mirror(
-            SETTINGS.data_dir
-        )
+        if legacy_staged_documents:
+            deleted_staging_entries, staging_warnings = _clear_local_staging_mirror(
+                SETTINGS.data_dir
+            )
+        else:
+            deleted_staging_entries, staging_warnings = 0, []
 
         neo4j_enabled = self.is_graph_enabled()
         neo4j_edges_deleted = self.graph_store.clear_all_edges()
@@ -447,7 +510,7 @@ class RagApplicationService:
             status="completed",
             message=(
                 "All repositories were cleared, indexes were reset, and "
-                f"{deleted_staging_entries} staging mirror entries were "
+                f"{deleted_staging_entries} legacy staging mirror entries were "
                 "removed."
                 + (
                     " Some staging entries could not be removed due to file "
@@ -496,6 +559,23 @@ class RagApplicationService:
         job_id: Optional[str] = None,
     ) -> Dict[str, object]:
         """Run full ingestion pipeline and persist generated artifacts."""
+        if (
+            request.source.source_type.strip().lower() == "folder"
+            and request.source.logical_root is None
+            and not request.source.artifact_id
+        ):
+            request = request.model_copy(
+                update={
+                    "source": request.source.model_copy(
+                        update={
+                            "logical_root": _default_logical_root_for_source(
+                                request.source
+                            )
+                        }
+                    )
+                }
+            )
+
         if not job_id:
             job_id = uuid.uuid4().hex[:12]
         self.store.touch_job(job_id, "running", "Starting ingestion")
@@ -753,14 +833,14 @@ class RagApplicationService:
             progress_pct=86.0,
         )
 
-        self._rebuild_bm25_from_store()
+        self._rebuild_lexical_from_store()
         self.vector_index.rebuild(chunks)
         self._loaded_index_version = self.store.get_index_version()
         _add_step(
             "rebuild_indexes",
             {
                 "source_id": source_id,
-                "bm25_scope": "global",
+                "lexical_scope": "global",
                 "vector_scope": "source",
             },
             progress_pct=95.0,
@@ -910,7 +990,7 @@ class RagApplicationService:
 
         hits = hybrid_search(
             query=request.question,
-            bm25_index=self.bm25_index,
+            lexical_index=self.lexical_index,
             vector_index=self.vector_index,
             top_n=top_n,
             source_id=request.source_id,
@@ -1025,6 +1105,11 @@ class RagApplicationService:
             "embedding_provider": self.vector_index.embedding_provider,
             "embedding_model": self.vector_index.embedding_model,
             "llm_fallback_forced": request.force_fallback,
+            "lexical_backend": getattr(
+                self.lexical_index,
+                "backend_label",
+                "lexical",
+            ),
             "timestamp": datetime.now(UTC).isoformat(),
         }
 

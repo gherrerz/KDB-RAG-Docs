@@ -31,5 +31,23 @@ _ensure_repo_cwd()
 _bootstrap_src_path()
 
 
+def _resolve_bind_host_port() -> tuple[str, int]:
+    """Resolve host and port used by the local Uvicorn entrypoint."""
+    host = str(os.environ.get("API_HOST", "0.0.0.0")).strip() or "0.0.0.0"
+    raw_port = str(
+        os.environ.get("API_PORT") or os.environ.get("PORT") or "8000"
+    ).strip()
+
+    try:
+        port = int(raw_port)
+    except ValueError as exc:
+        raise ValueError("API_PORT/PORT must be an integer") from exc
+
+    if port < 1 or port > 65535:
+        raise ValueError("API_PORT/PORT must be between 1 and 65535")
+    return host, port
+
+
 if __name__ == "__main__":
-    uvicorn.run("coderag.api.server:app", host="0.0.0.0", port=8000)
+    host, port = _resolve_bind_host_port()
+    uvicorn.run("coderag.api.server:app", host=host, port=port)

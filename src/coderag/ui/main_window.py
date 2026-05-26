@@ -17,58 +17,78 @@ import requests
 from requests import Response
 from PySide6.QtWidgets import QApplication, QMainWindow, QTabWidget, QWidget, QVBoxLayout
 
+from coderag.ingestion.repo_scanner import ALLOWED_EXTENSIONS
 from coderag.ui.ingestion_view import IngestionView
 from coderag.ui.query_view import QueryView
-from coderag.ui.staging import stage_folder_source
 from coderag.ui.tdm_view import TdmView
 from coderag.ui.theme import build_stylesheet
-
-
-def _prepare_ingestion_payload(
-    payload: Dict[str, Any],
-) -> tuple[Dict[str, Any], Dict[str, Any] | None]:
-    """Stage folder sources locally so backend always reads repo-mounted paths."""
-    candidate = deepcopy(payload)
-    source = candidate.get("source")
-    if not isinstance(source, dict):
-        return candidate, None
-
-    source_type = str(source.get("source_type", "")).strip().lower()
-    if source_type != "folder":
-        return candidate, None
-
-    local_path = source.get("local_path")
-    if not isinstance(local_path, str) or not local_path.strip():
-        raise ValueError("Folder ingestion requires a local folder path.")
-
-    staged_path, metadata = stage_folder_source(local_path)
-    source["local_path"] = staged_path
-
-    progress = {
-        "status": "running",
-        "message": "Folder source synced to local staging area.",
-        "progress_pct": 2.0,
-        "staging": metadata,
-        "step": {
-            "name": "local_staging_completed",
-            "status": "ok",
-            "details": metadata,
-        },
-        "steps": [
-            {
-                "name": "local_staging_completed",
-                "status": "ok",
-                "details": metadata,
-            }
-        ],
-    }
-    return candidate, progress
 
 
 def _parse_upload_paths(local_path_raw: str) -> list[Path]:
     """Parse one or more local file paths from upload input text."""
     chunks = [item.strip() for item in re.split(r"[;\n]+", local_path_raw)]
     return [Path(item).expanduser() for item in chunks if item]
+
+
+def _collect_upload_file_paths(local_path_raw: str) -> list[Path]:
+    """Expand local file or directory inputs into supported upload files."""
+    return [item[0] for item in _collect_upload_entries(local_path_raw)]
+
+
+def _collect_upload_entries(local_path_raw: str) -> list[tuple[Path, str]]:
+    """Expand local paths into upload entries with stable logical names."""
+    collected: list[tuple[Path, str]] = []
+    seen: set[str] = set()
+
+    for raw_path in _parse_upload_paths(local_path_raw):
+        resolved = raw_path
+        if not resolved.is_absolute():
+            resolved = (Path.cwd() / resolved).resolve(strict=False)
+
+        if not resolved.exists():
+            raise FileNotFoundError(f"Upload path does not exist: {resolved}")
+
+        if resolved.is_dir():
+            root_label = resolved.name.strip() or "upload"
+            supported_files = [
+                candidate
+                for candidate in sorted(resolved.rglob("*"))
+                if candidate.is_file()
+                and candidate.suffix.lower() in ALLOWED_EXTENSIONS
+            ]
+            for candidate in supported_files:
+                key = str(candidate.resolve(strict=False)).casefold()
+                if key in seen:
+                    continue
+                seen.add(key)
+                relative_name = candidate.relative_to(resolved).as_posix()
+                collected.append((candidate, f"{root_label}/{relative_name}"))
+            continue
+
+        if not resolved.is_file():
+            raise ValueError(f"Upload path is not a regular file: {resolved}")
+
+        if resolved.suffix.lower() not in ALLOWED_EXTENSIONS:
+            allowed = ", ".join(sorted(ALLOWED_EXTENSIONS))
+            raise ValueError(
+                "Unsupported upload file extension. "
+                f"Allowed: {allowed}"
+            )
+
+        key = str(resolved.resolve(strict=False)).casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        collected.append((resolved, resolved.name))
+
+    if not collected:
+        allowed = ", ".join(sorted(ALLOWED_EXTENSIONS))
+        raise ValueError(
+            "No supported files found in the selected paths. "
+            f"Allowed: {allowed}"
+        )
+
+    return collected
 
 
 class MainWindow(QMainWindow):
@@ -126,6 +146,14 @@ class MainWindow(QMainWindow):
         on_update: Optional[Callable[[Dict[str, Any]], None]] = None,
     ) -> Dict[str, Any]:
         """Run ingestion in selected mode and poll when async is used."""
+        source = payload.get("source")
+        source_type = ""
+        if isinstance(source, dict):
+            source_type = str(source.get("source_type", "")).strip().lower()
+
+        if source_type == "folder":
+            return self._ingest_via_upload(payload, on_update=on_update)
+
         ingestion_channel = str(
             payload.get("_ingestion_channel", "json_folder")
         ).strip().lower()
@@ -133,36 +161,17 @@ class MainWindow(QMainWindow):
         if ingestion_channel == "upload_file":
             return self._ingest_via_upload(payload, on_update=on_update)
 
-        try:
-            prepared_payload, preflight_update = _prepare_ingestion_payload(payload)
-        except (ValueError, FileNotFoundError, NotADirectoryError, OSError) as exc:
-            return {
-                "status": "failed",
-                "message": str(exc),
-                "progress_pct": 100.0,
-                "steps": [
-                    {
-                        "name": "local_staging_failed",
-                        "status": "failed",
-                        "details": {"error": str(exc)},
-                    }
-                ],
-            }
-
-        if on_update is not None and preflight_update is not None:
-            on_update(preflight_update)
-
         execution_mode = str(
-            prepared_payload.pop("_ingestion_mode", "async")
+            payload.pop("_ingestion_mode", "async")
         ).strip().lower()
         if execution_mode not in {"async", "sync"}:
             execution_mode = "async"
 
         if execution_mode == "sync":
-            return self._post_json("/sources/ingest", prepared_payload, timeout=3600)
+            return self._post_json("/sources/ingest", payload, timeout=3600)
 
         async_response = self._post_json(
-            "/sources/ingest/async", prepared_payload, timeout=15
+            "/sources/ingest/async", payload, timeout=15
         )
         if "error" in async_response or "detail" in async_response:
             return async_response
@@ -229,33 +238,34 @@ class MainWindow(QMainWindow):
                 "message": "Upload ingestion expects source.tags as list.",
             }
 
-        file_paths: list[Path] = []
-        for raw_path in _parse_upload_paths(local_path_raw):
-            resolved = raw_path
-            if not resolved.is_absolute():
-                resolved = (Path.cwd() / resolved).resolve(strict=False)
-            file_paths.append(resolved)
-
-        if not file_paths:
+        try:
+            upload_entries = _collect_upload_entries(local_path_raw)
+        except (ValueError, FileNotFoundError, OSError) as exc:
             return {
                 "status": "failed",
-                "message": "Upload ingestion requires one or more local file paths.",
+                "message": str(exc),
             }
 
-        for file_path in file_paths:
-            if not file_path.exists():
-                return {
-                    "status": "failed",
-                    "message": f"Upload file does not exist: {file_path}",
+        if on_update is not None:
+            on_update(
+                {
+                    "status": "running",
+                    "message": "Enumerating local files for multipart upload.",
+                    "progress_pct": 2.0,
+                    "step": {
+                        "name": "local_file_enumeration_completed",
+                        "status": "ok",
+                        "details": {"file_count": len(upload_entries)},
+                    },
+                    "steps": [
+                        {
+                            "name": "local_file_enumeration_completed",
+                            "status": "ok",
+                            "details": {"file_count": len(upload_entries)},
+                        }
+                    ],
                 }
-            if not file_path.is_file():
-                return {
-                    "status": "failed",
-                    "message": (
-                        "Upload ingestion expects file paths only. "
-                        "Use channel 'Carpeta (JSON)' for directory ingestion."
-                    ),
-                }
+            )
 
         endpoint = "/sources/ingest/files"
         timeout = 3600
@@ -265,7 +275,7 @@ class MainWindow(QMainWindow):
 
         response = self._post_multipart(
             endpoint,
-            file_paths=file_paths,
+            upload_entries=upload_entries,
             source_type=source_type,
             filters=filters_raw,
             tags=[str(tag) for tag in tags_raw],
@@ -469,14 +479,14 @@ class MainWindow(QMainWindow):
     def _post_multipart(
         self,
         path: str,
-        file_paths: list[Path],
+        upload_entries: list[tuple[Path, str]],
         source_type: str,
         filters: Dict[str, Any],
         tags: list[str],
         timeout: int,
     ) -> Dict[str, Any]:
         """Call backend multipart upload endpoint and parse JSON response."""
-        if not file_paths:
+        if not upload_entries:
             return {
                 "status": "failed",
                 "message": "Upload ingestion requires one or more file paths.",
@@ -485,7 +495,7 @@ class MainWindow(QMainWindow):
         try:
             with ExitStack() as stack:
                 multipart_files: list[tuple[str, tuple[str, Any, str]]] = []
-                for file_path in file_paths:
+                for file_path, logical_name in upload_entries:
                     guessed_mime, _ = mimetypes.guess_type(str(file_path))
                     mime_type = guessed_mime or "application/octet-stream"
                     file_handle = stack.enter_context(file_path.open("rb"))
@@ -493,7 +503,7 @@ class MainWindow(QMainWindow):
                         (
                             "files",
                             (
-                                file_path.name,
+                                logical_name,
                                 file_handle,
                                 mime_type,
                             ),

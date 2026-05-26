@@ -1,26 +1,36 @@
-"""Hybrid vector and BM25 retrieval."""
+"""Hybrid vector and lexical retrieval."""
 
 from __future__ import annotations
 
 from collections import defaultdict
 from typing import Dict, List, Optional, Sequence, Tuple
 
+from coderag.core.lexical_index import QueryLexicalIndex
 from coderag.core.models import ChunkRecord
-from coderag.ingestion.index_bm25 import BM25Index, normalize_scores
 from coderag.ingestion.index_chroma import LocalVectorIndex
+
+
+def _normalize_scores(
+    values: List[Tuple[ChunkRecord, float]],
+) -> Dict[str, float]:
+    """Normalize retrieval scores to [0, 1] by maximum value."""
+    if not values:
+        return {}
+    max_score = max(score for _, score in values) or 1.0
+    return {chunk.chunk_id: score / max_score for chunk, score in values}
 
 
 def hybrid_search(
     query: str,
-    bm25_index: BM25Index,
+    lexical_index: QueryLexicalIndex,
     vector_index: LocalVectorIndex,
     top_n: int,
     alpha: float = 0.55,
     source_id: Optional[str] = None,
     document_ids: Optional[Sequence[str]] = None,
 ) -> List[Tuple[ChunkRecord, float, Dict[str, float]]]:
-    """Combine BM25 and vector scores into a unified ranking."""
-    bm25_hits = bm25_index.search(
+    """Combine lexical and vector scores into a unified ranking."""
+    lexical_hits = lexical_index.search(
         query,
         top_n,
         source_id=source_id,
@@ -33,13 +43,13 @@ def hybrid_search(
         document_ids=document_ids,
     )
 
-    bm25_norm = normalize_scores(bm25_hits)
-    vector_norm = normalize_scores(vector_hits)
+    lexical_norm = _normalize_scores(lexical_hits)
+    vector_norm = _normalize_scores(vector_hits)
 
     chunks: Dict[str, ChunkRecord] = {}
     score_map: Dict[str, float] = defaultdict(float)
 
-    for chunk, _ in bm25_hits:
+    for chunk, _ in lexical_hits:
         chunks[chunk.chunk_id] = chunk
     for chunk, _ in vector_hits:
         chunks[chunk.chunk_id] = chunk
@@ -47,7 +57,7 @@ def hybrid_search(
     for chunk_id in chunks:
         score_map[chunk_id] = (
             alpha * vector_norm.get(chunk_id, 0.0)
-            + (1.0 - alpha) * bm25_norm.get(chunk_id, 0.0)
+            + (1.0 - alpha) * lexical_norm.get(chunk_id, 0.0)
         )
 
     ranked = sorted(score_map.items(), key=lambda item: item[1], reverse=True)
@@ -57,7 +67,7 @@ def hybrid_search(
             score,
             {
                 "vector": vector_norm.get(chunk_id, 0.0),
-                "bm25": bm25_norm.get(chunk_id, 0.0),
+                "lexical": lexical_norm.get(chunk_id, 0.0),
             },
         )
         for chunk_id, score in ranked[:top_n]

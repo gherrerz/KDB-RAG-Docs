@@ -19,9 +19,19 @@ class _Call:
 class _FakeSession:
     """Minimal Neo4j-like session with write and read support."""
 
-    def __init__(self, rows: List[Dict[str, Any]] | None = None) -> None:
+    def __init__(
+        self,
+        rows: List[Dict[str, Any]] | None = None,
+        *,
+        labels: List[str] | None = None,
+        relationship_types: List[str] | None = None,
+    ) -> None:
         self.calls: List[_Call] = []
         self.rows = rows or []
+        self.labels = ["Entity"] if labels is None else labels
+        self.relationship_types = (
+            ["TDM_REL"] if relationship_types is None else relationship_types
+        )
 
     def __enter__(self) -> "_FakeSession":
         return self
@@ -31,6 +41,13 @@ class _FakeSession:
 
     def run(self, query: str, **params: Any):
         self.calls.append(_Call(query=query, params=params))
+        if "CALL db.labels()" in query:
+            return [{"label": label} for label in self.labels]
+        if "CALL db.relationshipTypes()" in query:
+            return [
+                {"relationshipType": rel_type}
+                for rel_type in self.relationship_types
+            ]
         if "DELETE r" in query or "DELETE n" in query:
             return _FakeResult(relationships_deleted=3)
         if "RETURN [n IN nodes(p) | n.name] AS nodes" in query:
@@ -125,6 +142,32 @@ def test_expand_tdm_paths_supports_relation_filter() -> None:
     path_calls = [call for call in session.calls if "MATCH p=(a:Entity)-[rels:TDM_REL" in call.query]
     assert len(path_calls) == 1
     assert path_calls[0].params.get("rel_types") == ["USES_TABLE", "HAS_COLUMN"]
+
+
+def test_expand_tdm_paths_returns_empty_when_tdm_graph_is_absent() -> None:
+    """Skip typed path queries when the TDM graph projection is missing."""
+    session = _FakeSession(
+        rows=[
+            {
+                "nodes": ["billing-api", "invoices"],
+                "relationships": ["USES_TABLE"],
+            }
+        ],
+        relationship_types=[],
+    )
+    store = GraphStore()
+    store.is_enabled = lambda: True
+    store._get_driver = lambda: _FakeDriver(session)
+
+    paths = store.expand_tdm_paths(
+        query="billing api usa invoices",
+        hops=2,
+        max_paths=6,
+    )
+
+    assert paths == []
+    match_calls = [call for call in session.calls if call.query.startswith("MATCH")]
+    assert match_calls == []
 
 
 def test_clear_all_edges_removes_core_and_tdm_relationships() -> None:

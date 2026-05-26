@@ -117,6 +117,46 @@ class GraphStore:
         return self._driver
 
     @staticmethod
+    def _schema_values(session, query: str, key: str) -> set[str]:
+        """Collect schema values from one lightweight Neo4j introspection query."""
+        values: set[str] = set()
+        for record in session.run(query):
+            value = None
+            if isinstance(record, dict):
+                value = record.get(key)
+            elif hasattr(record, "get"):
+                value = record.get(key)
+            normalized = str(value or "").strip()
+            if normalized:
+                values.add(normalized)
+        return values
+
+    def _has_graph_projection(
+        self,
+        driver,
+        *,
+        relationship_type: str,
+    ) -> bool:
+        """Return whether the expected Entity graph projection exists."""
+        try:
+            with driver.session() as session:
+                labels = self._schema_values(
+                    session,
+                    "CALL db.labels() YIELD label RETURN label",
+                    "label",
+                )
+                relationship_types = self._schema_values(
+                    session,
+                    "CALL db.relationshipTypes() "
+                    "YIELD relationshipType RETURN relationshipType",
+                    "relationshipType",
+                )
+        except Exception:
+            # Preserve previous behavior if schema introspection is unavailable.
+            return True
+        return "Entity" in labels and relationship_type in relationship_types
+
+    @staticmethod
     def _chunk_rows(rows: List[dict[str, str]], size: int) -> Iterable[List[dict[str, str]]]:
         """Yield rows in bounded chunks for transaction-sized writes."""
         batch_size = max(1, size)
@@ -356,6 +396,8 @@ class GraphStore:
         if not self.is_enabled():
             return []
         driver = self._get_driver()
+        if not self._has_graph_projection(driver, relationship_type="TDM_REL"):
+            return []
         entities = self._resolve_entities_from_query_tokens(
             driver=driver,
             query=query,
@@ -422,6 +464,11 @@ class GraphStore:
         if not self.is_enabled():
             return []
         driver = self._get_driver()
+        if not self._has_graph_projection(
+            driver,
+            relationship_type="RELATES_TO",
+        ):
+            return []
 
         entities = list(dict.fromkeys(ENTITY_PATTERN.findall(query)))
         if not entities:

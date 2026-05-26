@@ -3,14 +3,20 @@
 from __future__ import annotations
 
 import hashlib
+import os
 from pathlib import Path
 
+import pytest
+from fastapi.testclient import TestClient
+
+from coderag.api import server
 from coderag.core.runtime import RUNTIME
 from coderag.core.models import IngestionRequest, QueryRequest, SourceConfig
 from coderag.core.service import RagApplicationService
 from coderag.core.settings import SETTINGS
 from coderag.ingestion import index_chroma
 from coderag.storage.metadata_store import MetadataStore
+from coderag.storage.postgres_startup import ensure_postgres_schema_ready
 
 
 def _looks_like_hhmmss(value: object) -> bool:
@@ -36,6 +42,54 @@ def _fake_embed_text(
         digest = hashlib.sha256(prefix + b"::" + token.encode("utf-8")).digest()
         buckets[digest[0] % len(buckets)] += 1.0
     return buckets
+
+
+@pytest.fixture(autouse=True)
+def _force_remote_chroma_mode() -> None:
+    """Keep pipeline tests pinned to remote Chroma semantics."""
+    original_mode = SETTINGS.chroma_mode
+    original_host = SETTINGS.chroma_host
+    original_port = SETTINGS.chroma_port
+    original_collection = SETTINGS.chroma_collection
+    original_postgres_host = SETTINGS.postgres_host
+    original_postgres_port = SETTINGS.postgres_port
+    original_postgres_db = SETTINGS.postgres_db
+    original_postgres_user = SETTINGS.postgres_user
+    original_postgres_password = SETTINGS.postgres_password
+    original_lexical_fts_language = SETTINGS.lexical_fts_language
+    SETTINGS.chroma_mode = "remote"
+    SETTINGS.chroma_host = os.environ.get("CHROMA_HOST", "127.0.0.1")
+    SETTINGS.chroma_port = int(os.environ.get("CHROMA_PORT", "8001"))
+    SETTINGS.chroma_collection = os.environ.get(
+        "CHROMA_COLLECTION",
+        "coderag_chunks_pytest",
+    )
+    SETTINGS.postgres_host = os.environ.get("POSTGRES_HOST", "127.0.0.1")
+    SETTINGS.postgres_port = int(os.environ.get("POSTGRES_PORT", "5432"))
+    SETTINGS.postgres_db = os.environ.get("POSTGRES_DB", "coderag_docs")
+    SETTINGS.postgres_user = os.environ.get("POSTGRES_USER", "coderag")
+    SETTINGS.postgres_password = os.environ.get(
+        "POSTGRES_PASSWORD",
+        "coderag",
+    )
+    SETTINGS.lexical_fts_language = os.environ.get(
+        "LEXICAL_FTS_LANGUAGE",
+        "english",
+    )
+    ensure_postgres_schema_ready(SETTINGS, force=True)
+    try:
+        yield
+    finally:
+        SETTINGS.chroma_mode = original_mode
+        SETTINGS.chroma_host = original_host
+        SETTINGS.chroma_port = original_port
+        SETTINGS.chroma_collection = original_collection
+        SETTINGS.postgres_host = original_postgres_host
+        SETTINGS.postgres_port = original_postgres_port
+        SETTINGS.postgres_db = original_postgres_db
+        SETTINGS.postgres_user = original_postgres_user
+        SETTINGS.postgres_password = original_postgres_password
+        SETTINGS.lexical_fts_language = original_lexical_fts_language
 
 
 def _set_runtime_store_for_tests(data_dir: Path):
@@ -120,6 +174,7 @@ def test_ingest_and_query_roundtrip() -> None:
 def test_reset_all_clears_repositories(tmp_path) -> None:
     """Ensure reset operation clears persisted and in-memory retrieval data."""
     original_embed = index_chroma.embed_text
+    original_chroma_mode = SETTINGS.chroma_mode
     original_provider = SETTINGS.llm_provider
     original_openai_key = SETTINGS.openai_api_key
     original_use_neo4j = SETTINGS.use_neo4j
@@ -127,7 +182,6 @@ def test_reset_all_clears_repositories(tmp_path) -> None:
     original_neo4j_user = SETTINGS.neo4j_user
     original_neo4j_password = SETTINGS.neo4j_password
     original_data_dir = SETTINGS.data_dir
-    original_chroma_persist_dir = SETTINGS.chroma_persist_dir
     index_chroma.embed_text = _fake_embed_text
     SETTINGS.llm_provider = "openai"
     SETTINGS.openai_api_key = "test-key"
@@ -136,7 +190,6 @@ def test_reset_all_clears_repositories(tmp_path) -> None:
     SETTINGS.neo4j_user = "neo4j"
     SETTINGS.neo4j_password = "password"
     SETTINGS.data_dir = tmp_path / "storage"
-    SETTINGS.chroma_persist_dir = SETTINGS.data_dir / "chromadb"
     original_store = _set_runtime_store_for_tests(SETTINGS.data_dir)
 
     service = RagApplicationService()
@@ -187,7 +240,7 @@ def test_reset_all_clears_repositories(tmp_path) -> None:
         SETTINGS.neo4j_user = original_neo4j_user
         SETTINGS.neo4j_password = original_neo4j_password
         SETTINGS.data_dir = original_data_dir
-        SETTINGS.chroma_persist_dir = original_chroma_persist_dir
+        SETTINGS.chroma_mode = original_chroma_mode
         RUNTIME.store = original_store
 
 
@@ -351,7 +404,10 @@ def test_query_refreshes_stale_indexes_after_external_ingestion() -> None:
 
     try:
         api_service.reset_all()
-        assert len(api_service.bm25_index._chunks) == 0
+        assert (
+            api_service._loaded_index_version
+            == api_service.store.get_index_version()
+        )
 
         ingest = worker_service.ingest(
             IngestionRequest(
@@ -364,9 +420,12 @@ def test_query_refreshes_stale_indexes_after_external_ingestion() -> None:
         source_id = str(ingest.get("source_id", ""))
         assert source_id
 
-        # API service still has stale in-memory BM25 before query-triggered
-        # version refresh.
-        assert len(api_service.bm25_index._chunks) == 0
+        # API service still has a stale retrieval snapshot before the
+        # query-triggered refresh by index version.
+        assert (
+            api_service._loaded_index_version
+            != api_service.store.get_index_version()
+        )
 
         refreshed = api_service.query(
             QueryRequest(
@@ -376,7 +435,11 @@ def test_query_refreshes_stale_indexes_after_external_ingestion() -> None:
             )
         )
         assert len(refreshed.citations) > 0
-        assert len(api_service.bm25_index._chunks) > 0
+        assert refreshed.diagnostics.get("lexical_backend") == "lexical"
+        assert (
+            api_service._loaded_index_version
+            == api_service.store.get_index_version()
+        )
     finally:
         api_service.close()
         worker_service.close()
@@ -389,9 +452,77 @@ def test_query_refreshes_stale_indexes_after_external_ingestion() -> None:
         SETTINGS.neo4j_password = original_neo4j_password
 
 
+def test_ingest_readiness_lexical_snapshot_tracks_real_corpus_state() -> None:
+    """Readiness should reflect lexical corpus growth after real ingestion."""
+    original_embed = index_chroma.embed_text
+    original_provider = SETTINGS.llm_provider
+    original_openai_key = SETTINGS.openai_api_key
+    original_use_neo4j = SETTINGS.use_neo4j
+    original_use_rq = SETTINGS.use_rq
+    original_neo4j_uri = SETTINGS.neo4j_uri
+    original_neo4j_user = SETTINGS.neo4j_user
+    original_neo4j_password = SETTINGS.neo4j_password
+    index_chroma.embed_text = _fake_embed_text
+    SETTINGS.llm_provider = "openai"
+    SETTINGS.openai_api_key = "test-key"
+    SETTINGS.use_neo4j = False
+    SETTINGS.use_rq = False
+    SETTINGS.neo4j_uri = "bolt://test-neo4j:7687"
+    SETTINGS.neo4j_user = "neo4j"
+    SETTINGS.neo4j_password = "password"
+
+    service = RagApplicationService()
+    try:
+        service.reset_all()
+
+        with TestClient(server.app) as client:
+            before = client.get("/sources/ingest/readiness")
+            assert before.status_code == 200
+            before_lexical = before.json()["checks"]["lexical"]
+            assert before_lexical["ok"] is True
+            assert before_lexical["signal"] == "lexical_ready"
+            assert before_lexical["indexed"] is False
+            assert before_lexical["corpus_rows"] == 0
+            assert before_lexical["document_count"] == 0
+            assert before_lexical["source_count"] == 0
+
+            ingest = service.ingest(
+                IngestionRequest(
+                    source=SourceConfig(
+                        source_type="folder",
+                        local_path="sample_data",
+                    )
+                )
+            )
+            assert ingest["status"] == "completed"
+
+            after = client.get("/sources/ingest/readiness")
+            assert after.status_code == 200
+            after_lexical = after.json()["checks"]["lexical"]
+            assert after_lexical["ok"] is True
+            assert after_lexical["signal"] == "lexical_ready"
+            assert after_lexical["indexed"] is True
+            assert after_lexical["corpus_rows"] > 0
+            assert after_lexical["document_count"] >= 1
+            assert after_lexical["source_count"] >= 1
+            assert "indexed=true" in after_lexical["detail"]
+            assert "corpus_rows=" in after_lexical["detail"]
+    finally:
+        service.close()
+        index_chroma.embed_text = original_embed
+        SETTINGS.llm_provider = original_provider
+        SETTINGS.openai_api_key = original_openai_key
+        SETTINGS.use_neo4j = original_use_neo4j
+        SETTINGS.use_rq = original_use_rq
+        SETTINGS.neo4j_uri = original_neo4j_uri
+        SETTINGS.neo4j_user = original_neo4j_user
+        SETTINGS.neo4j_password = original_neo4j_password
+
+
 def test_ingest_replaces_previous_duplicate_documents_globally(tmp_path) -> None:
     """Re-ingesting a title/type match should delete the older version first."""
     original_embed = index_chroma.embed_text
+    original_chroma_mode = SETTINGS.chroma_mode
     original_provider = SETTINGS.llm_provider
     original_openai_key = SETTINGS.openai_api_key
     original_use_neo4j = SETTINGS.use_neo4j
@@ -399,7 +530,6 @@ def test_ingest_replaces_previous_duplicate_documents_globally(tmp_path) -> None
     original_neo4j_user = SETTINGS.neo4j_user
     original_neo4j_password = SETTINGS.neo4j_password
     original_data_dir = SETTINGS.data_dir
-    original_chroma_persist_dir = SETTINGS.chroma_persist_dir
     index_chroma.embed_text = _fake_embed_text
     SETTINGS.llm_provider = "openai"
     SETTINGS.openai_api_key = "test-key"
@@ -408,7 +538,6 @@ def test_ingest_replaces_previous_duplicate_documents_globally(tmp_path) -> None
     SETTINGS.neo4j_user = "neo4j"
     SETTINGS.neo4j_password = "password"
     SETTINGS.data_dir = tmp_path / "storage"
-    SETTINGS.chroma_persist_dir = SETTINGS.data_dir / "chromadb"
     original_store = _set_runtime_store_for_tests(SETTINGS.data_dir)
 
     old_root = SETTINGS.data_dir / "ingestion_staging" / "old-copy"
@@ -467,7 +596,7 @@ def test_ingest_replaces_previous_duplicate_documents_globally(tmp_path) -> None
 
         assert len(documents) == 1
         assert documents[0].source_id == second_source_id
-        assert Path(documents[0].path_or_url).resolve(strict=False) == new_file
+        assert documents[0].path_or_url == "new-copy/atlas.md"
         assert len(chunks) >= 1
         assert all(chunk.source_id == second_source_id for chunk in chunks)
         assert not old_file.exists()
@@ -475,7 +604,7 @@ def test_ingest_replaces_previous_duplicate_documents_globally(tmp_path) -> None
         assert dedup_step.get("details", {}).get("deleted_staging_files") == 1
         assert second.get("deduplication", {}).get(
             "replaced_existing", {}
-        ).get("replaced_paths") == [str(old_file)]
+        ).get("replaced_paths") == ["old-copy/atlas.md"]
         assert any(source_id == first_source_id for source_id, _ in graph_calls)
         assert any(source_id == second_source_id for source_id, _ in graph_calls)
     finally:
@@ -488,13 +617,14 @@ def test_ingest_replaces_previous_duplicate_documents_globally(tmp_path) -> None
         SETTINGS.neo4j_user = original_neo4j_user
         SETTINGS.neo4j_password = original_neo4j_password
         SETTINGS.data_dir = original_data_dir
-        SETTINGS.chroma_persist_dir = original_chroma_persist_dir
+        SETTINGS.chroma_mode = original_chroma_mode
         RUNTIME.store = original_store
 
 
 def test_ingest_collapses_duplicate_documents_within_same_batch(tmp_path) -> None:
     """A single folder ingest should keep one document per title/type key."""
     original_embed = index_chroma.embed_text
+    original_chroma_mode = SETTINGS.chroma_mode
     original_provider = SETTINGS.llm_provider
     original_openai_key = SETTINGS.openai_api_key
     original_use_neo4j = SETTINGS.use_neo4j
@@ -502,7 +632,6 @@ def test_ingest_collapses_duplicate_documents_within_same_batch(tmp_path) -> Non
     original_neo4j_user = SETTINGS.neo4j_user
     original_neo4j_password = SETTINGS.neo4j_password
     original_data_dir = SETTINGS.data_dir
-    original_chroma_persist_dir = SETTINGS.chroma_persist_dir
     index_chroma.embed_text = _fake_embed_text
     SETTINGS.llm_provider = "openai"
     SETTINGS.openai_api_key = "test-key"
@@ -511,7 +640,6 @@ def test_ingest_collapses_duplicate_documents_within_same_batch(tmp_path) -> Non
     SETTINGS.neo4j_user = "neo4j"
     SETTINGS.neo4j_password = "password"
     SETTINGS.data_dir = tmp_path / "storage"
-    SETTINGS.chroma_persist_dir = SETTINGS.data_dir / "chromadb"
     original_store = _set_runtime_store_for_tests(SETTINGS.data_dir)
 
     batch_root = tmp_path / "incoming"
@@ -552,14 +680,14 @@ def test_ingest_collapses_duplicate_documents_within_same_batch(tmp_path) -> Non
 
         assert result.get("status") == "completed"
         assert len(documents) == 1
-        assert Path(documents[0].path_or_url).resolve(strict=False) == second_copy
+        assert documents[0].path_or_url == "incoming/b/atlas.md"
         assert len(doc_map) == 1
         assert next(iter(doc_map.values())).get("title") == "atlas"
         assert batch_step.get("details", {}).get("skipped_documents") == 1
         assert batch_step.get("details", {}).get("kept_documents") == 1
         assert result.get("deduplication", {}).get("incoming_batch", {}).get(
             "kept_paths"
-        ) == [str(second_copy)]
+        ) == ["incoming/b/atlas.md"]
     finally:
         service.close()
         index_chroma.embed_text = original_embed
@@ -570,7 +698,7 @@ def test_ingest_collapses_duplicate_documents_within_same_batch(tmp_path) -> Non
         SETTINGS.neo4j_user = original_neo4j_user
         SETTINGS.neo4j_password = original_neo4j_password
         SETTINGS.data_dir = original_data_dir
-        SETTINGS.chroma_persist_dir = original_chroma_persist_dir
+        SETTINGS.chroma_mode = original_chroma_mode
         RUNTIME.store = original_store
 
 

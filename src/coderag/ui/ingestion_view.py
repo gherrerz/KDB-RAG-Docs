@@ -90,7 +90,7 @@ class IngestionView(QWidget):
         self.ingestion_channel = QComboBox()
         self.ingestion_channel.setMinimumHeight(34)
         self.ingestion_channel.addItem(
-            "Carpeta (JSON)",
+            "Carpeta (multipart recursivo)",
             "json_folder",
         )
         self.ingestion_channel.addItem(
@@ -121,8 +121,8 @@ class IngestionView(QWidget):
             "Use 'folder' para archivos locales o 'confluence' para ingesta API."
         )
         self.ingestion_channel.setToolTip(
-            "Selecciona JSON tradicional por carpeta o upload multipart para "
-            "probar el endpoint /sources/ingest/files*."
+            "Para fuentes 'folder' la UI usa upload multipart; si eliges una "
+            "carpeta, enumera sus archivos soportados recursivamente."
         )
         self.execution_mode.setToolTip(
             "Asincrono requiere cola operativa; Sincrono ejecuta ingesta en "
@@ -289,14 +289,18 @@ class IngestionView(QWidget):
         }
 
         execution_mode = str(payload.get("_ingestion_mode") or "async")
+        fallback_note = ""
         if execution_mode == "async" and self._on_ingestion_readiness is not None:
             readiness = self._on_ingestion_readiness()
             if not self._is_async_ready(readiness):
                 self.execution_mode.setCurrentIndex(1)
                 payload["_ingestion_mode"] = "sync"
+                fallback_note = (
+                    "Dependencias async no listas; se ejecutara en modo sincrono."
+                )
                 self.summary.setPlainText(
                     "Estado: en curso\n"
-                    "Dependencias async no listas; se ejecutara en modo sincrono."
+                    f"{fallback_note}"
                 )
                 self.output.setPlainText(self._format_async_readiness(readiness))
         selected_mode = str(payload.get("_ingestion_mode") or "async")
@@ -308,9 +312,11 @@ class IngestionView(QWidget):
             dispatch_message = "Subiendo archivo para ingesta..."
             if selected_mode == "sync":
                 dispatch_message = "Subiendo archivo y ejecutando ingesta sincrona..."
-        self.summary.setPlainText(
-            f"Estado: en curso\n{dispatch_message}"
-        )
+        summary_lines = ["Estado: en curso"]
+        if fallback_note:
+            summary_lines.append(fallback_note)
+        summary_lines.append(dispatch_message)
+        self.summary.setPlainText("\n".join(summary_lines))
         self.progress.setValue(0)
         self._set_status("running")
         self.ingest_button.setEnabled(False)
@@ -387,8 +393,8 @@ class IngestionView(QWidget):
             self,
             "Confirmar borrado total",
             (
-                "Esta accion borrara TODO: documentos, chunks, BM25, "
-                "ChromaDB embebido, staging espejo local, Neo4j y jobs "
+                "Esta accion borrara TODO: documentos, chunks, indice lexico, "
+                "vectores Chroma, staging espejo local, Neo4j y jobs "
                 "historicos.\n\n"
                 "Deseas continuar?"
             ),
@@ -727,12 +733,72 @@ class IngestionView(QWidget):
             for name, value in checks.items():
                 if not isinstance(value, dict):
                     continue
-                lines.append(
-                    "- "
-                    f"{name}: ok={value.get('ok')} "
-                    f"required={value.get('required')} "
-                    f"detail={value.get('detail', '')}"
-                )
+                line_parts = [
+                    f"{name}: ok={value.get('ok')}",
+                    f"required={value.get('required')}",
+                ]
+
+                signal = str(value.get("signal") or "").strip()
+                if signal:
+                    line_parts.append(f"signal={signal}")
+
+                mode = str(value.get("mode") or "").strip()
+                if mode:
+                    line_parts.append(f"mode={mode}")
+
+                target = str(value.get("target") or "").strip()
+                persist_dir = str(value.get("persist_dir") or "").strip()
+                if target:
+                    line_parts.append(f"target={target}")
+                elif persist_dir:
+                    line_parts.append(f"persist_dir={persist_dir}")
+
+                auth_mode = str(value.get("auth_mode") or "").strip()
+                if auth_mode:
+                    line_parts.append(f"auth={auth_mode}")
+
+                collection = str(value.get("collection") or "").strip()
+                if collection:
+                    line_parts.append(f"collection={collection}")
+
+                collections_count = value.get("collections_count")
+                if isinstance(collections_count, int):
+                    line_parts.append(f"collections={collections_count}")
+
+                heartbeat_ok = value.get("heartbeat_ok")
+                if isinstance(heartbeat_ok, bool):
+                    line_parts.append(f"heartbeat_ok={heartbeat_ok}")
+
+                hnsw_space = str(value.get("hnsw_space") or "").strip()
+                if hnsw_space:
+                    line_parts.append(f"hnsw={hnsw_space}")
+
+                expected_hnsw_space = str(
+                    value.get("expected_hnsw_space") or ""
+                ).strip()
+                if expected_hnsw_space:
+                    line_parts.append(
+                        f"expected_hnsw={expected_hnsw_space}"
+                    )
+
+                indexed = value.get("indexed")
+                if isinstance(indexed, bool):
+                    line_parts.append(f"indexed={indexed}")
+
+                corpus_rows = value.get("corpus_rows")
+                if isinstance(corpus_rows, int):
+                    line_parts.append(f"corpus_rows={corpus_rows}")
+
+                document_count = value.get("document_count")
+                if isinstance(document_count, int):
+                    line_parts.append(f"documents={document_count}")
+
+                source_count = value.get("source_count")
+                if isinstance(source_count, int):
+                    line_parts.append(f"sources={source_count}")
+
+                line_parts.append(f"detail={value.get('detail', '')}")
+                lines.append("- " + " ".join(line_parts))
         return "\n".join(lines)
 
     @staticmethod

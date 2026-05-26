@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import shutil
 import threading
 import uuid
@@ -16,11 +17,45 @@ from coderag.core.settings import SETTINGS
 _LOCAL_THREADS: dict[str, threading.Thread] = {}
 
 
+def _artifact_id_from_payload(payload: Dict[str, Any]) -> str | None:
+    """Extract optional artifact id from a serialized ingestion payload."""
+    source = payload.get("source")
+    if not isinstance(source, dict):
+        return None
+    artifact_id = source.get("artifact_id")
+    if not isinstance(artifact_id, str) or not artifact_id.strip():
+        return None
+    return artifact_id.strip()
+
+
 def _cleanup_staging_dir(staging_dir: Optional[str]) -> None:
     """Best-effort cleanup for staged upload directories."""
     if not staging_dir:
         return
     shutil.rmtree(staging_dir, ignore_errors=True)
+
+
+def _prepare_worker_payload(
+    payload: Dict[str, Any],
+) -> tuple[Dict[str, Any], str | None]:
+    """Rehydrate payload source paths from persisted upload artifacts."""
+    artifact_id = _artifact_id_from_payload(payload)
+    if not artifact_id:
+        return payload, None
+
+    materialized_dir = RUNTIME.ingestion_artifact_store.materialize_uploaded_batch(
+        artifact_id
+    )
+    if not materialized_dir:
+        return payload, None
+
+    prepared_payload = copy.deepcopy(payload)
+    source = prepared_payload.get("source")
+    if not isinstance(source, dict):
+        prepared_payload["source"] = {"local_path": materialized_dir}
+    else:
+        source["local_path"] = materialized_dir
+    return prepared_payload, materialized_dir
 
 
 def _load_rq_modules():
@@ -38,11 +73,26 @@ def ingest_task(
     cleanup_staging_dir: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Background task entrypoint executed by RQ worker."""
+    artifact_id = _artifact_id_from_payload(payload)
+    materialized_dir: str | None = None
     try:
-        request = IngestionRequest.model_validate(payload)
+        prepared_payload, materialized_dir = _prepare_worker_payload(payload)
+        if artifact_id:
+            RUNTIME.ingestion_artifact_store.mark_processing_started(artifact_id)
+        request = IngestionRequest.model_validate(prepared_payload)
         service = RagApplicationService()
-        return service.ingest(request, job_id=job_id)
+        result = service.ingest(request, job_id=job_id)
+        if artifact_id:
+            RUNTIME.ingestion_artifact_store.mark_processing_completed(
+                artifact_id
+            )
+        return result
     except Exception as exc:  # pragma: no cover - worker boundary
+        if artifact_id:
+            RUNTIME.ingestion_artifact_store.mark_processing_failed(
+                artifact_id,
+                str(exc),
+            )
         RUNTIME.store.touch_job(
             job_id,
             "failed",
@@ -50,6 +100,7 @@ def ingest_task(
         )
         raise
     finally:
+        _cleanup_staging_dir(materialized_dir)
         _cleanup_staging_dir(cleanup_staging_dir)
 
 
@@ -59,18 +110,33 @@ def _run_local_ingest_job(
     cleanup_staging_dir: Optional[str] = None,
 ) -> None:
     """Execute local background ingestion and persist terminal job state."""
-    request = IngestionRequest.model_validate(payload)
+    artifact_id = _artifact_id_from_payload(payload)
+    materialized_dir: str | None = None
     from coderag.core.service import SERVICE
 
     try:
+        prepared_payload, materialized_dir = _prepare_worker_payload(payload)
+        request = IngestionRequest.model_validate(prepared_payload)
+        if artifact_id:
+            RUNTIME.ingestion_artifact_store.mark_processing_started(artifact_id)
         SERVICE.ingest(request, job_id=job_id)
+        if artifact_id:
+            RUNTIME.ingestion_artifact_store.mark_processing_completed(
+                artifact_id
+            )
     except Exception as exc:  # pragma: no cover - defensive worker boundary
+        if artifact_id:
+            RUNTIME.ingestion_artifact_store.mark_processing_failed(
+                artifact_id,
+                str(exc),
+            )
         RUNTIME.store.touch_job(
             job_id,
             "failed",
             f"FAILED | local worker: {exc}",
         )
     finally:
+        _cleanup_staging_dir(materialized_dir)
         _cleanup_staging_dir(cleanup_staging_dir)
         _LOCAL_THREADS.pop(job_id, None)
 
@@ -81,7 +147,10 @@ def enqueue_local_ingest_job(
 ) -> str:
     """Enqueue ingestion in a local background thread and return job id."""
     job_id = uuid.uuid4().hex[:12]
+    artifact_id = _artifact_id_from_payload(payload)
     RUNTIME.store.touch_job(job_id, "queued", "Ingestion job queued")
+    if artifact_id:
+        RUNTIME.ingestion_artifact_store.attach_job(artifact_id, job_id)
 
     thread = threading.Thread(
         target=_run_local_ingest_job,
@@ -110,7 +179,10 @@ def enqueue_ingest_job(
         job_id=job_id,
         job_timeout=SETTINGS.rq_ingest_job_timeout_sec,
     )
+    artifact_id = _artifact_id_from_payload(payload)
     RUNTIME.store.touch_job(job_id, "queued", "Ingestion job enqueued")
+    if artifact_id:
+        RUNTIME.ingestion_artifact_store.attach_job(artifact_id, job_id)
     return job.id
 
 

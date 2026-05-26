@@ -30,7 +30,7 @@ def test_rerank_results_preserves_document_diversity_for_complex_query() -> None
                 "Gobierno de datos define roles y calidad operacional.",
             ),
             0.99,
-            {"vector": 0.99, "bm25": 0.80},
+            {"vector": 0.99, "lexical": 0.80},
         ),
         (
             _chunk(
@@ -39,7 +39,7 @@ def test_rerank_results_preserves_document_diversity_for_complex_query() -> None
                 "La estrategia de datos coordina capacidades de negocio.",
             ),
             0.98,
-            {"vector": 0.98, "bm25": 0.75},
+            {"vector": 0.98, "lexical": 0.75},
         ),
         (
             _chunk(
@@ -48,7 +48,7 @@ def test_rerank_results_preserves_document_diversity_for_complex_query() -> None
                 "Gestion estrategica conecta objetivos y gobierno de datos.",
             ),
             0.91,
-            {"vector": 0.91, "bm25": 0.70},
+            {"vector": 0.91, "lexical": 0.70},
         ),
     ]
 
@@ -72,12 +72,12 @@ def test_rerank_results_keeps_simple_query_focus() -> None:
         (
             _chunk("c1", "doc-a", "Policy FIN-001 requires dual approval."),
             0.95,
-            {"vector": 0.95, "bm25": 0.88},
+            {"vector": 0.95, "lexical": 0.88},
         ),
         (
             _chunk("c2", "doc-b", "Project Atlas budget baseline overview."),
             0.70,
-            {"vector": 0.70, "bm25": 0.50},
+            {"vector": 0.70, "lexical": 0.50},
         ),
     ]
 
@@ -101,7 +101,7 @@ def test_rerank_results_mmr_reduces_redundant_chunks() -> None:
                 "Project Atlas budget governance and monthly cadence.",
             ),
             0.97,
-            {"vector": 0.97, "bm25": 0.90},
+            {"vector": 0.97, "lexical": 0.90},
         ),
         (
             _chunk(
@@ -110,7 +110,7 @@ def test_rerank_results_mmr_reduces_redundant_chunks() -> None:
                 "Project Atlas budget governance and monthly cadence.",
             ),
             0.96,
-            {"vector": 0.96, "bm25": 0.89},
+            {"vector": 0.96, "lexical": 0.89},
         ),
         (
             _chunk(
@@ -119,7 +119,7 @@ def test_rerank_results_mmr_reduces_redundant_chunks() -> None:
                 "Procedure ENG-DELIVERY depends on Policy FIN-001.",
             ),
             0.93,
-            {"vector": 0.93, "bm25": 0.81},
+            {"vector": 0.93, "lexical": 0.81},
         ),
     ]
 

@@ -74,9 +74,13 @@ def _full_pytest_command(python_exe: str) -> list[str]:
     return [python_exe, "-m", "pytest", "-q"]
 
 
-def _benchmark_commands(python_exe: str) -> list[list[str]]:
+def _benchmark_commands(
+    python_exe: str,
+    *,
+    include_gobierno_datos: bool,
+) -> list[list[str]]:
     """Return release benchmark commands for full gate mode."""
-    return [
+    commands = [
         [
             python_exe,
             "scripts/run_multihop_benchmark.py",
@@ -88,7 +92,9 @@ def _benchmark_commands(python_exe: str) -> list[list[str]]:
             "docs/benchmarks/last_run_release_es.md",
             "--fail-on-threshold",
         ],
-        [
+    ]
+    if include_gobierno_datos:
+        commands.append([
             python_exe,
             "scripts/run_multihop_benchmark.py",
             "--benchmark-file",
@@ -98,8 +104,8 @@ def _benchmark_commands(python_exe: str) -> list[list[str]]:
             "--output-md",
             "docs/benchmarks/last_run_release_gobierno_datos_es.md",
             "--fail-on-threshold",
-        ],
-    ]
+        ])
+    return commands
 
 
 def _build_steps(args: argparse.Namespace, python_exe: str) -> list[GateStep]:
@@ -131,7 +137,15 @@ def _build_steps(args: argparse.Namespace, python_exe: str) -> list[GateStep]:
             )
         )
         if not bool(args.skip_benchmarks):
-            for index, command in enumerate(_benchmark_commands(python_exe), 1):
+            for index, command in enumerate(
+                _benchmark_commands(
+                    python_exe,
+                    include_gobierno_datos=bool(
+                        args.include_gobierno_datos_benchmark
+                    ),
+                ),
+                1,
+            ):
                 steps.append(
                     GateStep(
                         name=f"benchmark-{index}",
@@ -182,6 +196,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--skip-benchmarks",
         action="store_true",
         help="Skip benchmark commands in full mode.",
+    )
+    parser.add_argument(
+        "--include-gobierno-datos-benchmark",
+        action="store_true",
+        help=(
+            "Include the dedicated Gobierno de Datos benchmark profile in "
+            "full mode. Use only when the active source contains that corpus."
+        ),
     )
     return parser
 

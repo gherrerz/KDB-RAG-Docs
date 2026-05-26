@@ -5,9 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 
 from coderag.core.settings import SETTINGS
+from coderag.core.models import DocumentCatalogEntry
 from coderag.core.service import _clear_local_staging_mirror
+from coderag.core import service as service_module
 from coderag.ingestion.index_chroma import ChromaVectorIndex
-from coderag.ui import staging
+from coderag.core.runtime import RUNTIME
 
 
 def test_clear_local_staging_mirror_removes_files_and_dirs(tmp_path) -> None:
@@ -38,38 +40,95 @@ def test_clear_local_staging_mirror_creates_dir_when_missing(tmp_path) -> None:
     assert (data_dir / "ingestion_staging").exists()
 
 
-def test_reset_cleans_same_staging_root_used_by_ui_staging(tmp_path: Path) -> None:
-    """UI staging and reset should point to the same physical data_dir root."""
-    original_repo_root = staging.REPO_ROOT
+def test_reset_cleans_legacy_staging_root(tmp_path: Path) -> None:
+    """Reset cleanup should keep removing legacy staged folder mirrors."""
+    data_dir = tmp_path / "runtime-storage"
+    staged_dir = data_dir / "ingestion_staging" / "docs_legacy"
+    staged_dir.mkdir(parents=True)
+    (staged_dir / "doc.md").write_text("hello", encoding="utf-8")
+
+    deleted_entries, warnings = _clear_local_staging_mirror(data_dir)
+
+    assert deleted_entries == 1
+    assert warnings == []
+    assert staged_dir.exists() is False
+    assert (data_dir / "ingestion_staging").exists()
+
+
+def test_delete_staged_document_copy_accepts_logical_staging_path(
+    tmp_path: Path,
+) -> None:
+    """Logical staging paths should still map back to the managed mirror."""
+    data_dir = tmp_path / "storage"
+    staged_file = data_dir / "ingestion_staging" / "old-copy" / "atlas.md"
+    staged_file.parent.mkdir(parents=True, exist_ok=True)
+    staged_file.write_text("hello", encoding="utf-8")
+
+    deleted, warning = service_module._delete_staged_document_copy(
+        data_dir,
+        "old-copy/atlas.md",
+    )
+
+    assert deleted is True
+    assert warning is None
+    assert staged_file.exists() is False
+
+
+def test_reset_all_skips_legacy_staging_cleanup_without_staged_docs(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """Reset should not touch ingestion_staging when no legacy docs exist."""
+    original_store = RUNTIME.store
     original_data_dir = SETTINGS.data_dir
+    staging_dir = tmp_path / "storage" / "ingestion_staging"
 
-    source_dir = tmp_path / "docs"
-    source_dir.mkdir(parents=True)
-    (source_dir / "doc.md").write_text("hello", encoding="utf-8")
+    class _StoreStub:
+        def list_documents(self, source_id=None, tags=None):
+            return [
+                DocumentCatalogEntry(
+                    document_id="doc-1",
+                    source_id="src-1",
+                    title="Engineering",
+                    path_or_url="sample_data/engineering.md",
+                    content_type="md",
+                    updated_at=service_module.datetime.now(service_module.UTC),
+                    tags=[],
+                )
+            ]
 
-    staging.REPO_ROOT = tmp_path
-    SETTINGS.data_dir = tmp_path / "runtime-storage"
+        def clear_all_data(self):
+            return {
+                "deleted_documents": 0,
+                "deleted_chunks": 0,
+                "deleted_graph_edges": 0,
+                "deleted_jobs": 0,
+            }
+
+        def bump_index_version(self):
+            return 1
+
+    monkeypatch.setattr(service_module.RUNTIME, "ingestion_artifact_store", type("_Artifacts", (), {"clear_uploaded_artifacts": lambda self: 0})())
+    monkeypatch.setattr(service_module.SERVICE, "store", _StoreStub())
+    monkeypatch.setattr(service_module.SERVICE.vector_index, "clear_all", lambda: None)
+    monkeypatch.setattr(service_module.SERVICE.graph_store, "clear_all_edges", lambda: 0)
+    monkeypatch.setattr(service_module.SERVICE, "rebuild_indexes", lambda source_id=None: None)
+    monkeypatch.setattr(service_module.SERVICE, "is_graph_enabled", lambda: False)
+    monkeypatch.setattr(service_module.SETTINGS, "data_dir", tmp_path / "storage")
+
     try:
-        runtime_path, metadata = staging.stage_folder_source("docs")
-        staged_dir = Path(runtime_path)
-
-        deleted_entries, warnings = _clear_local_staging_mirror(
-            SETTINGS.data_dir
-        )
-
-        assert metadata["staged_path"] == str(staged_dir)
-        assert staged_dir.parent == SETTINGS.data_dir / "ingestion_staging"
-        assert deleted_entries == 1
-        assert warnings == []
-        assert staged_dir.exists() is False
-        assert (SETTINGS.data_dir / "ingestion_staging").exists()
+        response = service_module.SERVICE.reset_all()
     finally:
-        staging.REPO_ROOT = original_repo_root
+        RUNTIME.store = original_store
         SETTINGS.data_dir = original_data_dir
 
+    assert response.status == "completed"
+    assert staging_dir.exists() is False
 
-def test_chroma_clear_all_recreates_persist_dir(tmp_path: Path) -> None:
-    """Reset should physically remove and recreate the Chroma persist dir."""
+
+def test_chroma_clear_all_rejects_embedded_mode(tmp_path: Path) -> None:
+    """Embedded Chroma reset should fail explicitly in the final runtime."""
+    original_chroma_mode = SETTINGS.chroma_mode
     original_persist_dir = SETTINGS.chroma_persist_dir
     original_use_chroma = SETTINGS.use_chroma
 
@@ -80,16 +139,21 @@ def test_chroma_clear_all_recreates_persist_dir(tmp_path: Path) -> None:
     marker_file.write_text("obsolete", encoding="utf-8")
 
     SETTINGS.use_chroma = True
+    SETTINGS.chroma_mode = "embedded"
     SETTINGS.chroma_persist_dir = chroma_dir
 
     index = ChromaVectorIndex(size=8, provider="local", model=None)
     try:
-        index.clear_all()
+        try:
+            index.clear_all()
+        except RuntimeError as exc:
+            assert "no longer supported" in str(exc)
+        else:
+            raise AssertionError("Expected embedded clear_all to be rejected")
 
-        assert chroma_dir.exists()
-        assert marker_file.exists() is False
-        assert list(chroma_dir.iterdir()) != []
+        assert marker_file.exists()
     finally:
         index.close()
+        SETTINGS.chroma_mode = original_chroma_mode
         SETTINGS.chroma_persist_dir = original_persist_dir
         SETTINGS.use_chroma = original_use_chroma

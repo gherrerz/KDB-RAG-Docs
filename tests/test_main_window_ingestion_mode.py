@@ -199,18 +199,27 @@ def test_main_window_upload_sync_uses_multipart_endpoint(
     upload_file.write_text("hello", encoding="utf-8")
 
     captured: list[
-        tuple[str, list[Path], str, dict[str, Any], list[str], int]
+        tuple[
+            str,
+            list[tuple[Path, str]],
+            str,
+            dict[str, Any],
+            list[str],
+            int,
+        ]
     ] = []
 
     def _fake_post_multipart(
         path: str,
-        file_paths: list[Path],
+        upload_entries: list[tuple[Path, str]],
         source_type: str,
         filters: dict[str, Any],
         tags: list[str],
         timeout: int,
     ) -> dict[str, Any]:
-        captured.append((path, file_paths, source_type, filters, tags, timeout))
+        captured.append(
+            (path, upload_entries, source_type, filters, tags, timeout)
+        )
         return {"status": "completed", "path": path}
 
     window._post_multipart = _fake_post_multipart  # type: ignore[method-assign]
@@ -230,7 +239,7 @@ def test_main_window_upload_sync_uses_multipart_endpoint(
 
     assert result["status"] == "completed"
     assert captured[0][0] == "/sources/ingest/files"
-    assert captured[0][1] == [upload_file]
+    assert captured[0][1] == [(upload_file, upload_file.name)]
     assert captured[0][2] == "folder"
     assert captured[0][4] == ["finance", "urgent"]
 
@@ -246,18 +255,27 @@ def test_main_window_upload_async_uses_multipart_endpoint_and_polling(
     second_file.write_text("world", encoding="utf-8")
 
     captured: list[
-        tuple[str, list[Path], str, dict[str, Any], list[str], int]
+        tuple[
+            str,
+            list[tuple[Path, str]],
+            str,
+            dict[str, Any],
+            list[str],
+            int,
+        ]
     ] = []
 
     def _fake_post_multipart(
         path: str,
-        file_paths: list[Path],
+        upload_entries: list[tuple[Path, str]],
         source_type: str,
         filters: dict[str, Any],
         tags: list[str],
         timeout: int,
     ) -> dict[str, Any]:
-        captured.append((path, file_paths, source_type, filters, tags, timeout))
+        captured.append(
+            (path, upload_entries, source_type, filters, tags, timeout)
+        )
         return {"status": "queued", "job_id": "upload-job-1"}
 
     window._post_multipart = _fake_post_multipart  # type: ignore[method-assign]
@@ -284,5 +302,8 @@ def test_main_window_upload_async_uses_multipart_endpoint_and_polling(
     assert result["status"] == "completed"
     assert result["job_id"] == "upload-job-1"
     assert captured[0][0] == "/sources/ingest/files/async"
-    assert captured[0][1] == [first_file, second_file]
+    assert captured[0][1] == [
+        (first_file, first_file.name),
+        (second_file, second_file.name),
+    ]
     assert captured[0][4] == ["release"]

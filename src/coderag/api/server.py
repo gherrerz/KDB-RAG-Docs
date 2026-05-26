@@ -9,6 +9,7 @@ from typing import Any
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 
 from coderag.api.upload_ingestion import (
+    StagedUploadFile,
     UploadIngestionAdapter,
     UploadIngestionError,
 )
@@ -21,8 +22,17 @@ from coderag.core.models import (
     ReplaceDocumentTagsResponse,
     TdmQueryRequest,
 )
+from coderag.core.runtime import RUNTIME
 from coderag.core.service import SERVICE
 from coderag.core.settings import SETTINGS
+from coderag.ingestion.index_chroma import (
+    build_remote_chroma_error_message,
+    detect_remote_chroma_error_signal,
+    describe_remote_chroma_auth_mode,
+    describe_remote_chroma_target,
+    expected_managed_chroma_hnsw_space,
+    get_collection_hnsw_space,
+)
 from coderag.jobs.queue import (
     enqueue_ingest_job,
     enqueue_local_ingest_job,
@@ -34,6 +44,24 @@ UPLOAD_INGESTION = UploadIngestionAdapter(
     base_dir=Path(SETTINGS.data_dir) / "upload_staging",
     max_upload_bytes=SETTINGS.upload_max_bytes,
 )
+
+
+def _artifact_files_payload(
+    staged_files: list[StagedUploadFile],
+) -> list[dict[str, Any]]:
+    """Convert one staged batch to the payload shape expected by the store."""
+    return [
+        {
+            "ordinal": item.ordinal,
+            "original_filename": item.original_filename,
+            "staged_filename": item.staged_filename,
+            "media_type": item.media_type,
+            "size_bytes": item.size_bytes,
+            "content_hash": item.content_hash,
+            "payload": item.payload,
+        }
+        for item in staged_files
+    ]
 
 
 def _run_reset_all(confirm: bool) -> dict[str, Any]:
@@ -95,7 +123,7 @@ app = FastAPI(
     title="RAG Hybrid Response Validator",
     version="0.1.0",
     description=(
-        "REST API for ingestion and hybrid retrieval (BM25 + vector + graph) "
+        "REST API for ingestion and hybrid retrieval (lexical + vector + graph) "
         "with evidence-aware responses."
     ),
     openapi_tags=[
@@ -149,20 +177,35 @@ def health() -> dict[str, str]:
 )
 def readiness() -> dict[str, str]:
     """Service readiness endpoint for orchestrators."""
-    try:
-        SERVICE.store.get_index_version()
-        return {"status": "ready"}
-    except Exception as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    checks = {
+        "runtime_store": _check_runtime_store(),
+        "lexical": _check_lexical_runtime(),
+        "chroma": _check_chroma_runtime(),
+    }
+    failures = [
+        f"{name}: {item.get('detail', '')}"
+        for name, item in checks.items()
+        if bool(item.get("required")) and not bool(item.get("ok"))
+    ]
+    if failures:
+        raise HTTPException(status_code=503, detail="; ".join(failures))
+    return {"status": "ready"}
 
 
-def _make_check(required: bool, ok: bool, detail: str) -> dict[str, Any]:
+def _make_check(
+    required: bool,
+    ok: bool,
+    detail: str,
+    **extra: Any,
+) -> dict[str, Any]:
     """Build one normalized dependency check payload."""
-    return {
+    payload = {
         "required": required,
         "ok": ok,
         "detail": detail,
     }
+    payload.update(extra)
+    return payload
 
 
 def _check_runtime_store() -> dict[str, Any]:
@@ -172,6 +215,198 @@ def _check_runtime_store() -> dict[str, Any]:
         return _make_check(True, True, "metadata store reachable")
     except Exception as exc:
         return _make_check(True, False, str(exc))
+
+
+def _describe_postgres_target() -> str:
+    """Describe the configured Postgres target for runtime diagnostics."""
+    host = str(getattr(SETTINGS, "postgres_host", "") or "").strip()
+    database = str(getattr(SETTINGS, "postgres_db", "") or "").strip()
+    port = int(getattr(SETTINGS, "postgres_port", 5432) or 5432)
+    if not host or not database:
+        return "unconfigured"
+    return f"{host}:{port}/{database}"
+
+
+def _check_lexical_runtime() -> dict[str, Any]:
+    """Validate the Postgres lexical backend used by the query path."""
+    lexical_index = SERVICE.lexical_index
+    backend = str(getattr(lexical_index, "backend_label", "unknown") or "unknown")
+    fts_language = str(
+        getattr(SETTINGS, "lexical_fts_language", "english") or "english"
+    )
+    target = _describe_postgres_target()
+
+    if backend != "lexical":
+        return _make_check(
+            True,
+            False,
+            "Postgres lexical backend is unavailable; configure POSTGRES_*.",
+            signal="lexical_backend_unavailable",
+            backend=backend,
+            fts_language=fts_language,
+            target=target,
+        )
+
+    try:
+        probe = getattr(lexical_index, "ping", None)
+        if callable(probe):
+            probe()
+        snapshot_fn = getattr(lexical_index, "health_snapshot", None)
+        snapshot: dict[str, Any] = {}
+        if callable(snapshot_fn):
+            raw_snapshot = snapshot_fn()
+            if isinstance(raw_snapshot, dict):
+                snapshot = dict(raw_snapshot)
+
+        indexed = bool(snapshot.get("indexed", False))
+        corpus_rows = int(snapshot.get("corpus_rows", 0) or 0)
+        document_count = int(snapshot.get("document_count", 0) or 0)
+        source_count = int(snapshot.get("source_count", 0) or 0)
+        detail = (
+            "lexical backend reachable "
+            f"backend={backend} "
+            f"fts_language={fts_language} "
+            f"target={target} "
+            f"indexed={str(indexed).lower()} "
+            f"corpus_rows={corpus_rows} "
+            f"documents={document_count} "
+            f"sources={source_count}"
+        )
+        return _make_check(
+            True,
+            True,
+            detail,
+            signal="lexical_ready",
+            backend=backend,
+            fts_language=fts_language,
+            target=target,
+            indexed=indexed,
+            corpus_rows=corpus_rows,
+            document_count=document_count,
+            source_count=source_count,
+        )
+    except Exception as exc:
+        return _make_check(
+            True,
+            False,
+            f"lexical backend probe failed: {exc}",
+            signal="lexical_unreachable",
+            backend=backend,
+            fts_language=fts_language,
+            target=target,
+        )
+
+
+def _collection_names_from_runtime(client: Any) -> list[str]:
+    """Normalize collection names across Chroma client versions."""
+    list_collections = getattr(client, "list_collections", None)
+    if not callable(list_collections):
+        return [SETTINGS.chroma_collection]
+
+    raw_collections = list_collections()
+    names: list[str] = []
+    for item in raw_collections:
+        name = getattr(item, "name", item)
+        normalized = str(name).strip()
+        if normalized:
+            names.append(normalized)
+    return sorted(names)
+
+
+def _validate_runtime_collection_space(collection: Any) -> str | None:
+    """Ensure the managed collection uses the configured HNSW space."""
+    detected_space = get_collection_hnsw_space(collection)
+    expected_space = expected_managed_chroma_hnsw_space()
+    if detected_space and detected_space != expected_space:
+        collection_name = str(
+            getattr(collection, "name", SETTINGS.chroma_collection)
+        )
+        raise RuntimeError(
+            "Chroma HNSW space mismatch "
+            f"configured={expected_space} "
+            f"detected={detected_space} "
+            f"collection={collection_name}"
+        )
+    return detected_space
+
+
+def _check_chroma_runtime() -> dict[str, Any]:
+    """Validate Chroma connectivity for the supported remote runtime mode."""
+    if not SETTINGS.use_chroma:
+        return _make_check(
+            True,
+            False,
+            "USE_CHROMA=false",
+            signal="chroma_disabled",
+            mode=SETTINGS.chroma_mode,
+            collection=SETTINGS.chroma_collection,
+        )
+
+    if SETTINGS.chroma_mode != "remote":
+        return _make_check(
+            True,
+            False,
+            "embedded chroma mode is no longer supported in the Docs runtime; "
+            "configure CHROMA_MODE=remote",
+            signal="chroma_mode_unsupported",
+            mode=SETTINGS.chroma_mode,
+            collection=SETTINGS.chroma_collection,
+            expected_hnsw_space=expected_managed_chroma_hnsw_space(),
+        )
+
+    collection_name = SETTINGS.chroma_collection
+    try:
+        vector_index = SERVICE.vector_index
+        client = vector_index._ensure_client()
+        heartbeat = getattr(client, "heartbeat", None)
+        if callable(heartbeat):
+            heartbeat()
+        collection_names = _collection_names_from_runtime(client)
+        collection = vector_index._ensure_collection()
+        collection_name = str(
+            getattr(collection, "name", SETTINGS.chroma_collection)
+        )
+        detected_space = _validate_runtime_collection_space(collection)
+        detail = (
+            "remote chroma reachable "
+            f"target={describe_remote_chroma_target()} "
+            f"auth={describe_remote_chroma_auth_mode()} "
+            f"collections={len(collection_names)} "
+            f"collection={collection_name}"
+        )
+        if detected_space:
+            detail = f"{detail} hnsw={detected_space}"
+        return _make_check(
+            True,
+            True,
+            detail,
+            signal="chroma_ready",
+            mode="remote",
+            target=describe_remote_chroma_target(),
+            auth_mode=describe_remote_chroma_auth_mode(),
+            collections_count=len(collection_names),
+            collection=collection_name,
+            heartbeat_ok=True,
+            hnsw_space=detected_space,
+            expected_hnsw_space=expected_managed_chroma_hnsw_space(),
+        )
+    except Exception as exc:
+        signal = detect_remote_chroma_error_signal(exc)
+        return _make_check(
+            True,
+            False,
+            build_remote_chroma_error_message(
+                operation="readiness_check",
+                exc=exc,
+                collection_name=collection_name,
+            ),
+            signal=signal,
+            mode="remote",
+            target=describe_remote_chroma_target(),
+            auth_mode=describe_remote_chroma_auth_mode(),
+            collection=collection_name,
+            expected_hnsw_space=expected_managed_chroma_hnsw_space(),
+        )
 
 
 def _check_neo4j_runtime() -> dict[str, Any]:
@@ -370,6 +605,8 @@ def ingest_readiness() -> dict[str, Any]:
     """Expose dependency checks for async ingestion mode selection."""
     checks = {
         "runtime_store": _check_runtime_store(),
+        "lexical": _check_lexical_runtime(),
+        "chroma": _check_chroma_runtime(),
         "neo4j": _check_neo4j_runtime(),
         "redis": _check_redis_runtime(),
         "rq_worker": _check_rq_worker_runtime(),
@@ -471,7 +708,8 @@ def ingest_source_files(
     staged_dir: Path | None = None
     filenames = [item.filename for item in files]
     try:
-        staged_dir = UPLOAD_INGESTION.stage_uploads_batch(files)
+        staged_batch = UPLOAD_INGESTION.stage_uploads_batch(files)
+        staged_dir = staged_batch.staged_dir
         parsed_filters = UPLOAD_INGESTION.parse_filters(filters)
         parsed_tags = UPLOAD_INGESTION.parse_tags(tags)
         request = UPLOAD_INGESTION.build_request(
@@ -525,17 +763,11 @@ def ingest_source_files(
     summary="Enqueue asynchronous ingestion from uploaded files",
     description=(
         "Upload one or more supported documents via multipart/form-data and "
-        "enqueue asynchronous ingestion. When USE_RQ=true, enable "
-        "UPLOAD_STAGING_SHARED=true only if API and worker share the same "
-        "staging volume path."
+        "enqueue asynchronous ingestion. Uploaded batches are persisted as "
+        "temporary Postgres artifacts so workers can rehydrate them without "
+        "depending on a shared staging volume."
     ),
     responses={
-        409: {
-            "description": (
-                "USE_RQ requires UPLOAD_STAGING_SHARED=true for upload async "
-                "because workers must read the staged file path."
-            )
-        },
         422: {
             "description": (
                 "Invalid multipart payload, unsupported extension, "
@@ -554,71 +786,68 @@ def ingest_source_files_async(
     tags: str | None = Form(None),
 ) -> dict[str, str]:
     """Enqueue async ingestion pipeline from one uploaded batch."""
-    staged_dir: Path | None = None
+    artifact_id: str | None = None
     filenames = [item.filename for item in files]
     try:
-        staged_dir = UPLOAD_INGESTION.stage_uploads_batch(files)
+        captured_files = UPLOAD_INGESTION.collect_uploads(files)
         parsed_filters = UPLOAD_INGESTION.parse_filters(filters)
         parsed_tags = UPLOAD_INGESTION.parse_tags(tags)
+
+        artifact_id = RUNTIME.ingestion_artifact_store.create_uploaded_batch_artifact(
+            source_type=source_type,
+            origin_path_or_url=None,
+            files=_artifact_files_payload(captured_files),
+        )
         request = UPLOAD_INGESTION.build_request(
-            staged_dir=staged_dir,
+            staged_dir=None,
             source_type=source_type,
             filters=parsed_filters,
             tags=parsed_tags,
+            artifact_id=artifact_id,
         )
         payload = request.model_dump()
-        cleanup_staging_dir = str(staged_dir)
-
-        if SETTINGS.use_rq and not SETTINGS.upload_staging_shared:
-            UPLOAD_INGESTION.cleanup(staged_dir)
-            staged_dir = None
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    "Upload async with USE_RQ=true requires "
-                    "UPLOAD_STAGING_SHARED=true and a shared volume between "
-                    "API and worker pods."
-                ),
-            )
 
         if SETTINGS.use_rq:
             try:
-                job_id = enqueue_ingest_job(
-                    payload,
-                    cleanup_staging_dir=cleanup_staging_dir,
-                )
+                job_id = enqueue_ingest_job(payload)
                 message = "Upload ingestion job enqueued"
             except Exception as exc:
                 if not _is_queue_connection_error(exc):
-                    UPLOAD_INGESTION.cleanup(staged_dir)
-                    staged_dir = None
                     raise
-                job_id = enqueue_local_ingest_job(
-                    payload,
-                    cleanup_staging_dir=cleanup_staging_dir,
-                )
+                job_id = enqueue_local_ingest_job(payload)
                 message = (
                     "RQ unavailable; upload ingestion job started "
                     "(local async worker fallback)"
                 )
         else:
-            job_id = enqueue_local_ingest_job(
-                payload,
-                cleanup_staging_dir=cleanup_staging_dir,
-            )
+            job_id = enqueue_local_ingest_job(payload)
             message = "Upload ingestion job started (local async worker)"
 
-        staged_dir = None
         return {
             "job_id": job_id,
             "status": "queued",
             "message": message,
         }
     except UploadIngestionError as exc:
+        if artifact_id:
+            RUNTIME.ingestion_artifact_store.mark_processing_failed(
+                artifact_id,
+                str(exc),
+            )
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except HTTPException:
+        if artifact_id:
+            RUNTIME.ingestion_artifact_store.mark_processing_failed(
+                artifact_id,
+                "HTTPException before async enqueue completed",
+            )
         raise
     except Exception as exc:
+        if artifact_id:
+            RUNTIME.ingestion_artifact_store.mark_processing_failed(
+                artifact_id,
+                str(exc),
+            )
         raise HTTPException(
             status_code=500,
             detail=_format_exception_detail(
@@ -630,14 +859,11 @@ def ingest_source_files_async(
                     "source_type": source_type,
                     "has_filters": bool(filters and filters.strip()),
                     "has_tags": bool(tags and tags.strip()),
-                    "staged_dir": str(staged_dir) if staged_dir else None,
+                    "artifact_id": artifact_id,
                     "use_rq": SETTINGS.use_rq,
                 },
             ),
         ) from exc
-    finally:
-        if staged_dir is not None:
-            UPLOAD_INGESTION.cleanup(staged_dir)
 
 
 @app.delete(
@@ -746,7 +972,7 @@ def get_job(job_id: str) -> dict[str, Any]:
     tags=["query"],
     summary="Run hybrid query",
     description=(
-        "Execute BM25 + vector retrieval, graph expansion, and optional LLM "
+        "Execute lexical + vector retrieval, graph expansion, and optional LLM "
         "answer generation with evidence and diagnostics."
     ),
     responses={

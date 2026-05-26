@@ -156,13 +156,11 @@ def test_neo4j_must_be_enabled_in_runtime() -> None:
 def test_relative_paths_are_resolved_to_repo_root() -> None:
     """Resolve default relative paths to absolute repository-root paths."""
     settings = Settings(
-        workspace_dir=Path("workspace"),
         data_dir=Path("storage"),
         chroma_persist_dir=Path("storage/chromadb"),
     )
     repo_root = Path(__file__).resolve().parents[1]
 
-    assert settings.workspace_dir == (repo_root / "workspace").resolve()
     assert settings.data_dir == (repo_root / "storage").resolve()
     assert settings.chroma_persist_dir == (
         repo_root / "storage/chromadb"
@@ -171,17 +169,14 @@ def test_relative_paths_are_resolved_to_repo_root() -> None:
 
 def test_absolute_paths_remain_unchanged(tmp_path: Path) -> None:
     """Keep absolute path values untouched during normalization."""
-    workspace_dir = (tmp_path / "workspace").resolve()
     data_dir = (tmp_path / "data").resolve()
     chroma_dir = (tmp_path / "chroma").resolve()
 
     settings = Settings(
-        workspace_dir=workspace_dir,
         data_dir=data_dir,
         chroma_persist_dir=chroma_dir,
     )
 
-    assert settings.workspace_dir == workspace_dir
     assert settings.data_dir == data_dir
     assert settings.chroma_persist_dir == chroma_dir
 
@@ -190,6 +185,7 @@ def test_tdm_flags_default_to_compatibility_mode() -> None:
     """Keep TDM capabilities disabled by default to preserve behavior."""
     settings = Settings()
 
+    assert settings.chroma_mode == "remote"
     assert settings.enable_tdm is False
     assert settings.tdm_enable_masking is False
     assert settings.tdm_enable_virtualization is False

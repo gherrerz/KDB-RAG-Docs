@@ -6,9 +6,10 @@ import base64
 import binascii
 import os
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import Field, field_validator, model_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from dotenv import load_dotenv
 
 
@@ -45,12 +46,11 @@ def _env_bool(name: str, default: bool) -> bool:
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
-class Settings(BaseModel):
+class Settings(BaseSettings):
     """Configuration model for runtime parameters."""
 
-    workspace_dir: Path = Field(
-        default_factory=lambda: Path(_env_str("WORKSPACE_DIR", "workspace"))
-    )
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
     data_dir: Path = Field(
         default_factory=lambda: Path(_env_str("DATA_DIR", "storage"))
     )
@@ -76,6 +76,27 @@ class Settings(BaseModel):
     use_chroma: bool = Field(
         default_factory=lambda: _env_bool("USE_CHROMA", True)
     )
+    chroma_mode: Literal["embedded", "remote"] = Field(
+        default_factory=lambda: (
+            _env_str("CHROMA_MODE", "remote") or "remote"
+        )
+    )
+    chroma_host: str = Field(
+        default_factory=lambda: _env_str("CHROMA_HOST", "localhost")
+        or "localhost"
+    )
+    chroma_port: int = Field(
+        default_factory=lambda: _env_int("CHROMA_PORT", 8000)
+    )
+    chroma_token: Optional[str] = Field(
+        default_factory=lambda: _env_str("CHROMA_TOKEN")
+    )
+    chroma_username: Optional[str] = Field(
+        default_factory=lambda: _env_str("CHROMA_USERNAME")
+    )
+    chroma_password: Optional[str] = Field(
+        default_factory=lambda: _env_str("CHROMA_PASSWORD")
+    )
     chroma_persist_dir: Path = Field(
         default_factory=lambda: Path(
             _env_str("CHROMA_PERSIST_DIR", "storage/chromadb")
@@ -86,6 +107,42 @@ class Settings(BaseModel):
         default_factory=lambda: (
             _env_str("CHROMA_COLLECTION", "coderag_chunks")
             or "coderag_chunks"
+        )
+    )
+    postgres_host: str = Field(
+        default_factory=lambda: _env_str("POSTGRES_HOST", "") or ""
+    )
+    postgres_port: int = Field(
+        default_factory=lambda: _env_int("POSTGRES_PORT", 5432)
+    )
+    postgres_db: str = Field(
+        default_factory=lambda: _env_str("POSTGRES_DB", "") or ""
+    )
+    postgres_user: str = Field(
+        default_factory=lambda: _env_str("POSTGRES_USER", "") or ""
+    )
+    postgres_password: str = Field(
+        default_factory=lambda: _env_str("POSTGRES_PASSWORD", "") or ""
+    )
+    postgres_pool_size: int = Field(
+        default_factory=lambda: _env_int("POSTGRES_POOL_SIZE", 5)
+    )
+    postgres_pool_timeout: float = Field(
+        default_factory=lambda: float(
+            _env_str("POSTGRES_POOL_TIMEOUT", "30.0") or "30.0"
+        )
+    )
+    lexical_fts_language: str = Field(
+        default_factory=lambda: (
+            _env_str("LEXICAL_FTS_LANGUAGE", "english") or "english"
+        )
+    )
+    runtime_environment: Literal[
+        "development", "test", "production"
+    ] = Field(
+        default_factory=lambda: (
+            _env_str("RUNTIME_ENVIRONMENT", "development")
+            or "development"
         )
     )
 
@@ -226,9 +283,6 @@ class Settings(BaseModel):
     )
 
     use_rq: bool = Field(default_factory=lambda: _env_bool("USE_RQ", False))
-    upload_staging_shared: bool = Field(
-        default_factory=lambda: _env_bool("UPLOAD_STAGING_SHARED", False)
-    )
     upload_max_bytes: int = Field(
         default_factory=lambda: _env_int("UPLOAD_MAX_BYTES", 25 * 1024 * 1024)
     )
@@ -276,6 +330,26 @@ class Settings(BaseModel):
             raise ValueError("UPLOAD_MAX_BYTES must be > 0")
         return value
 
+    @field_validator("chroma_mode")
+    @classmethod
+    def validate_chroma_mode(
+        cls,
+        value: str,
+    ) -> Literal["embedded", "remote"]:
+        """Ensure supported Chroma execution modes only."""
+        normalized = value.strip().lower()
+        if normalized not in {"embedded", "remote"}:
+            raise ValueError("CHROMA_MODE must be 'embedded' or 'remote'")
+        return normalized  # type: ignore[return-value]
+
+    @field_validator("chroma_port", "postgres_port")
+    @classmethod
+    def validate_positive_port(cls, value: int) -> int:
+        """Ensure network ports are positive integers."""
+        if value <= 0:
+            raise ValueError("Configured port must be > 0")
+        return value
+
     @staticmethod
     def _resolve_repo_path(path_value: Path) -> Path:
         """Resolve relative paths against repository root."""
@@ -286,11 +360,18 @@ class Settings(BaseModel):
     @model_validator(mode="after")
     def normalize_paths(self) -> "Settings":
         """Normalize paths and decode base64 service-account payloads."""
-        self.workspace_dir = self._resolve_repo_path(self.workspace_dir)
         self.data_dir = self._resolve_repo_path(self.data_dir)
         self.chroma_persist_dir = self._resolve_repo_path(
             self.chroma_persist_dir
         )
+        self.chroma_host = self.chroma_host.strip()
+        self.postgres_host = self.postgres_host.strip()
+        self.postgres_db = self.postgres_db.strip()
+        self.postgres_user = self.postgres_user.strip()
+        self.postgres_password = self.postgres_password.strip()
+        self.chroma_token = (self.chroma_token or "").strip() or None
+        self.chroma_username = (self.chroma_username or "").strip() or None
+        self.chroma_password = (self.chroma_password or "").strip() or None
         if (
             self.vertex_service_account_json_b64
             and self.vertex_service_account_json_b64.strip()
@@ -303,6 +384,25 @@ class Settings(BaseModel):
         elif self.vertex_service_account_json:
             self.vertex_service_account_json = (
                 self.vertex_service_account_json.strip()
+            )
+        return self
+
+    @model_validator(mode="after")
+    def validate_remote_chroma_auth(self) -> "Settings":
+        """Validate supported remote Chroma auth combinations."""
+        has_basic = bool(self.chroma_username or self.chroma_password)
+        if self.chroma_token and has_basic:
+            raise ValueError(
+                "CHROMA_TOKEN is mutually exclusive with "
+                "CHROMA_USERNAME/CHROMA_PASSWORD."
+            )
+        if self.chroma_username and not self.chroma_password:
+            raise ValueError(
+                "CHROMA_PASSWORD is required when CHROMA_USERNAME is set."
+            )
+        if self.chroma_password and not self.chroma_username:
+            raise ValueError(
+                "CHROMA_USERNAME is required when CHROMA_PASSWORD is set."
             )
         return self
 
@@ -458,6 +558,23 @@ class Settings(BaseModel):
                 "for vector storage and search."
             )
 
+    def resolve_postgres_dsn(self) -> str:
+        """Build the effective PostgreSQL DSN from split env fields."""
+        if not self.postgres_host:
+            return ""
+        return (
+            f"postgresql://{self.postgres_user}:{self.postgres_password}@"
+            f"{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
+        )
+
+    def resolve_postgres_startup_policy(
+        self,
+    ) -> Literal["auto_upgrade", "validate"]:
+        """Select startup bootstrap policy by runtime environment."""
+        if self.runtime_environment == "production":
+            return "validate"
+        return "auto_upgrade"
+
     def require_neo4j_enabled(self) -> None:
         """Fail fast when runtime is not configured for Neo4j graph store."""
         if not self.use_neo4j:
@@ -492,6 +609,16 @@ class Settings(BaseModel):
                 f"'{provider_name}'."
             )
         return provider_name
+
+
+def get_settings() -> Settings:
+    """Return the process-wide settings instance."""
+    return SETTINGS
+
+
+def resolve_postgres_dsn(settings: Settings) -> str:
+    """Compatibility wrapper for future startup helpers."""
+    return settings.resolve_postgres_dsn()
 
 
 SETTINGS = Settings()
