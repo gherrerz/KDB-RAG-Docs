@@ -7,13 +7,13 @@ Este documento define las instrucciones completas para que un agente de IA const
 El sistema final debe permitir:
 
 1. Ingestar documentos de distintos formatos y contenido de Confluence.
-2. Construir un RAG híbrido (vector + BM25 + grafo).
+2. Construir un RAG híbrido (vector + lexical Postgres + grafo).
 3. Consultar el conocimiento documental mediante LLM.
 4. Mostrar evidencias y relaciones semánticas trazables entre entidades.
 
 ---
 
-# 1. Objetivo del sistema
+## 1. Objetivo del sistema
 
 Construir una aplicación llamada RAG Hybrid Response Validator con interfaz gráfica que permita:
 
@@ -35,7 +35,7 @@ Construir una aplicación llamada RAG Hybrid Response Validator con interfaz gr�
 
 ---
 
-# 2. Arquitectura general
+## 2. Arquitectura general
 
 El sistema implementa:
 
@@ -47,12 +47,12 @@ UI (PySide6)
 Backend (FastAPI)  
 Vector Store (ChromaDB)  
 Graph Database (Neo4j)  
-BM25 Index (Whoosh / rank-bm25)  
+Lexical Index (Postgres FTS)  
 OpenAI o Gemini Responses API
 
 ---
 
-# 3. Arquitectura de módulos Python
+## 3. Arquitectura de módulos Python
 
     src/coderag/
     │
@@ -73,7 +73,6 @@ OpenAI o Gemini Responses API
     │   ├── summarizer.py
     │   ├── embedding.py
     │   ├── index_chroma.py
-    │   ├── index_bm25.py
     │   └── graph_builder.py
     │
     ├── parsers/
@@ -105,7 +104,7 @@ OpenAI o Gemini Responses API
 
 ---
 
-# 4. Flujo de ingesta
+## 4. Flujo de ingesta
 
 ## Paso 1 --- Conectar fuente documental
 
@@ -164,7 +163,7 @@ Resumen de área funcional o espacio Confluence.
 
 ---
 
-# 5. Vector Database (ChromaDB)
+## 5. Vector Database (ChromaDB)
 
 Colecciones:
 
@@ -198,7 +197,7 @@ Embeddings generados con OpenAI o Gemini o Vertex AI.
 
 ---
 
-# 6. Grafo de conocimiento (Neo4j)
+## 6. Grafo de conocimiento (Neo4j)
 
 ## Nodos
 
@@ -234,9 +233,10 @@ Ejemplo:
 
 ---
 
-# 7. Índice BM25
+## 7. Índice Léxico
 
-Se utiliza para recuperar coincidencias exactas.
+Se utiliza PostgreSQL FTS para recuperar coincidencias exactas y términos
+documentales con peso por título, sección, path y contenido.
 
 Ejemplos:
 
@@ -245,14 +245,14 @@ Ejemplos:
 - códigos internos y folios
 - siglas y etiquetas documentales
 
-Bibliotecas sugeridas:
+Componentes sugeridos:
 
-rank-bm25  
-Whoosh
+Postgres `tsvector` + `plainto_tsquery`  
+Índice GIN sobre corpus léxico
 
 ---
 
-# 8. Pipeline de consultas
+## 8. Pipeline de consultas
 
 Pipeline completo:
 
@@ -266,12 +266,12 @@ Pipeline completo:
 
 ---
 
-# 9. Hybrid Retrieval
+## 9. Hybrid Retrieval
 
 Combina:
 
 Vector search  
-BM25 search
+Lexical search
 
 Luego fusiona resultados.
 
@@ -279,7 +279,7 @@ top_n inicial = 60
 
 ---
 
-# 10. Reranking
+## 10. Reranking
 
 Ordenar resultados por relevancia semántica real y consistencia de evidencia.
 
@@ -289,7 +289,7 @@ top_k = 15
 
 ---
 
-# 11. Expansión por grafo
+## 11. Expansión por grafo
 
 Usar Neo4j para recuperar:
 
@@ -303,7 +303,7 @@ Número de hops recomendado:
 
 ---
 
-# 12. Context Assembly
+## 12. Context Assembly
 
 Construir contexto final con:
 
@@ -318,7 +318,7 @@ El contexto debe incluir máximo:
 
 ---
 
-# 13. Uso de OpenAI
+## 13. Uso de OpenAI
 
 Utilizar Responses API.
 
@@ -337,7 +337,7 @@ El modelo debe:
 
 ---
 
-# 14. Política anti-alucinación
+## 14. Política anti-alucinación
 
 Reglas obligatorias:
 
@@ -348,7 +348,7 @@ Reglas obligatorias:
 
 ---
 
-# 15. Interfaz gráfica
+## 15. Interfaz gráfica
 
 Framework recomendado:
 
@@ -356,7 +356,7 @@ PySide6
 
 Ventanas:
 
-## Ingesta
+### Ingesta UI
 
 Campos:
 
@@ -377,7 +377,7 @@ Estadísticas
 
 ---
 
-## Consulta
+### Consulta UI
 
 Componentes:
 
@@ -393,7 +393,7 @@ Rutas de grafo (multi-hop)
 
 ---
 
-# 16. API Backend (FastAPI)
+## 16. API Backend (FastAPI)
 
 Endpoints principales.
 
@@ -416,7 +416,7 @@ Respuesta:
 
 ---
 
-# 17. Cola de trabajos
+## 17. Cola de trabajos
 
 Utilizar:
 
@@ -432,7 +432,7 @@ generate_embeddings
 
 ---
 
-# 18. Estrategia incremental
+## 18. Estrategia incremental
 
 Detectar cambios por version, updated_at o hash del contenido.
 
@@ -442,7 +442,7 @@ Actualizar únicamente subgrafos afectados por cambios.
 
 ---
 
-# 19. Seguridad
+## 19. Seguridad
 
 - No guardar tokens en texto plano
 - Usar variables de entorno
@@ -451,27 +451,27 @@ Actualizar únicamente subgrafos afectados por cambios.
 
 ---
 
-# 20. Criterios de aceptación
+## 20. Criterios de aceptación
 
 El sistema está listo cuando:
 
 - Puede ingerir contenido real de Confluence y documentos empresariales
-- Construye embeddings, BM25 y grafo de conocimiento
+- Construye embeddings, retrieval léxico Postgres y grafo de conocimiento
 - Responde consultas simples y multi-hop
 - Muestra evidencia verificable y rutas de relación
 
 ---
 
-# 21. Entregables
+## 21. Entregables
 
 Repositorio Python completo.
 
 Incluye:
 
 README  
-Docker Compose para Rancher desktop 
+Docker Compose para Rancher desktop
 Tests con pytest
 
 ---
 
-# Fin del documento
+## Fin del documento
