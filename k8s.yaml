@@ -29,6 +29,10 @@ secrets:
   - name: VERTEX_SERVICE_ACCOUNT_JSON_B64
   - name: NEO4J_USER
   - name: NEO4J_PASSWORD
+  - name: CHROMA_USERNAME
+  - name: CHROMA_PASSWORD
+  - name: POSTGRES_USER
+  - name: POSTGRES_PASSWORD
 
 vault:
   enabled: false
@@ -72,10 +76,19 @@ extraEnv:
   VERTEX_LABEL_USE_CASE_ID: "tbd"
   DATA_DIR: "/app/storage"
   USE_NEO4J: "false"
-  NEO4J_URI: "bolt://localhost:7687"
+  NEO4J_URI: "neo4j://neo4j-operator.neo4j-operator.svc:7687"
   USE_CHROMA: "true"
-  CHROMA_PERSIST_DIR: "/app/storage/chromadb"
+  CHROMA_MODE: "remote"
+  CHROMA_HOST: "chromadb-operator.chromadb-operator.svc"
+  CHROMA_PORT: "8000"
   CHROMA_COLLECTION: "coderag_chunks"
+  POSTGRES_HOST: "coipo-postgres.coipo.svc"
+  POSTGRES_PORT: "5432"
+  POSTGRES_DB: "coipo_db"
+  POSTGRES_POOL_SIZE: "5"
+  POSTGRES_POOL_TIMEOUT: "30"
+  LEXICAL_FTS_LANGUAGE: "english"
+  RUNTIME_ENVIRONMENT: "development"
   USE_RQ: "false"
   REDIS_URL: "redis://localhost:6379/0"
   RQ_INGEST_JOB_TIMEOUT_SEC: "900"
