@@ -312,7 +312,6 @@ def test_reset_all_clears_uploaded_artifacts(
         lambda: {
             "deleted_documents": 0,
             "deleted_chunks": 0,
-            "deleted_graph_edges": 0,
             "deleted_jobs": 0,
         },
     )

@@ -41,7 +41,6 @@ def _safe_rmtree(path: Path) -> bool:
 def clean_artifacts(
     root: Path,
     *,
-    remove_metadata_db: bool,
     include_venv: bool,
 ) -> dict[str, int]:
     """Clean common local artifacts and return removal counters."""
@@ -56,17 +55,9 @@ def clean_artifacts(
     if pytest_cache.exists() and _safe_rmtree(pytest_cache):
         removed_pytest_cache = 1
 
-    removed_metadata_db = 0
-    if remove_metadata_db:
-        metadata_db = root / "storage" / "metadata.db"
-        if metadata_db.exists():
-            metadata_db.unlink()
-            removed_metadata_db = 1
-
     return {
         "removed_pycache": removed_pycache,
         "removed_pytest_cache": removed_pytest_cache,
-        "removed_metadata_db": removed_metadata_db,
     }
 
 
@@ -75,13 +66,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "Clean local runtime artifacts (__pycache__, .pytest_cache, "
-            "optional storage/metadata.db)."
+            "without shell delete commands)."
         )
-    )
-    parser.add_argument(
-        "--remove-metadata-db",
-        action="store_true",
-        help="Also remove storage/metadata.db.",
     )
     parser.add_argument(
         "--include-venv",
@@ -99,7 +85,6 @@ def main() -> int:
     root = Path(__file__).resolve().parents[1]
     result = clean_artifacts(
         root,
-        remove_metadata_db=args.remove_metadata_db,
         include_venv=args.include_venv,
     )
 
@@ -107,7 +92,6 @@ def main() -> int:
         "Cleanup completed:",
         f"pycache={result['removed_pycache']}",
         f"pytest_cache={result['removed_pytest_cache']}",
-        f"metadata_db={result['removed_metadata_db']}",
     )
     return 0
 

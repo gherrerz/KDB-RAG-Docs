@@ -4,18 +4,15 @@ from __future__ import annotations
 
 import hashlib
 import os
-from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
 from coderag.api import server
-from coderag.core.runtime import RUNTIME
 from coderag.core.models import IngestionRequest, QueryRequest, SourceConfig
 from coderag.core.service import RagApplicationService
 from coderag.core.settings import SETTINGS
 from coderag.ingestion import index_chroma
-from coderag.storage.metadata_store import MetadataStore
 from coderag.storage.postgres_startup import ensure_postgres_schema_ready
 
 
@@ -90,13 +87,6 @@ def _force_remote_chroma_mode() -> None:
         SETTINGS.postgres_user = original_postgres_user
         SETTINGS.postgres_password = original_postgres_password
         SETTINGS.lexical_fts_language = original_lexical_fts_language
-
-
-def _set_runtime_store_for_tests(data_dir: Path):
-    """Point the shared runtime store to an isolated test database."""
-    original_store = RUNTIME.store
-    RUNTIME.store = MetadataStore(data_dir / "metadata.db")
-    return original_store
 
 
 def test_ingest_and_query_roundtrip() -> None:
@@ -190,7 +180,6 @@ def test_reset_all_clears_repositories(tmp_path) -> None:
     SETTINGS.neo4j_user = "neo4j"
     SETTINGS.neo4j_password = "password"
     SETTINGS.data_dir = tmp_path / "storage"
-    original_store = _set_runtime_store_for_tests(SETTINGS.data_dir)
 
     service = RagApplicationService()
     service.graph_store.replace_edges = lambda source_id, edges: None
@@ -241,7 +230,6 @@ def test_reset_all_clears_repositories(tmp_path) -> None:
         SETTINGS.neo4j_password = original_neo4j_password
         SETTINGS.data_dir = original_data_dir
         SETTINGS.chroma_mode = original_chroma_mode
-        RUNTIME.store = original_store
 
 
 def test_ingest_job_status_includes_steps_and_progress() -> None:
@@ -538,14 +526,14 @@ def test_ingest_replaces_previous_duplicate_documents_globally(tmp_path) -> None
     SETTINGS.neo4j_user = "neo4j"
     SETTINGS.neo4j_password = "password"
     SETTINGS.data_dir = tmp_path / "storage"
-    original_store = _set_runtime_store_for_tests(SETTINGS.data_dir)
+    doc_name = f"atlas-{tmp_path.name}.md"
 
     old_root = SETTINGS.data_dir / "ingestion_staging" / "old-copy"
     new_root = SETTINGS.data_dir / "ingestion_staging" / "new-copy"
     old_root.mkdir(parents=True, exist_ok=True)
     new_root.mkdir(parents=True, exist_ok=True)
-    old_file = old_root / "atlas.md"
-    new_file = new_root / "atlas.md"
+    old_file = old_root / doc_name
+    new_file = new_root / doc_name
     old_file.write_text("Project Atlas is led by Alice.", encoding="utf-8")
     new_file.write_text("Project Atlas is led by Bob.", encoding="utf-8")
 
@@ -585,8 +573,17 @@ def test_ingest_replaces_previous_duplicate_documents_globally(tmp_path) -> None
         assert second.get("status") == "completed"
         assert first_source_id != second_source_id
 
-        documents = service.list_documents()
-        chunks = service.store.list_chunks()
+        documents = [
+            document
+            for document in service.list_documents()
+            if document.path_or_url
+            in {f"old-copy/{doc_name}", f"new-copy/{doc_name}"}
+        ]
+        chunks = [
+            chunk
+            for chunk in service.store.list_chunks()
+            if chunk.source_id in {first_source_id, second_source_id}
+        ]
         dedup_step = next(
             step
             for step in second.get("steps", [])
@@ -596,7 +593,7 @@ def test_ingest_replaces_previous_duplicate_documents_globally(tmp_path) -> None
 
         assert len(documents) == 1
         assert documents[0].source_id == second_source_id
-        assert documents[0].path_or_url == "new-copy/atlas.md"
+        assert documents[0].path_or_url == f"new-copy/{doc_name}"
         assert len(chunks) >= 1
         assert all(chunk.source_id == second_source_id for chunk in chunks)
         assert not old_file.exists()
@@ -604,7 +601,7 @@ def test_ingest_replaces_previous_duplicate_documents_globally(tmp_path) -> None
         assert dedup_step.get("details", {}).get("deleted_staging_files") == 1
         assert second.get("deduplication", {}).get(
             "replaced_existing", {}
-        ).get("replaced_paths") == ["old-copy/atlas.md"]
+        ).get("replaced_paths") == [f"old-copy/{doc_name}"]
         assert any(source_id == first_source_id for source_id, _ in graph_calls)
         assert any(source_id == second_source_id for source_id, _ in graph_calls)
     finally:
@@ -618,7 +615,6 @@ def test_ingest_replaces_previous_duplicate_documents_globally(tmp_path) -> None
         SETTINGS.neo4j_password = original_neo4j_password
         SETTINGS.data_dir = original_data_dir
         SETTINGS.chroma_mode = original_chroma_mode
-        RUNTIME.store = original_store
 
 
 def test_ingest_collapses_duplicate_documents_within_same_batch(tmp_path) -> None:
@@ -640,11 +636,11 @@ def test_ingest_collapses_duplicate_documents_within_same_batch(tmp_path) -> Non
     SETTINGS.neo4j_user = "neo4j"
     SETTINGS.neo4j_password = "password"
     SETTINGS.data_dir = tmp_path / "storage"
-    original_store = _set_runtime_store_for_tests(SETTINGS.data_dir)
+    doc_name = f"atlas-{tmp_path.name}.md"
 
     batch_root = tmp_path / "incoming"
-    first_copy = batch_root / "a" / "atlas.md"
-    second_copy = batch_root / "b" / "atlas.md"
+    first_copy = batch_root / "a" / doc_name
+    second_copy = batch_root / "b" / doc_name
     first_copy.parent.mkdir(parents=True, exist_ok=True)
     second_copy.parent.mkdir(parents=True, exist_ok=True)
     first_copy.write_text("Project Atlas is led by Alice.", encoding="utf-8")
@@ -669,8 +665,18 @@ def test_ingest_collapses_duplicate_documents_within_same_batch(tmp_path) -> Non
             )
         )
 
-        documents = service.list_documents()
+        documents = [
+            document
+            for document in service.list_documents()
+            if document.path_or_url
+            in {f"incoming/a/{doc_name}", f"incoming/b/{doc_name}"}
+        ]
         doc_map = service.store.get_document_map()
+        matching_entries = [
+            payload
+            for payload in doc_map.values()
+            if payload.get("title") == doc_name.removesuffix(".md").lower()
+        ]
         batch_step = next(
             step
             for step in result.get("steps", [])
@@ -680,14 +686,13 @@ def test_ingest_collapses_duplicate_documents_within_same_batch(tmp_path) -> Non
 
         assert result.get("status") == "completed"
         assert len(documents) == 1
-        assert documents[0].path_or_url == "incoming/b/atlas.md"
-        assert len(doc_map) == 1
-        assert next(iter(doc_map.values())).get("title") == "atlas"
+        assert documents[0].path_or_url == f"incoming/b/{doc_name}"
+        assert len(matching_entries) == 1
         assert batch_step.get("details", {}).get("skipped_documents") == 1
         assert batch_step.get("details", {}).get("kept_documents") == 1
         assert result.get("deduplication", {}).get("incoming_batch", {}).get(
             "kept_paths"
-        ) == ["incoming/b/atlas.md"]
+        ) == [f"incoming/b/{doc_name}"]
     finally:
         service.close()
         index_chroma.embed_text = original_embed
@@ -699,7 +704,6 @@ def test_ingest_collapses_duplicate_documents_within_same_batch(tmp_path) -> Non
         SETTINGS.neo4j_password = original_neo4j_password
         SETTINGS.data_dir = original_data_dir
         SETTINGS.chroma_mode = original_chroma_mode
-        RUNTIME.store = original_store
 
 
 def test_stale_query_refresh_does_not_rebuild_vector_embeddings() -> None:

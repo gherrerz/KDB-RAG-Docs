@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 
 from coderag.core.settings import SETTINGS
@@ -92,7 +93,7 @@ def test_reset_all_skips_legacy_staging_cleanup_without_staged_docs(
                     title="Engineering",
                     path_or_url="sample_data/engineering.md",
                     content_type="md",
-                    updated_at=service_module.datetime.now(service_module.UTC),
+                    updated_at=datetime.now(UTC),
                     tags=[],
                 )
             ]
@@ -101,7 +102,6 @@ def test_reset_all_skips_legacy_staging_cleanup_without_staged_docs(
             return {
                 "deleted_documents": 0,
                 "deleted_chunks": 0,
-                "deleted_graph_edges": 0,
                 "deleted_jobs": 0,
             }
 

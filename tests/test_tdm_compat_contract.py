@@ -60,7 +60,6 @@ def test_legacy_endpoints_still_work_with_tdm_flags_enabled() -> None:
                 "message": "ok",
                 "deleted_documents": 0,
                 "deleted_chunks": 0,
-                "deleted_graph_edges": 0,
                 "deleted_jobs": 0,
                 "neo4j_enabled": True,
                 "neo4j_edges_deleted": 0,

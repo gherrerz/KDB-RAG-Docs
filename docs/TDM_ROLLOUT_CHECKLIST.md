@@ -4,7 +4,7 @@ Checklist operativo para habilitar TDM de manera segura y gradual.
 
 ## 1. Pre-deploy
 
-- Confirmar backup de `storage/metadata.db`.
+- Confirmar backup de tablas Postgres `Tbl_Documents_*`.
 - Confirmar conectividad a Neo4j (`USE_NEO4J=true`).
 - Confirmar flags TDM en `false` antes del primer deploy.
 

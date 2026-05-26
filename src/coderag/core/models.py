@@ -35,7 +35,6 @@ class ResetAllResponse(BaseModel):
     message: str
     deleted_documents: int
     deleted_chunks: int
-    deleted_graph_edges: int
     deleted_jobs: int
     neo4j_enabled: bool
     neo4j_edges_deleted: int

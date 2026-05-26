@@ -26,6 +26,7 @@ from sqlalchemy.sql.schema import (
 POSTGRES_DOCUMENTS_TABLE_NAME = "Tbl_Documents_Documents"
 POSTGRES_CHUNKS_TABLE_NAME = "Tbl_Documents_Chunks"
 POSTGRES_LEXICAL_CORPUS_TABLE_NAME = "Tbl_Documents_LexicalCorpus"
+# Legacy migration constant retained for historical Alembic revisions.
 POSTGRES_GRAPH_EDGES_TABLE_NAME = "Tbl_Documents_GraphEdges"
 POSTGRES_JOBS_TABLE_NAME = "Tbl_Documents_Jobs"
 POSTGRES_JOB_EVENTS_TABLE_NAME = "Tbl_Documents_JobEvents"
@@ -173,28 +174,6 @@ lexical_corpus_table = Table(
         postgresql_using="gin",
     ),
 )
-
-
-graph_edges_table = Table(
-    POSTGRES_GRAPH_EDGES_TABLE_NAME,
-    POSTGRES_SCHEMA_METADATA,
-    Column("edge_id", Text, nullable=False),
-    Column("source_id", Text, nullable=False),
-    Column("source_node", Text, nullable=False),
-    Column("relation", Text, nullable=False),
-    Column("target_node", Text, nullable=False),
-    Column(
-        "created_at",
-        TIMESTAMP(timezone=True),
-        nullable=False,
-        server_default=text("CURRENT_TIMESTAMP"),
-    ),
-    PrimaryKeyConstraint("edge_id", name="pk_tbl_documents_graphedges"),
-    Index("idx_graph_edges_source_id", "source_id"),
-    Index("idx_graph_edges_source_node", "source_node"),
-    Index("idx_graph_edges_target_node", "target_node"),
-)
-
 
 jobs_table = Table(
     POSTGRES_JOBS_TABLE_NAME,

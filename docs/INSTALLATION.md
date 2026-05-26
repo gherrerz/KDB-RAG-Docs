@@ -294,7 +294,7 @@ sample_data\engineering.md;sample_data\policy_finance.md
 En sesiones con politica que bloquea `Remove-Item`, usa:
 
 ```powershell
-.venv\Scripts\python.exe scripts/clean_artifacts.py --remove-metadata-db
+.venv\Scripts\python.exe scripts/clean_artifacts.py
 ```
 
 Si usas Postgres para artifacts async, puedes purgar los expirados con:

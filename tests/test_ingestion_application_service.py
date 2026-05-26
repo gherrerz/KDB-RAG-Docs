@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 from time import perf_counter
 
+import pytest
+
+import coderag.core.ingestion_service as ingestion_module
+from coderag.core.models import ChunkRecord, DocumentRecord
 from coderag.core.ingestion_service import IngestionApplicationService
 
 
@@ -245,3 +250,87 @@ def test_build_failed_ingest_result_preserves_contract_shape() -> None:
         "steps": steps,
         "progress_pct": 100.0,
     }
+
+
+def test_persist_chunk_graph_materialization_skips_store_graph_edges(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Graph edge persistence must bypass RuntimeStore during decommission."""
+
+    class _StoreForPersist:
+        def __init__(self) -> None:
+            self.documents_calls: list[int] = []
+            self.chunk_calls: list[tuple[str, int]] = []
+
+        def upsert_documents(self, docs: list[DocumentRecord]) -> int:
+            self.documents_calls.append(len(docs))
+            return len(docs)
+
+        def replace_chunks(self, source_id: str, chunks: list[ChunkRecord]) -> None:
+            self.chunk_calls.append((source_id, len(chunks)))
+
+    class _GraphStoreForPersist:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, int]] = []
+
+        def replace_edges(self, source_id: str, edges: object) -> dict[str, int]:
+            edge_list = list(edges)
+            self.calls.append((source_id, len(edge_list)))
+            return {"edges_written": len(edge_list)}
+
+        def clear_all_edges(self) -> int:
+            return 0
+
+    store = _StoreForPersist()
+    graph_store = _GraphStoreForPersist()
+    service = IngestionApplicationService(
+        store=store,  # type: ignore[arg-type]
+        vector_index=_VectorIndexStub(),  # type: ignore[arg-type]
+        graph_store=graph_store,  # type: ignore[arg-type]
+        ingestion_artifact_store=_ArtifactStoreStub(),  # type: ignore[arg-type]
+        data_dir=Path("."),
+        rebuild_indexes=lambda: None,
+        is_graph_enabled=lambda: True,
+        delete_persisted_documents=lambda _docs, _skip: {},
+        ingest_handler=lambda _request, _progress, _job_id: {},
+        is_legacy_staged_path=lambda _data_dir, _path: False,
+        clear_local_staging_mirror=lambda _data_dir: (0, []),
+    )
+
+    doc = DocumentRecord(
+        document_id="doc-1",
+        source_id="source-1",
+        title="T",
+        content="body",
+        path_or_url="sample_data/doc.md",
+        content_type="md",
+        updated_at=datetime.now(UTC),
+    )
+    chunk = ChunkRecord(
+        chunk_id="chunk-1",
+        document_id="doc-1",
+        source_id="source-1",
+        section_name="s",
+        text="body",
+        start_ref=0,
+        end_ref=4,
+    )
+    generated_edges = [
+        ("edge-1", "node-a", "RELATES_TO", "node-b", "source-1")
+    ]
+    monkeypatch.setattr(
+        ingestion_module,
+        "build_graph_edges",
+        lambda source_id, chunks: generated_edges,
+    )
+
+    result = service.persist_chunk_graph_materialization(
+        source_id="source-1",
+        documents=[doc],
+        chunks=[chunk],
+    )
+
+    assert result["edges"] == generated_edges
+    assert store.documents_calls == [1]
+    assert store.chunk_calls == [("source-1", 1)]
+    assert graph_store.calls == [("source-1", 1)]

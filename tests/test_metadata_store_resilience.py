@@ -1,71 +1,88 @@
-"""Resilience tests for SQLite metadata store lifecycle events."""
+"""Resilience and contract tests for the Postgres-backed runtime store."""
 
 from __future__ import annotations
 
-import shutil
 from datetime import UTC, datetime
+from uuid import uuid4
+
+import pytest
 
 from coderag.core.models import ChunkRecord, DocumentRecord
-from coderag.storage.metadata_store import MetadataStore
+from coderag.core.settings import SETTINGS
+from coderag.storage.hybrid_metadata_store import HybridMetadataStore
+from coderag.storage.postgres_session import resolve_postgres_dsn
+from coderag.storage.postgres_startup import ensure_postgres_schema_ready
 
 
-def test_touch_job_recovers_after_storage_dir_removed(tmp_path) -> None:
-    """Ensure DB reconnect works after storage directory is deleted."""
-    db_path = tmp_path / "storage" / "metadata.db"
-    store = MetadataStore(db_path)
-
-    first = store.touch_job("job-1", "queued", "first")
-    assert first.job_id == "job-1"
-
-    shutil.rmtree(db_path.parent)
-
-    second = store.touch_job("job-2", "queued", "second")
-    assert second.job_id == "job-2"
-    assert db_path.exists()
-    assert store.get_job("job-2") is not None
+def _build_store() -> HybridMetadataStore:
+    """Build the runtime metadata store backed by PostgreSQL."""
+    ensure_postgres_schema_ready(SETTINGS, force=True)
+    postgres_dsn = resolve_postgres_dsn(SETTINGS)
+    if not postgres_dsn:
+        pytest.skip("Postgres DSN is required for runtime store tests.")
+    return HybridMetadataStore(postgres_dsn=postgres_dsn)
 
 
-def test_list_documents_returns_lightweight_catalog_entries(tmp_path) -> None:
+def test_touch_job_roundtrip_updates_status() -> None:
+    """Persist one job and confirm status updates are readable."""
+    store = _build_store()
+    job_id = f"job-{uuid4().hex}"
+
+    first = store.touch_job(job_id, "queued", "first")
+    second = store.touch_job(job_id, "running", "second")
+    loaded = store.get_job(job_id)
+
+    assert first.job_id == job_id
+    assert second.job_id == job_id
+    assert loaded is not None
+    assert loaded.status == "running"
+
+
+def test_list_documents_returns_lightweight_catalog_entries() -> None:
     """List document catalog rows without exposing full content payloads."""
-    db_path = tmp_path / "storage" / "metadata.db"
-    store = MetadataStore(db_path)
+    store = _build_store()
+    source_id = f"src-{uuid4().hex}"
+    document_id = f"doc-{uuid4().hex}"
 
     store.upsert_document(
         DocumentRecord(
-            document_id="doc-1",
-            source_id="src-1",
+            document_id=document_id,
+            source_id=source_id,
             title="Policy Finance",
             content="secret body",
-            path_or_url="sample_data/policy_finance.md",
+            path_or_url=f"sample_data/{document_id}.md",
             content_type="md",
             updated_at=datetime.now(UTC),
             metadata={"origin": "folder"},
         )
     )
 
-    documents = store.list_documents(source_id="src-1")
+    documents = store.list_documents(source_id=source_id)
 
     assert len(documents) == 1
-    assert documents[0].document_id == "doc-1"
+    assert documents[0].document_id == document_id
     assert documents[0].title == "Policy Finance"
-    assert documents[0].path_or_url == "sample_data/policy_finance.md"
+    assert documents[0].path_or_url == f"sample_data/{document_id}.md"
     assert not hasattr(documents[0], "content")
 
 
-def test_find_documents_by_title_and_content_type_is_case_insensitive(
-    tmp_path,
-) -> None:
+def test_find_documents_by_title_and_content_type_is_case_insensitive() -> None:
     """Match duplicates by title and content_type regardless of case."""
-    db_path = tmp_path / "storage" / "metadata.db"
-    store = MetadataStore(db_path)
+    store = _build_store()
+    title_token = uuid4().hex
+    title = f"Policy Finance {title_token}"
+    source_one = f"src-{uuid4().hex}"
+    source_two = f"src-{uuid4().hex}"
+    doc_one = f"doc-{uuid4().hex}"
+    doc_two = f"doc-{uuid4().hex}"
 
     store.upsert_document(
         DocumentRecord(
-            document_id="doc-1",
-            source_id="src-1",
-            title="Policy Finance",
+            document_id=doc_one,
+            source_id=source_one,
+            title=title,
             content="body-1",
-            path_or_url="sample_data/policy_finance.md",
+            path_or_url=f"sample_data/{doc_one}.md",
             content_type="MD",
             updated_at=datetime.now(UTC),
             metadata={"origin": "folder"},
@@ -73,11 +90,11 @@ def test_find_documents_by_title_and_content_type_is_case_insensitive(
     )
     store.upsert_document(
         DocumentRecord(
-            document_id="doc-2",
-            source_id="src-2",
-            title="policy finance",
+            document_id=doc_two,
+            source_id=source_two,
+            title=title.lower(),
             content="body-2",
-            path_or_url="storage/ingestion_staging/copy/policy_finance.md",
+            path_or_url=f"storage/ingestion_staging/{doc_two}.md",
             content_type="md",
             updated_at=datetime.now(UTC),
             metadata={"origin": "folder"},
@@ -85,25 +102,31 @@ def test_find_documents_by_title_and_content_type_is_case_insensitive(
     )
 
     duplicates = store.find_documents_by_title_and_content_type(
-        title="POLICY FINANCE",
+        title=title.upper(),
         content_type="md",
     )
 
-    assert [item.document_id for item in duplicates] == ["doc-2", "doc-1"]
+    duplicate_ids = {item.document_id for item in duplicates}
+    assert duplicate_ids == {doc_one, doc_two}
 
 
-def test_delete_document_and_chunks_by_document_id(tmp_path) -> None:
+def test_delete_document_and_chunks_by_document_id() -> None:
     """Delete one document and its chunks without affecting others."""
-    db_path = tmp_path / "storage" / "metadata.db"
-    store = MetadataStore(db_path)
+    store = _build_store()
+    source_one = f"src-{uuid4().hex}"
+    source_two = f"src-{uuid4().hex}"
+    doc_one = f"doc-{uuid4().hex}"
+    doc_two = f"doc-{uuid4().hex}"
+    chunk_one = f"chunk-{uuid4().hex}"
+    chunk_two = f"chunk-{uuid4().hex}"
 
     store.upsert_document(
         DocumentRecord(
-            document_id="doc-1",
-            source_id="src-1",
+            document_id=doc_one,
+            source_id=source_one,
             title="Engineering",
             content="body-1",
-            path_or_url="sample_data/engineering.md",
+            path_or_url=f"sample_data/{doc_one}.md",
             content_type="md",
             updated_at=datetime.now(UTC),
             metadata={"origin": "folder"},
@@ -111,23 +134,23 @@ def test_delete_document_and_chunks_by_document_id(tmp_path) -> None:
     )
     store.upsert_document(
         DocumentRecord(
-            document_id="doc-2",
-            source_id="src-2",
+            document_id=doc_two,
+            source_id=source_two,
             title="Policy Finance",
             content="body-2",
-            path_or_url="sample_data/policy_finance.md",
+            path_or_url=f"sample_data/{doc_two}.md",
             content_type="md",
             updated_at=datetime.now(UTC),
             metadata={"origin": "folder"},
         )
     )
     store.replace_chunks(
-        source_id="src-1",
+        source_id=source_one,
         chunks=[
             ChunkRecord(
-                chunk_id="chunk-1",
-                document_id="doc-1",
-                source_id="src-1",
+                chunk_id=chunk_one,
+                document_id=doc_one,
+                source_id=source_one,
                 section_name="intro",
                 text="hello",
                 start_ref=0,
@@ -139,12 +162,12 @@ def test_delete_document_and_chunks_by_document_id(tmp_path) -> None:
         ],
     )
     store.replace_chunks(
-        source_id="src-2",
+        source_id=source_two,
         chunks=[
             ChunkRecord(
-                chunk_id="chunk-2",
-                document_id="doc-2",
-                source_id="src-2",
+                chunk_id=chunk_two,
+                document_id=doc_two,
+                source_id=source_two,
                 section_name="intro",
                 text="world",
                 start_ref=0,
@@ -156,13 +179,13 @@ def test_delete_document_and_chunks_by_document_id(tmp_path) -> None:
         ],
     )
 
-    deleted_chunks = store.delete_chunks_by_document_id("doc-1")
-    deleted_documents = store.delete_document_by_id("doc-1")
+    deleted_chunks = store.delete_chunks_by_document_id(doc_one)
+    deleted_documents = store.delete_document_by_id(doc_one)
 
-    remaining_documents = store.list_documents()
-    remaining_chunks = store.list_chunks()
+    remaining_documents = store.list_documents(source_id=source_two)
+    remaining_chunks = store.list_chunks(source_id=source_two)
 
     assert deleted_chunks == 1
     assert deleted_documents == 1
-    assert [item.document_id for item in remaining_documents] == ["doc-2"]
-    assert [item.chunk_id for item in remaining_chunks] == ["chunk-2"]
+    assert [item.document_id for item in remaining_documents] == [doc_two]
+    assert [item.chunk_id for item in remaining_chunks] == [chunk_two]

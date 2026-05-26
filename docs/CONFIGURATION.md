@@ -22,17 +22,18 @@ Decisiones cerradas relevantes para configuración:
 ## Bootstrap Actual Del Cutover
 
 El runtime ya acepta el contrato nuevo de configuración para preparar el cutover,
-pero todavía no usa Postgres como store efectivo de metadata documental.
+y opera con Postgres como store efectivo de metadata documental.
 
 - `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_DB`, `POSTGRES_USER` y `POSTGRES_PASSWORD` ya están soportados por `settings.py`.
 - `POSTGRES_POOL_SIZE`, `POSTGRES_POOL_TIMEOUT` y `RUNTIME_ENVIRONMENT` ya controlan el bootstrap y la policy de startup de Alembic/Postgres.
 - `CHROMA_MODE`, `CHROMA_HOST`, `CHROMA_PORT`, `CHROMA_TOKEN`, `CHROMA_USERNAME` y `CHROMA_PASSWORD` ya están soportados por el contrato de settings.
-- Estado actual: el arranque puede resolver DSN de Postgres y validar heads de Alembic cuando esa ruta se active. En el corte actual, jobs, job_events, runtime_state/index_version, documents, chunks, graph_edges, catálogo TDM y los upload artifacts async ya pueden rutearse a Postgres. El endpoint multipart async persiste artifacts directamente en Postgres al encolar y los workers rehidratan batches desde esos artifacts, por lo que `UPLOAD_STAGING_SHARED` deja de ser un requisito funcional; el staging temporal en filesystem queda sólo para flujos locales legacy fuera de ese path async. La capa vectorial operativa final usa cliente remoto; `embedded` queda sólo como valor legacy no soportado operativamente.
+- Estado actual: el arranque requiere DSN de Postgres válido, valida heads de Alembic y falla explícitamente cuando `POSTGRES_*` está ausente. Jobs, job_events, runtime_state/index_version, documents, chunks, catálogo TDM y upload artifacts async se enrutan a Postgres. Los edges documentales se resuelven en Neo4j y ya no se persisten en Postgres. El endpoint multipart async persiste artifacts directamente en Postgres al encolar y los workers rehidratan batches desde esos artifacts, por lo que `UPLOAD_STAGING_SHARED` deja de ser un requisito funcional; el staging temporal en filesystem queda sólo para flujos locales legacy fuera de ese path async. La capa vectorial operativa final usa cliente remoto; `embedded` queda sólo como valor legacy no soportado operativamente.
 
 ## Parameters
 
-- `data_dir`: carpeta de trabajo local; `metadata.db` solo se usa como
-  fallback legacy cuando `POSTGRES_*` no esta configurado
+- `data_dir`: carpeta de trabajo local para staging legacy puntual,
+  uploads transitorios y artefactos no-relacionales; no se usa como
+  backend de metadata runtime
 - `max_context_chars`: limite de contexto ensamblado
 - `graph_hops`: cantidad de saltos para expansion en grafo
 - `retrieval_top_n`: candidatos iniciales del retrieval hibrido
@@ -84,7 +85,7 @@ pero todavía no usa Postgres como store efectivo de metadata documental.
   paralelo durante `rebuild` de indice vectorial.
 - `CHROMA_UPSERT_BATCH_SIZE`: cantidad de chunks por lote en cada upsert a
   Chroma.
-- Los chunks se persisten en SQLite y tambien se indexan en Chroma con
+- Los chunks se persisten en Postgres y tambien se indexan en Chroma con
   embeddings reales durante ingesta.
 - Las consultas generan el embedding del query con el mismo provider/modelo
   configurado y buscan vecinos similares en Chroma.

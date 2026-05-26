@@ -15,7 +15,6 @@ from coderag.core.models import ChunkRecord, DocumentCatalogEntry, DocumentRecor
 from coderag.storage.postgres_schema import (
     chunks_table,
     documents_table,
-    graph_edges_table,
 )
 from coderag.storage.postgres_session import PostgresSessionFactory
 
@@ -419,59 +418,14 @@ class PostgresDocumentChunkStore:
             result = connection.execute(statement)
         return max(0, int(result.rowcount or 0))
 
-    def replace_graph_edges(
-        self,
-        source_id: str,
-        edges: Iterable[tuple[str, str, str, str, str]],
-    ) -> None:
-        """Replace graph edges for one source in PostgreSQL."""
-        rows = [
-            {
-                "edge_id": edge_id,
-                "source_node": source_node,
-                "relation": relation,
-                "target_node": target_node,
-                "source_id": persisted_source_id,
-            }
-            for edge_id, source_node, relation, target_node, persisted_source_id in edges
-        ]
-        with self._session_factory.get_connection() as connection:
-            connection.execute(
-                delete(graph_edges_table).where(
-                    graph_edges_table.c.source_id == source_id
-                )
-            )
-            if rows:
-                connection.execute(insert(graph_edges_table).values(rows))
-
-    def list_graph_edges(
-        self,
-        source_id: str | None = None,
-    ) -> list[tuple[str, str, str]]:
-        """Return graph edges with optional source filter."""
-        statement = select(
-            graph_edges_table.c.source_node,
-            graph_edges_table.c.relation,
-            graph_edges_table.c.target_node,
-        )
-        if source_id:
-            statement = statement.where(graph_edges_table.c.source_id == source_id)
-        with self._session_factory.get_connection() as connection:
-            rows = connection.execute(statement).all()
-        return [(str(row[0]), str(row[1]), str(row[2])) for row in rows]
-
     def clear_document_data(self) -> dict[str, int]:
         """Delete persisted documents and chunks while keeping schema intact."""
         with self._session_factory.get_connection() as connection:
             deleted_chunks = connection.execute(delete(chunks_table)).rowcount
-            deleted_graph_edges = connection.execute(
-                delete(graph_edges_table)
-            ).rowcount
             deleted_documents = connection.execute(
                 delete(documents_table)
             ).rowcount
         return {
             "deleted_documents": max(0, int(deleted_documents or 0)),
             "deleted_chunks": max(0, int(deleted_chunks or 0)),
-            "deleted_graph_edges": max(0, int(deleted_graph_edges or 0)),
         }

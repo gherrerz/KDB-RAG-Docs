@@ -9,12 +9,11 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import sqlite3
 import sys
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 
 def _normalize_for_match(value: str) -> str:
@@ -81,30 +80,30 @@ def _bootstrap_src_path() -> None:
 os.chdir(_repo_root())
 _bootstrap_src_path()
 
-from coderag.core.models import QueryRequest, QueryResponse
-from coderag.core.service import SERVICE
+if TYPE_CHECKING:
+    from coderag.core.models import QueryRequest, QueryResponse
+    from coderag.core.service import RagApplicationService
 
 
-def _default_source_id(repo_root: Path) -> str | None:
-    """Return source_id with most documents from local metadata store."""
-    db_path = repo_root / "storage" / "metadata.db"
-    if not db_path.exists():
+def _service() -> "RagApplicationService":
+    """Import the runtime service lazily for CLI ergonomics."""
+    from coderag.core.service import SERVICE
+
+    return SERVICE
+
+
+def _default_source_id() -> str | None:
+    """Return source_id with most documents from active runtime store."""
+    document_counts: dict[str, int] = {}
+    for document in _service().list_documents():
+        source_id = str(document.source_id).strip()
+        if not source_id:
+            continue
+        document_counts[source_id] = document_counts.get(source_id, 0) + 1
+
+    if not document_counts:
         return None
-
-    with sqlite3.connect(db_path) as connection:
-        cursor = connection.cursor()
-        row = cursor.execute(
-            """
-            SELECT source_id, COUNT(*) AS doc_count
-            FROM documents
-            GROUP BY source_id
-            ORDER BY doc_count DESC, source_id ASC
-            LIMIT 1
-            """
-        ).fetchone()
-    if not row:
-        return None
-    return str(row[0])
+    return max(document_counts.items(), key=lambda item: (item[1], item[0]))[0]
 
 
 def _load_cases(path: Path) -> list[BenchmarkCase]:
@@ -233,7 +232,7 @@ def _load_cases(path: Path) -> list[BenchmarkCase]:
     return cases
 
 
-def _citation_unique_documents(response: QueryResponse) -> int:
+def _citation_unique_documents(response: "QueryResponse") -> int:
     """Count unique document ids represented in evidence citations."""
     return len({citation.document_id for citation in response.citations})
 
@@ -243,6 +242,8 @@ def _run_case(
     default_source_id: str | None,
 ) -> BenchmarkResult:
     """Execute a query case through service pipeline with fallback LLM mode."""
+    from coderag.core.models import QueryRequest
+
     effective_source_id = case.source_id or default_source_id
     request = QueryRequest(
         question=case.question,
@@ -251,7 +252,7 @@ def _run_case(
         force_fallback=True,
         include_llm_answer=True,
     )
-    response = SERVICE.query(request)
+    response = _service().query(request)
     diagnostics = response.diagnostics
 
     retrieval_candidates = int(diagnostics.get("retrieval_candidates", 0))
@@ -559,18 +560,18 @@ def main() -> int:
     output_md = (repo_root / args.output_md).resolve()
 
     cases = _load_cases(benchmark_file)
-    default_source_id = args.source_id or _default_source_id(repo_root)
+    default_source_id = args.source_id or _default_source_id()
 
     if not default_source_id:
         print("No source_id available. Run ingestion first.")
         return 2
 
-    results: List[BenchmarkResult] = []
+    results: list[BenchmarkResult] = []
     try:
         for case in cases:
             results.append(_run_case(case, default_source_id=default_source_id))
     finally:
-        SERVICE.close()
+        _service().close()
 
     _print_console_summary(results)
 

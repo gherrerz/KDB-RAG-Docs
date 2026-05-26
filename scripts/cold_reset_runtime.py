@@ -1,7 +1,7 @@
 """Apply destructive storage reset used by scripts/cold_reset.ps1.
 
-This script removes local persisted artifacts, clears local staging mirror
-folders, and clears Neo4j graph edges. It is intentionally separate from
+This script resets the local Chroma directory, clears local ingestion staging
+mirrors, and clears Neo4j graph edges. It is intentionally separate from
 PowerShell orchestration to avoid quoting issues with inline Python
 execution.
 """
@@ -64,17 +64,10 @@ def main() -> int:
 
     data_dir = _to_abs(repo_root, Path(SETTINGS.data_dir))
     chroma_dir = _to_abs(repo_root, Path(SETTINGS.chroma_persist_dir))
-    metadata_db = data_dir / "metadata.db"
     staging_dir = data_dir / "ingestion_staging"
     warnings: list[str] = []
 
     _reset_dir(chroma_dir, warnings)
-
-    if metadata_db.exists():
-        try:
-            metadata_db.unlink()
-        except PermissionError as exc:  # pragma: no cover - OS dependent
-            warnings.append(f"Could not remove '{metadata_db}': {exc}")
 
     _reset_dir(staging_dir, warnings)
 
@@ -91,7 +84,6 @@ def main() -> int:
         json.dumps(
             {
                 "chroma_dir": str(chroma_dir),
-                "metadata_db": str(metadata_db),
                 "staging_dir": str(staging_dir),
                 "neo4j_deleted_edges": neo4j_deleted_edges,
                 "neo4j_error": neo4j_error,

@@ -380,10 +380,9 @@ class RagApplicationService:
         self,
         source_id: str,
     ) -> tuple[list[tuple[str, str, str, str]], dict[str, object]]:
-        """Recompute persisted graph state for one source from current chunks."""
+        """Recompute graph state for one source from current chunks."""
         chunks = self.store.list_chunks(source_id=source_id)
         edges = build_graph_edges(source_id=source_id, chunks=chunks)
-        self.store.replace_graph_edges(source_id=source_id, edges=edges)
 
         if not self.is_graph_enabled():
             return edges, {"neo4j_enabled": False, "skipped": True}

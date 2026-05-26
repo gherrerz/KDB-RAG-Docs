@@ -4,13 +4,8 @@ from __future__ import annotations
 
 import base64
 import json
-import os
-import shutil
-import stat
-import uuid
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
 from typing import Any
 
 import chromadb
@@ -333,37 +328,6 @@ class ChromaVectorIndex:
             self._ensure_client()
             self._collection = self._get_or_create_collection()
         return self._collection
-
-    @staticmethod
-    def _on_rmtree_error(func, path, _exc_info) -> None:
-        """Retry physical deletion after clearing read-only flags."""
-        os.chmod(path, stat.S_IWRITE | stat.S_IREAD)
-        func(path)
-
-    @staticmethod
-    def _is_chroma_internal_entry(path: Path) -> bool:
-        """Keep Chroma-managed files that may stay locked by peers."""
-        if path.name.startswith("chroma.sqlite3"):
-            return True
-        try:
-            uuid.UUID(path.name)
-            return True
-        except ValueError:
-            return False
-
-    def _remove_non_chroma_entries(self) -> None:
-        """Delete caller-added stale entries without touching live internals."""
-        persist_dir = self.persist_dir
-        if persist_dir is None or not persist_dir.exists():
-            return
-
-        for entry in persist_dir.iterdir():
-            if self._is_chroma_internal_entry(entry):
-                continue
-            if entry.is_dir():
-                shutil.rmtree(entry, onerror=self._on_rmtree_error)
-            else:
-                entry.unlink(missing_ok=True)
 
     def _get_or_create_collection(self) -> Collection:
         """Return active Chroma collection with cosine distance config."""

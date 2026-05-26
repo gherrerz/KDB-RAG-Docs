@@ -201,7 +201,7 @@ flowchart TB
     end
 
     subgraph L1[CAPA 1 - Datos]
-        SQLite[(SQLite metadata.db)]
+        Postgres[(Postgres metadata store)]
       Chroma[(Chroma vector store)]
         Neo4j[(Neo4j opcional)]
         Redis[(Redis opcional)]
@@ -215,7 +215,7 @@ flowchart TB
     Service --> Retrieval
     Service --> GraphExpand
     Service --> LLM
-    Service --> SQLite
+    Service --> Postgres
     Service --> Chroma
     Service --> Neo4j
     Jobs --> Redis
@@ -229,8 +229,8 @@ flowchart TB
 - Capa 3 (Aplicacion y Dominio): coordina casos de uso y politicas del flujo.
 - Capa 2 (Recuperacion e Ingesta): contiene logica de parseo, chunking,
   indexacion, retrieval y grounding para respuesta.
-- Capa 1 (Datos): almacenamiento local obligatorio y servicios externos
-  opcionales para escalar capacidades.
+- Capa 1 (Datos): Postgres obligatorio para metadata/runtime y servicios
+  externos opcionales para capacidades vectoriales, grafo y cola.
 
 ## Diagrama de componentes
 
@@ -322,7 +322,7 @@ sequenceDiagram
         SVC->>DB: upsert_documents(docs) en lote
         SVC->>DB: replace_chunks(source_id, chunks)
         SVC->>SVC: build_graph_edges(chunks)
-        SVC->>DB: replace_graph_edges(source_id, edges)
+        Note over SVC,DB: edges documentales no se persisten en Postgres
         SVC->>GS: replace_edges(source_id, edges)
         Note over SVC,GS: UNWIND por bloques + transaccion por lote + retry acotado
         Note over SVC,GS: replace_edges limpia nodos Entity huerfanos tras resincronizar Neo4j

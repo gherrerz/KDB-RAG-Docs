@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from coderag.core.models import SourceConfig
-from coderag.storage.metadata_store import MetadataStore
+from coderag.core.protocols import TdmCatalogStoreProtocol
 from coderag.parsers.data_dictionary_parser import parse_data_dictionary
 from coderag.parsers.openapi_service_parser import parse_openapi_service_contract
 from coderag.parsers.sql_schema_parser import parse_sql_schema
@@ -49,9 +49,9 @@ def _read_text(file_path: Path) -> str:
 
 def ingest_tdm_assets(
     source: SourceConfig,
-    store: MetadataStore,
+    store: TdmCatalogStoreProtocol,
 ) -> dict[str, Any]:
-    """Ingest TDM-specific metadata into additive SQLite tables."""
+    """Ingest TDM-specific metadata into additive catalog stores."""
     if source.source_type not in {"tdm_folder", "tdm"}:
         raise ValueError(
             "TDM ingestion expects source_type 'tdm_folder' or 'tdm'."

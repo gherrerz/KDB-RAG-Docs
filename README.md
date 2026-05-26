@@ -75,8 +75,7 @@ El contrato objetivo aprobado para el cutover es Postgres + Chroma remoto + Neo4
 - Vector index: `ChromaVectorIndex` solo en modo `remote`
 - Lexical index: Postgres FTS sobre `Tbl_Documents_LexicalCorpus`
 - Grafo: Neo4j opcional para persistencia y expansion de paths
-- Storage metadata: Postgres como runtime objetivo; `storage/metadata.db`
-  ya no es backend operativo cuando `POSTGRES_*` esta configurado.
+- Storage metadata: Postgres como backend obligatorio de runtime.
 
 ### Estado del vector store
 
@@ -438,7 +437,6 @@ Respuesta:
   "message": "All repositories were cleared, indexes were reset, and 3 staging mirror entries were removed.",
   "deleted_documents": 19,
   "deleted_chunks": 961,
-  "deleted_graph_edges": 204,
   "deleted_jobs": 10,
   "neo4j_enabled": true,
   "neo4j_edges_deleted": 204
@@ -538,13 +536,13 @@ Para limpiar artefactos locales sin usar `Remove-Item` (bloqueado en algunos
 entornos):
 
 ```bash
-.venv\Scripts\python.exe scripts/clean_artifacts.py --remove-metadata-db
+.venv\Scripts\python.exe scripts/clean_artifacts.py
 ```
 
 Opcional para incluir caches dentro de `.venv`:
 
 ```bash
-.venv\Scripts\python.exe scripts/clean_artifacts.py --include-venv --remove-metadata-db
+.venv\Scripts\python.exe scripts/clean_artifacts.py --include-venv
 ```
 
 Para purgar metadata de ingestion artifacts ya expirados en Postgres:
@@ -553,7 +551,7 @@ Para purgar metadata de ingestion artifacts ya expirados en Postgres:
 .venv\Scripts\python.exe scripts/purge_expired_ingestion_artifacts.py
 ```
 
-Reset cold completo (detiene servicios, borra Chroma completo + metadata,
+Reset cold completo (detiene servicios, borra Chroma completo,
 limpia staging espejo de ingesta, limpia aristas Neo4j y vuelve a levantar
 API/UI):
 

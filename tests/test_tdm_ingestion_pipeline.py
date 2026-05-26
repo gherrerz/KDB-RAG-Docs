@@ -4,9 +4,23 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from coderag.core.models import SourceConfig
+from coderag.core.settings import SETTINGS
 from coderag.ingestion.tdm_ingestion import ingest_tdm_assets
-from coderag.storage.metadata_store import MetadataStore
+from coderag.storage.hybrid_metadata_store import HybridMetadataStore
+from coderag.storage.postgres_session import resolve_postgres_dsn
+from coderag.storage.postgres_startup import ensure_postgres_schema_ready
+
+
+def _build_tdm_store() -> HybridMetadataStore:
+  """Build a Postgres-backed runtime store for TDM ingestion tests."""
+  ensure_postgres_schema_ready(SETTINGS, force=True)
+  postgres_dsn = resolve_postgres_dsn(SETTINGS)
+  if not postgres_dsn:
+    pytest.skip("Postgres DSN is required for TDM ingestion tests.")
+  return HybridMetadataStore(postgres_dsn=postgres_dsn)
 
 
 def test_tdm_ingestion_populates_catalog_tables(tmp_path: Path) -> None:
@@ -51,7 +65,7 @@ def test_tdm_ingestion_populates_catalog_tables(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    store = MetadataStore(tmp_path / "metadata.db")
+    store = _build_tdm_store()
     summary = ingest_tdm_assets(
         source=SourceConfig(
             source_type="tdm_folder",

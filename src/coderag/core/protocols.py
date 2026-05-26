@@ -18,6 +18,92 @@ GraphEdgeRecord = tuple[str, str, str, str, str]
 TdmTypedEdge = tuple[str, str, str, str]
 
 
+class TdmCatalogStoreProtocol(Protocol):
+    """Minimal TDM catalog write contract used by ingestion parsers."""
+
+    def upsert_tdm_schema(
+        self,
+        schema_id: str,
+        source_id: str,
+        database_name: str,
+        schema_name: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        """Persist one TDM schema row."""
+
+    def upsert_tdm_table(
+        self,
+        table_id: str,
+        source_id: str,
+        schema_id: str,
+        table_name: str,
+        table_type: str = "table",
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        """Persist one TDM table row."""
+
+    def upsert_tdm_column(
+        self,
+        column_id: str,
+        source_id: str,
+        table_id: str,
+        column_name: str,
+        data_type: str,
+        nullable: bool = True,
+        pii_class: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        """Persist one TDM column row."""
+
+    def upsert_tdm_service_mapping(
+        self,
+        mapping_id: str,
+        source_id: str,
+        service_name: str,
+        endpoint: str,
+        method: str,
+        table_id: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        """Persist one service-to-table TDM mapping."""
+
+    def upsert_tdm_masking_rule(
+        self,
+        rule_id: str,
+        source_id: str,
+        rule_name: str,
+        policy_type: str,
+        scope: str,
+        table_id: str | None = None,
+        column_id: str | None = None,
+        priority: int = 100,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        """Persist one TDM masking rule."""
+
+    def upsert_tdm_virtualization_artifact(
+        self,
+        artifact_id: str,
+        source_id: str,
+        service_name: str,
+        artifact_type: str,
+        content: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        """Persist one generated TDM virtualization artifact."""
+
+    def upsert_tdm_synthetic_profile(
+        self,
+        profile_id: str,
+        source_id: str,
+        profile_name: str,
+        strategy: str = "template",
+        target_table_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        """Persist one generated synthetic profile specification."""
+
+
 class RuntimeStoreProtocol(Protocol):
     """Persistent store contract used by service and queue code paths."""
 
@@ -80,19 +166,6 @@ class RuntimeStoreProtocol(Protocol):
 
     def delete_chunks_by_document_id(self, document_id: str) -> int:
         """Delete all chunks linked to one document id."""
-
-    def replace_graph_edges(
-        self,
-        source_id: str,
-        edges: list[GraphEdgeRecord],
-    ) -> None:
-        """Replace stored graph edges for one source id."""
-
-    def list_graph_edges(
-        self,
-        source_id: str | None = None,
-    ) -> list[tuple[str, str, str]]:
-        """List stored graph edges for one source or globally."""
 
     def upsert_job(self, job: JobStatus) -> None:
         """Persist one job snapshot."""

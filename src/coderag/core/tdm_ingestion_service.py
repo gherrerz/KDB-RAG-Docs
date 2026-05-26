@@ -31,7 +31,7 @@ class TdmIngestionApplicationService:
 
         summary = ingest_tdm_assets(
             source=request.source,
-            store=self._store,  # type: ignore[arg-type]
+            store=self._store,
         )
         source_id = str(summary.get("source_id", ""))
         if source_id:

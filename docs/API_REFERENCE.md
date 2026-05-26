@@ -574,7 +574,7 @@ Borra repositorios de ingesta y deja el sistema listo para primera ingesta.
 
 Incluye:
 
-- documentos/chunks/aristas/jobs en SQLite
+- documentos/chunks/jobs en SQLite
 - metadatos TDM aditivos en SQLite
 - reset de indices en memoria
 - limpieza condicional de staging espejo local legacy en
@@ -593,7 +593,6 @@ Response:
   "message": "All repositories were cleared, indexes were reset, and 3 staging mirror entries were removed.",
   "deleted_documents": 19,
   "deleted_chunks": 961,
-  "deleted_graph_edges": 204,
   "deleted_jobs": 10,
   "neo4j_enabled": true,
   "neo4j_edges_deleted": 204

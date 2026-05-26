@@ -1,4 +1,4 @@
-"""SQLite-backed persistence for docs, chunks, graph, and jobs."""
+"""SQLite-backed persistence for docs, chunks, jobs, and TDM metadata."""
 
 from __future__ import annotations
 
@@ -84,14 +84,6 @@ class MetadataStore:
                 entity_name TEXT,
                 entity_type TEXT,
                 metadata_json TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS graph_edges (
-                edge_id TEXT PRIMARY KEY,
-                source_node TEXT NOT NULL,
-                relation TEXT NOT NULL,
-                target_node TEXT NOT NULL,
-                source_id TEXT NOT NULL
             );
 
             CREATE TABLE IF NOT EXISTS jobs (
@@ -207,9 +199,6 @@ class MetadataStore:
 
             CREATE INDEX IF NOT EXISTS idx_chunks_source
             ON chunks(source_id);
-
-            CREATE INDEX IF NOT EXISTS idx_graph_edges_source
-            ON graph_edges(source_id);
 
             CREATE INDEX IF NOT EXISTS idx_job_events_job
             ON job_events(job_id, ordinal);
@@ -454,55 +443,6 @@ class MetadataStore:
                 )
                 for row in rows
             ]
-        finally:
-            conn.close()
-
-    def replace_graph_edges(
-        self,
-        source_id: str,
-        edges: Iterable[tuple[str, str, str, str]],
-    ) -> None:
-        """Replace graph edges for source with generated edges."""
-        conn = self._connect()
-        try:
-            conn.execute(
-                "DELETE FROM graph_edges WHERE source_id = ?",
-                (source_id,),
-            )
-            conn.executemany(
-                """
-                INSERT INTO graph_edges (
-                    edge_id, source_node, relation, target_node, source_id
-                ) VALUES (?, ?, ?, ?, ?)
-                """,
-                list(edges),
-            )
-            conn.commit()
-        finally:
-            conn.close()
-
-    def list_graph_edges(
-        self,
-        source_id: str | None = None,
-    ) -> list[tuple[str, str, str]]:
-        """Return graph edges with optional source filter."""
-        conn = self._connect()
-        try:
-            if source_id:
-                rows = conn.execute(
-                    """
-                    SELECT source_node, relation, target_node
-                    FROM graph_edges
-                    WHERE source_id = ?
-                    """,
-                    (source_id,),
-                ).fetchall()
-            else:
-                rows = conn.execute(
-                    "SELECT source_node, relation, target_node "
-                    "FROM graph_edges"
-                ).fetchall()
-            return [(r[0], r[1], r[2]) for r in rows]
         finally:
             conn.close()
 
@@ -910,9 +850,6 @@ class MetadataStore:
             deleted_chunks = conn.execute(
                 "DELETE FROM chunks"
             ).rowcount
-            deleted_graph_edges = conn.execute(
-                "DELETE FROM graph_edges"
-            ).rowcount
             deleted_jobs = conn.execute(
                 "DELETE FROM jobs"
             ).rowcount
@@ -928,7 +865,6 @@ class MetadataStore:
             return {
                 "deleted_documents": max(0, int(deleted_documents)),
                 "deleted_chunks": max(0, int(deleted_chunks)),
-                "deleted_graph_edges": max(0, int(deleted_graph_edges)),
                 "deleted_jobs": max(0, int(deleted_jobs)),
             }
         finally:

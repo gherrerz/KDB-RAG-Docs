@@ -190,7 +190,7 @@ class IngestionApplicationService:
         documents: list[DocumentRecord],
         chunks: list[ChunkRecord],
     ) -> dict[str, object]:
-        """Persist documents, chunks, and graph edges for one source."""
+        """Persist documents/chunks and materialize graph state for one source."""
         persisted_documents = self._store.upsert_documents(documents)
         self._store.replace_chunks(source_id=source_id, chunks=chunks)
 
@@ -198,7 +198,6 @@ class IngestionApplicationService:
             source_id=source_id,
             chunks=chunks,
         )
-        self._store.replace_graph_edges(source_id=source_id, edges=edges)
 
         if self._is_graph_enabled():
             persist_graph_details: dict[str, object] = {
@@ -429,7 +428,6 @@ class IngestionApplicationService:
             ),
             deleted_documents=deleted["deleted_documents"],
             deleted_chunks=deleted["deleted_chunks"],
-            deleted_graph_edges=deleted["deleted_graph_edges"],
             deleted_jobs=deleted["deleted_jobs"],
             neo4j_enabled=neo4j_enabled,
             neo4j_edges_deleted=neo4j_edges_deleted,

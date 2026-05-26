@@ -11,23 +11,6 @@ pytest.importorskip("sqlalchemy")
 from coderag.storage import hybrid_metadata_store as hybrid_module
 
 
-class _FakeSqliteStore:
-    """Minimal SQLite stand-in for hybrid routing tests."""
-
-    def clear_all_data(self) -> dict[str, int]:
-        """Return deterministic cleanup counters from the legacy backend."""
-        return {
-            "deleted_documents": 1,
-            "deleted_chunks": 2,
-            "deleted_graph_edges": 4,
-            "deleted_jobs": 5,
-        }
-
-    def legacy_passthrough(self, value: str) -> str:
-        """Expose one unported method to verify `__getattr__` delegation."""
-        return f"sqlite:{value}"
-
-
 class _FakeDocumentStore:
     """Capture document routing calls without touching PostgreSQL."""
 
@@ -53,24 +36,7 @@ class _FakeDocumentStore:
         return {
             "deleted_documents": 3,
             "deleted_chunks": 7,
-            "deleted_graph_edges": 13,
         }
-
-    def replace_graph_edges(
-        self,
-        source_id: str,
-        edges: list[tuple[str, str, str, str, str]],
-    ) -> None:
-        """Record graph edge replacement calls for routing verification."""
-        self.calls.append(("replace_graph_edges", source_id, list(edges)))
-
-    def list_graph_edges(
-        self,
-        source_id: str | None = None,
-    ) -> list[tuple[str, str, str]]:
-        """Return deterministic graph edges for routing verification."""
-        self.calls.append(("list_graph_edges", source_id))
-        return [("service", "calls", "database")]
 
 
 class _FakeJobStore:
@@ -167,7 +133,6 @@ def test_list_unique_tags_routes_to_postgres_document_store(
     )
 
     store = hybrid_module.HybridMetadataStore(
-        sqlite_store=_FakeSqliteStore(),
         postgres_dsn="postgresql://docs:secret@db.local/docs",
     )
 
@@ -180,10 +145,10 @@ def test_list_unique_tags_routes_to_postgres_document_store(
     ]
 
 
-def test_clear_all_data_sums_sqlite_and_postgres_cleanup(
+def test_clear_all_data_returns_postgres_cleanup_counters(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Hybrid cleanup must aggregate legacy and Postgres-managed counters."""
+    """Runtime cleanup must return counters from active Postgres slices."""
     monkeypatch.setattr(
         hybrid_module,
         "PostgresDocumentChunkStore",
@@ -201,17 +166,15 @@ def test_clear_all_data_sums_sqlite_and_postgres_cleanup(
     )
 
     store = hybrid_module.HybridMetadataStore(
-        sqlite_store=_FakeSqliteStore(),
         postgres_dsn="postgresql://docs:secret@db.local/docs",
     )
 
     deleted = store.clear_all_data()
 
     assert deleted == {
-        "deleted_documents": 4,
-        "deleted_chunks": 9,
-        "deleted_graph_edges": 17,
-        "deleted_jobs": 16,
+        "deleted_documents": 3,
+        "deleted_chunks": 7,
+        "deleted_jobs": 11,
     }
     assert _FakeDocumentStore.last_instance is not None
     assert _FakeDocumentStore.last_instance.calls == [
@@ -221,43 +184,6 @@ def test_clear_all_data_sums_sqlite_and_postgres_cleanup(
     assert _FakeTdmStore.last_instance.calls == [("clear_tdm_data", None)]
     assert _FakeJobStore.last_instance is not None
     assert _FakeJobStore.last_instance.calls == ["clear_jobs"]
-
-
-def test_graph_edge_calls_route_to_postgres_document_store(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Hybrid graph methods must use the Postgres-backed document slice."""
-    monkeypatch.setattr(
-        hybrid_module,
-        "PostgresDocumentChunkStore",
-        _FakeDocumentStore,
-    )
-    monkeypatch.setattr(
-        hybrid_module,
-        "PostgresJobStateStore",
-        _FakeJobStore,
-    )
-    monkeypatch.setattr(
-        hybrid_module,
-        "PostgresTdmStore",
-        _FakeTdmStore,
-    )
-
-    store = hybrid_module.HybridMetadataStore(
-        sqlite_store=_FakeSqliteStore(),
-        postgres_dsn="postgresql://docs:secret@db.local/docs",
-    )
-    edges = [("edge-1", "src", "rel", "dst", "source-1")]
-
-    store.replace_graph_edges(source_id="source-1", edges=edges)
-    listed_edges = store.list_graph_edges(source_id="source-1")
-
-    assert listed_edges == [("service", "calls", "database")]
-    assert _FakeDocumentStore.last_instance is not None
-    assert _FakeDocumentStore.last_instance.calls == [
-        ("replace_graph_edges", "source-1", edges),
-        ("list_graph_edges", "source-1"),
-    ]
 
 
 def test_tdm_calls_route_to_postgres_tdm_store(
@@ -281,7 +207,6 @@ def test_tdm_calls_route_to_postgres_tdm_store(
     )
 
     store = hybrid_module.HybridMetadataStore(
-        sqlite_store=_FakeSqliteStore(),
         postgres_dsn="postgresql://docs:secret@db.local/docs",
     )
 
@@ -311,10 +236,10 @@ def test_tdm_calls_route_to_postgres_tdm_store(
     ]
 
 
-def test_unported_methods_delegate_to_sqlite_store(
+def test_unknown_methods_raise_attribute_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Hybrid store should delegate unknown methods to legacy SQLite object."""
+    """Runtime store should fail fast for unknown method access."""
     monkeypatch.setattr(
         hybrid_module,
         "PostgresDocumentChunkStore",
@@ -331,10 +256,9 @@ def test_unported_methods_delegate_to_sqlite_store(
         _FakeTdmStore,
     )
 
-    sqlite_store = _FakeSqliteStore()
     store = hybrid_module.HybridMetadataStore(
-        sqlite_store=sqlite_store,
         postgres_dsn="postgresql://docs:secret@db.local/docs",
     )
 
-    assert store.legacy_passthrough("ok") == "sqlite:ok"
+    with pytest.raises(AttributeError):
+        getattr(store, "legacy_passthrough")

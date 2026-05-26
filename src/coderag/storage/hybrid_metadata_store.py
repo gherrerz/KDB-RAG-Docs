@@ -10,30 +10,23 @@ from coderag.core.models import (
     DocumentRecord,
     JobStatus,
 )
-from coderag.storage.metadata_store import MetadataStore
 from coderag.storage.postgres_document_chunk_store import PostgresDocumentChunkStore
 from coderag.storage.postgres_job_state_store import PostgresJobStateStore
 from coderag.storage.postgres_tdm_store import PostgresTdmStore
 
 
 class HybridMetadataStore:
-    """Route operational state to Postgres while the rest remains on SQLite."""
+    """Route runtime metadata operations to Postgres stores."""
 
     def __init__(
         self,
         *,
-        sqlite_store: MetadataStore,
         postgres_dsn: str,
     ) -> None:
-        """Build the hybrid store for the current cutover phase."""
-        self._sqlite_store = sqlite_store
+        """Build the runtime store backed only by Postgres slices."""
         self._postgres_store = PostgresJobStateStore(postgres_dsn)
         self._postgres_document_store = PostgresDocumentChunkStore(postgres_dsn)
         self._postgres_tdm_store = PostgresTdmStore(postgres_dsn)
-
-    def __getattr__(self, name: str) -> Any:
-        """Delegate not-yet-ported methods to the SQLite implementation."""
-        return getattr(self._sqlite_store, name)
 
     def upsert_job(self, job: JobStatus) -> None:
         """Persist job snapshots in Postgres."""
@@ -127,21 +120,6 @@ class HybridMetadataStore:
         return self._postgres_document_store.delete_chunks_by_document_id(
             document_id
         )
-
-    def replace_graph_edges(
-        self,
-        source_id: str,
-        edges: list[tuple[str, str, str, str, str]],
-    ) -> None:
-        """Persist graph edges in Postgres."""
-        self._postgres_document_store.replace_graph_edges(source_id, edges)
-
-    def list_graph_edges(
-        self,
-        source_id: str | None = None,
-    ) -> list[tuple[str, str, str]]:
-        """Read graph edges from Postgres."""
-        return self._postgres_document_store.list_graph_edges(source_id=source_id)
 
     def upsert_tdm_schema(
         self,
@@ -391,21 +369,14 @@ class HybridMetadataStore:
         return self._postgres_store.bump_index_version()
 
     def clear_all_data(self) -> dict[str, int]:
-        """Clear SQLite domain data plus Postgres-managed operational jobs."""
-        deleted = self._sqlite_store.clear_all_data()
+        """Clear Postgres-managed runtime data while keeping schema intact."""
         deleted_document_data = self._postgres_document_store.clear_document_data()
         self._postgres_tdm_store.clear_tdm_data()
         deleted_postgres_jobs = self._postgres_store.clear_jobs()
-        deleted["deleted_documents"] = int(
-            deleted.get("deleted_documents", 0)
-        ) + int(deleted_document_data.get("deleted_documents", 0))
-        deleted["deleted_chunks"] = int(deleted.get("deleted_chunks", 0)) + int(
-            deleted_document_data.get("deleted_chunks", 0)
-        )
-        deleted["deleted_graph_edges"] = int(
-            deleted.get("deleted_graph_edges", 0)
-        ) + int(deleted_document_data.get("deleted_graph_edges", 0))
-        deleted["deleted_jobs"] = int(deleted.get("deleted_jobs", 0)) + int(
-            deleted_postgres_jobs
-        )
-        return deleted
+        return {
+            "deleted_documents": int(
+                deleted_document_data.get("deleted_documents", 0)
+            ),
+            "deleted_chunks": int(deleted_document_data.get("deleted_chunks", 0)),
+            "deleted_jobs": int(deleted_postgres_jobs),
+        }
