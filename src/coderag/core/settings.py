@@ -59,10 +59,10 @@ class Settings(BaseSettings):
     )
     graph_hops: int = Field(default_factory=lambda: _env_int("GRAPH_HOPS", 2))
     retrieval_top_n: int = Field(
-        default_factory=lambda: _env_int("RETRIEVAL_TOP_N", 60)
+        default_factory=lambda: _env_int("RETRIEVAL_TOP_N", 80)
     )
     rerank_top_k: int = Field(
-        default_factory=lambda: _env_int("RERANK_TOP_K", 15)
+        default_factory=lambda: _env_int("RERANK_TOP_K", 40)
     )
     embedding_size: int = Field(
         default_factory=lambda: _env_int("EMBEDDING_SIZE", 256)
