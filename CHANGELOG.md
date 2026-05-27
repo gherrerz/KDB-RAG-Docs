@@ -22,6 +22,9 @@
 - Politica de retiro controlado para la tabla `alembic_version` legacy,
   con ventana minima de observacion, validaciones previas y estrategia
   reversible rename-then-drop en la guia de cutover compartido.
+- Nuevo endpoint `GET /sources/documents/{document_id}/content` para
+  recuperar el contenido textual completo persistido de un documento
+  ingestado sin reconstruirlo desde chunks.
 
 ## [0.3.10] - 2026-05-26
 

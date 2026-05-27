@@ -692,6 +692,40 @@ class MetadataStore:
         finally:
             conn.close()
 
+    def get_document_content_by_id(
+        self,
+        document_id: str,
+    ) -> DocumentRecord | None:
+        """Return one persisted document with full content by document id."""
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                """
+                SELECT document_id, source_id, title, content, path_or_url,
+                       content_type, updated_at, tags_json, metadata_json
+                FROM documents
+                WHERE document_id = ?
+                """,
+                (document_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            return DocumentRecord(
+                document_id=row["document_id"],
+                source_id=row["source_id"],
+                title=row["title"],
+                content=row["content"],
+                path_or_url=row["path_or_url"],
+                content_type=row["content_type"],
+                updated_at=datetime.fromisoformat(row["updated_at"]),
+                tags=self._parse_tags_json(str(row["tags_json"] or "[]")),
+                metadata=self._coerce_metadata_json(
+                    str(row["metadata_json"] or "{}")
+                ),
+            )
+        finally:
+            conn.close()
+
     def list_tag_facets(
         self,
         source_id: str | None = None,

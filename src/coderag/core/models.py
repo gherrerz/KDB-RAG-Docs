@@ -113,6 +113,19 @@ class DocumentCatalogEntry(BaseModel):
     tags: list[str] = Field(default_factory=list)
 
 
+class DocumentContentResponse(BaseModel):
+    """Public API payload exposing one persisted document and its content."""
+
+    document_id: str
+    source_id: str
+    title: str
+    content: str
+    path_or_url: str
+    content_type: str
+    updated_at: datetime
+    tags: list[str] = Field(default_factory=list)
+
+
 class ChunkRecord(BaseModel):
     """Semantic chunk used by retrieval indexes."""
 

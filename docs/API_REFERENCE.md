@@ -50,6 +50,7 @@ de la red puede consumirse usando la IP del host.
 | Ingestion async | POST | `/sources/ingest/async` | `ingest_source_async` | `enqueue_ingest_job` o `enqueue_local_ingest_job` | `IngestionRequest` | `{"job_id", "status", "message"}` |
 | Ingestion readiness | GET | `/sources/ingest/readiness` | `ingest_readiness` | checks runtime + Chroma + Neo4j + Redis + RQ worker | N/A | `{"ready", "recommendation", "checks"}` |
 | Documents catalog | GET | `/sources/documents` | `list_documents` | `SERVICE.list_documents` | `source_id?`, `tags?` | `{"source_id", "tags", "count", "documents"}` |
+| Document content | GET | `/sources/documents/{document_id}/content` | `get_document_content` | `SERVICE.get_document_content` | `document_id` en path | `DocumentContentResponse` |
 | Document tags catalog | GET | `/sources/tags` | `list_document_tags` | `SERVICE.list_document_tags` | `source_id?` | `ListDocumentTagsResponse` |
 | Replace document tags | PUT | `/sources/documents/{document_id}/tags` | `replace_document_tags` | `SERVICE.replace_document_tags` | `document_id` en path + `ReplaceDocumentTagsRequest` | `ReplaceDocumentTagsResponse` |
 | Delete document | DELETE | `/sources/documents/{document_id}` | `delete_document` | `SERVICE.delete_document` | `document_id` en path | `DeleteDocumentResponse` |
@@ -682,6 +683,49 @@ Codigos comunes:
 
 - `200`: respuesta generada.
 - `503`: falla de runtime estricto (provider/embedding/index refresh).
+
+## GET /sources/documents/{document_id}/content
+
+Retorna el contenido textual completo persistido para un documento ya
+ingestado.
+
+Path params:
+
+- `document_id`: identificador persistido del documento.
+
+Response shape:
+
+```json
+{
+  "document_id": "7f0a...",
+  "source_id": "abc123def456",
+  "title": "engineering",
+  "content": "# Engineering\n\nProject Atlas uses Budget FY26-Platform.",
+  "path_or_url": "sample_data/engineering.md",
+  "content_type": "md",
+  "updated_at": "2026-04-23T15:00:00+00:00",
+  "tags": ["finance", "urgent"]
+}
+```
+
+Notas operativas:
+
+- La fuente de verdad de este endpoint es el contenido textual persistido en
+  Postgres (`documents.content`).
+- Este endpoint no reconstruye el documento desde chunks.
+- Este endpoint no devuelve el archivo fuente raw byte a byte; devuelve el
+  texto que quedo persistido por la ingesta.
+
+Ejemplo:
+
+```bash
+curl http://127.0.0.1:8000/sources/documents/7f0a/content
+```
+
+Codigos comunes:
+
+- `200`: documento encontrado.
+- `404`: no existe documento persistido con ese `document_id`.
 
 ## GET /sources/tags
 

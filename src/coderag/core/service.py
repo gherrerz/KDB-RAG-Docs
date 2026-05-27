@@ -24,6 +24,7 @@ from coderag.core.tdm_policy_service import TdmPolicyService
 from coderag.core.tdm_query_service import TdmQueryApplicationService
 from coderag.core.models import (
     DeleteDocumentResponse,
+    DocumentContentResponse,
     DocumentTagFacet,
     DocumentRecord,
     DocumentCatalogEntry,
@@ -790,6 +791,25 @@ class RagApplicationService:
     ) -> list[DocumentCatalogEntry]:
         """Return document catalog entries for optional source filter."""
         return self.store.list_documents(source_id=source_id, tags=tags)
+
+    def get_document_content(
+        self,
+        document_id: str,
+    ) -> DocumentContentResponse:
+        """Return one persisted document payload with full content."""
+        document = self.store.get_document_content_by_id(document_id)
+        if document is None:
+            raise KeyError(document_id)
+        return DocumentContentResponse(
+            document_id=document.document_id,
+            source_id=document.source_id,
+            title=document.title,
+            content=document.content,
+            path_or_url=document.path_or_url,
+            content_type=document.content_type,
+            updated_at=document.updated_at,
+            tags=list(document.tags),
+        )
 
     def list_document_tags(
         self,

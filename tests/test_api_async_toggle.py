@@ -552,6 +552,73 @@ def test_replace_document_tags_endpoint_returns_404_for_missing_document() -> No
     assert response.json()["detail"] == "Document not found: missing-document"
 
 
+def test_get_document_content_endpoint_returns_full_persisted_text() -> None:
+    """Return the full persisted text payload for one ingested document."""
+    client = TestClient(server.app)
+    original_embed = index_chroma.embed_text
+    original_provider = server.SETTINGS.llm_provider
+    original_openai_key = server.SETTINGS.openai_api_key
+    original_use_neo4j = server.SETTINGS.use_neo4j
+
+    server.SETTINGS.llm_provider = "openai"
+    server.SETTINGS.openai_api_key = "test-key"
+    server.SETTINGS.use_neo4j = False
+    index_chroma.embed_text = _fake_embed_text
+
+    try:
+        ingest_response = client.post(
+            "/sources/ingest",
+            json={
+                "source": {
+                    "source_type": "folder",
+                    "local_path": "sample_data",
+                }
+            },
+        )
+        assert ingest_response.status_code == 200
+        source_id = ingest_response.json()["source_id"]
+
+        catalog_response = client.get(f"/sources/documents?source_id={source_id}")
+        assert catalog_response.status_code == 200
+        engineering_doc = next(
+            item
+            for item in catalog_response.json()["documents"]
+            if item["path_or_url"].replace("\\", "/").endswith("engineering.md")
+        )
+
+        response = client.get(
+            f"/sources/documents/{engineering_doc['document_id']}/content"
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["document_id"] == engineering_doc["document_id"]
+        assert payload["source_id"] == source_id
+        assert payload["title"] == "engineering"
+        assert payload["content_type"] == "md"
+        assert payload["path_or_url"].replace("\\", "/").endswith(
+            "engineering.md"
+        )
+        assert "Project Atlas uses Budget FY26-Platform." in payload["content"]
+        assert "Person Carlos works on Project Atlas." in payload["content"]
+        assert payload["tags"] == engineering_doc["tags"]
+    finally:
+        server.SETTINGS.llm_provider = original_provider
+        server.SETTINGS.openai_api_key = original_openai_key
+        server.SETTINGS.use_neo4j = original_use_neo4j
+        index_chroma.embed_text = original_embed
+
+
+def test_get_document_content_endpoint_returns_404_for_unknown_document() -> None:
+    """Reject content lookup for document ids that are not persisted."""
+    client = TestClient(server.app)
+
+    response = client.get("/sources/documents/missing-document/content")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Document not found: missing-document"
+
+
 def test_delete_document_endpoint_removes_one_persisted_document() -> None:
     """Delete one persisted document without disturbing remaining catalog rows."""
     client = TestClient(server.app)

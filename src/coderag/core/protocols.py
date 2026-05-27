@@ -141,6 +141,12 @@ class RuntimeStoreProtocol(Protocol):
     ) -> DocumentCatalogEntry | None:
         """Return one catalog entry by persisted document id."""
 
+    def get_document_content_by_id(
+        self,
+        document_id: str,
+    ) -> DocumentRecord | None:
+        """Return one persisted document with full content by document id."""
+
     def list_tag_facets(
         self,
         source_id: str | None = None,

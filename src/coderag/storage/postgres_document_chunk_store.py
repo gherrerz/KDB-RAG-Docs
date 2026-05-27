@@ -111,6 +111,22 @@ class PostgresDocumentChunkStore:
             metadata=cls._coerce_metadata_dict(row["metadata_json"]),
         )
 
+    @classmethod
+    def _row_to_document(cls, row: dict[str, Any]) -> DocumentRecord:
+        """Convert one SQLAlchemy row mapping to DocumentRecord."""
+        metadata = cls._coerce_metadata_dict(row["metadata_json"])
+        return DocumentRecord(
+            document_id=str(row["document_id"]),
+            source_id=str(row["source_id"]),
+            title=str(row["title"]),
+            content=str(row["content"]),
+            path_or_url=str(row["path_or_url"]),
+            content_type=str(row["content_type"]),
+            updated_at=row["updated_at"],
+            tags=cls._parse_tags_value(row["tags_json"]),
+            metadata=metadata,
+        )
+
     def upsert_document(self, doc: DocumentRecord) -> None:
         """Insert or update one persisted document row."""
         self.upsert_documents([doc])
@@ -299,6 +315,28 @@ class PostgresDocumentChunkStore:
             updated_at=row["updated_at"],
             tags=self._parse_tags_value(row["tags_json"]),
         )
+
+    def get_document_content_by_id(
+        self,
+        document_id: str,
+    ) -> DocumentRecord | None:
+        """Return one persisted document with full content by document id."""
+        statement = select(
+            documents_table.c.document_id,
+            documents_table.c.source_id,
+            documents_table.c.title,
+            documents_table.c.content,
+            documents_table.c.path_or_url,
+            documents_table.c.content_type,
+            documents_table.c.updated_at,
+            documents_table.c.tags_json,
+            documents_table.c.metadata_json,
+        ).where(documents_table.c.document_id == document_id)
+        with self._session_factory.get_connection() as connection:
+            row = connection.execute(statement).mappings().one_or_none()
+        if row is None:
+            return None
+        return self._row_to_document(dict(row))
 
     def list_tag_facets(
         self,

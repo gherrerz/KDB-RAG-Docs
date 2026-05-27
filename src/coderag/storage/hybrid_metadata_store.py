@@ -73,6 +73,15 @@ class HybridMetadataStore:
         """Read one persisted document from Postgres."""
         return self._postgres_document_store.get_document_by_id(document_id)
 
+    def get_document_content_by_id(
+        self,
+        document_id: str,
+    ) -> DocumentRecord | None:
+        """Read one persisted document with full content from Postgres."""
+        return self._postgres_document_store.get_document_content_by_id(
+            document_id
+        )
+
     def list_tag_facets(
         self,
         source_id: str | None = None,

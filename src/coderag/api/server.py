@@ -15,6 +15,7 @@ from coderag.api.upload_ingestion import (
 )
 from coderag.core.models import (
     DeleteDocumentResponse,
+    DocumentContentResponse,
     IngestionRequest,
     ListDocumentTagsResponse,
     QueryRequest,
@@ -538,6 +539,29 @@ app.get(
         "local catalog, optionally filtered by source_id."
     ),
 )(list_documents)
+
+
+@app.get(
+    "/sources/documents/{document_id}/content",
+    tags=["ingestion"],
+    summary="Get full persisted document content",
+    description=(
+        "Return the full text content currently persisted for one ingested "
+        "document, addressed by document_id."
+    ),
+    responses={
+        404: {"description": "Document not found for the provided id."}
+    },
+)
+def get_document_content(document_id: str) -> DocumentContentResponse:
+    """Expose one persisted document payload with full text content."""
+    try:
+        return SERVICE.get_document_content(document_id)
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Document not found: {document_id}",
+        ) from exc
 
 
 @app.delete(
