@@ -10,6 +10,7 @@ from coderag.core.settings import Settings, resolve_postgres_dsn
 
 
 PostgresStartupPolicy = Literal["auto_upgrade", "validate"]
+_DEFAULT_ALEMBIC_VERSION_TABLE = "alembic_version_docs"
 
 _BOOTSTRAP_CACHE: dict[tuple[str, PostgresStartupPolicy], dict[str, Any]] = {}
 
@@ -30,6 +31,8 @@ def _build_alembic_config(postgres_dsn: str) -> Any:
         "sqlalchemy.url",
         to_sqlalchemy_postgres_url(postgres_dsn),
     )
+    if not (config.get_main_option("version_table") or "").strip():
+        config.set_main_option("version_table", _DEFAULT_ALEMBIC_VERSION_TABLE)
     return config
 
 
@@ -44,7 +47,10 @@ def _read_database_heads(postgres_dsn: str) -> set[str]:
     engine = create_engine(to_sqlalchemy_postgres_url(postgres_dsn))
     try:
         with engine.connect() as connection:
-            context = migration_context.configure(connection)
+            context = migration_context.configure(
+                connection,
+                opts={"version_table": _DEFAULT_ALEMBIC_VERSION_TABLE},
+            )
             return set(context.get_current_heads())
     finally:
         engine.dispose()

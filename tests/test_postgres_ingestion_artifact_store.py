@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+import os
 from pathlib import Path
 import shutil
 from typing import Any
@@ -14,6 +15,22 @@ from coderag.storage.postgres_schema import (
     ingestion_artifact_files_table,
     ingestion_artifacts_table,
 )
+
+
+def _build_test_postgres_dsn(default_db: str = "coderag_docs") -> str:
+    """Build a DSN for tests from env vars without hardcoded credentials."""
+    host = os.environ.get("POSTGRES_HOST", "localhost").strip() or "localhost"
+    port = os.environ.get("POSTGRES_PORT", "5432").strip() or "5432"
+    database = os.environ.get("POSTGRES_DB", default_db).strip() or default_db
+    user = os.environ.get("POSTGRES_USER", "").strip()
+    password = os.environ.get("POSTGRES_PASSWORD", "").strip()
+
+    if user and password:
+        return f"postgresql://{user}:{password}@{host}:{port}/{database}"
+    return f"postgresql://{host}:{port}/{database}"
+
+
+_TEST_POSTGRES_DSN = _build_test_postgres_dsn()
 
 
 class _FakeExecuteResult:
@@ -85,7 +102,7 @@ def test_create_uploaded_batch_artifact_writes_parent_and_files() -> None:
     """Creating one artifact should write parent and child rows."""
     connection = _FakeConnection([_FakeExecuteResult(), _FakeExecuteResult()])
     store = PostgresIngestionArtifactStore(
-        "postgresql://docs:secret@db.local/docs",
+        _TEST_POSTGRES_DSN,
         session_factory=_FakeSessionFactory(connection),
     )
 
@@ -130,7 +147,7 @@ def test_status_updates_target_artifact_parent_table() -> None:
         _FakeExecuteResult(rowcount=0),
     ])
     store = PostgresIngestionArtifactStore(
-        "postgresql://docs:secret@db.local/docs",
+        _TEST_POSTGRES_DSN,
         session_factory=_FakeSessionFactory(connection),
     )
 
@@ -168,7 +185,7 @@ def test_materialize_uploaded_batch_restores_files_from_artifact_rows() -> None:
         ]
     )
     store = PostgresIngestionArtifactStore(
-        "postgresql://docs:secret@db.local/docs",
+        _TEST_POSTGRES_DSN,
         session_factory=_FakeSessionFactory(connection),
     )
 
@@ -183,7 +200,7 @@ def test_clear_uploaded_artifacts_deletes_parent_table() -> None:
     """Artifact cleanup should delete from the parent artifact table."""
     connection = _FakeConnection([_FakeExecuteResult(rowcount=3)])
     store = PostgresIngestionArtifactStore(
-        "postgresql://docs:secret@db.local/docs",
+        _TEST_POSTGRES_DSN,
         session_factory=_FakeSessionFactory(connection),
     )
 
@@ -197,7 +214,7 @@ def test_purge_expired_uploaded_artifacts_targets_expires_at_filter() -> None:
     """TTL purge should delete only parent rows whose expiration already passed."""
     connection = _FakeConnection([_FakeExecuteResult(rowcount=2)])
     store = PostgresIngestionArtifactStore(
-        "postgresql://docs:secret@db.local/docs",
+        _TEST_POSTGRES_DSN,
         session_factory=_FakeSessionFactory(connection),
     )
 

@@ -3,8 +3,25 @@
 from __future__ import annotations
 
 import json
+import os
 
 import scripts.purge_expired_ingestion_artifacts as purge_script
+
+
+def _build_test_postgres_dsn(default_db: str = "coderag_docs") -> str:
+    """Build a DSN for tests from env vars without hardcoded credentials."""
+    host = os.environ.get("POSTGRES_HOST", "localhost").strip() or "localhost"
+    port = os.environ.get("POSTGRES_PORT", "5432").strip() or "5432"
+    database = os.environ.get("POSTGRES_DB", default_db).strip() or default_db
+    user = os.environ.get("POSTGRES_USER", "").strip()
+    password = os.environ.get("POSTGRES_PASSWORD", "").strip()
+
+    if user and password:
+        return f"postgresql://{user}:{password}@{host}:{port}/{database}"
+    return f"postgresql://{host}:{port}/{database}"
+
+
+_TEST_POSTGRES_DSN = _build_test_postgres_dsn()
 
 
 def test_main_returns_error_when_postgres_is_unconfigured(
@@ -30,7 +47,7 @@ def test_main_runs_ttl_purge_and_prints_json(
     monkeypatch.setattr(
         purge_script,
         "resolve_postgres_dsn",
-        lambda settings: "postgresql://docs:secret@db.local/docs",
+        lambda settings: _TEST_POSTGRES_DSN,
     )
     monkeypatch.setattr(
         purge_script,

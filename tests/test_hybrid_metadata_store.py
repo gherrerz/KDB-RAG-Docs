@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 import pytest
@@ -9,6 +10,22 @@ import pytest
 pytest.importorskip("sqlalchemy")
 
 from coderag.storage import hybrid_metadata_store as hybrid_module
+
+
+def _build_test_postgres_dsn(default_db: str = "coderag_docs") -> str:
+    """Build a DSN for tests from env vars without hardcoded credentials."""
+    host = os.environ.get("POSTGRES_HOST", "localhost").strip() or "localhost"
+    port = os.environ.get("POSTGRES_PORT", "5432").strip() or "5432"
+    database = os.environ.get("POSTGRES_DB", default_db).strip() or default_db
+    user = os.environ.get("POSTGRES_USER", "").strip()
+    password = os.environ.get("POSTGRES_PASSWORD", "").strip()
+
+    if user and password:
+        return f"postgresql://{user}:{password}@{host}:{port}/{database}"
+    return f"postgresql://{host}:{port}/{database}"
+
+
+_TEST_POSTGRES_DSN = _build_test_postgres_dsn()
 
 
 class _FakeDocumentStore:
@@ -133,7 +150,7 @@ def test_list_unique_tags_routes_to_postgres_document_store(
     )
 
     store = hybrid_module.HybridMetadataStore(
-        postgres_dsn="postgresql://docs:secret@db.local/docs",
+        postgres_dsn=_TEST_POSTGRES_DSN,
     )
 
     tags = store.list_unique_tags(source_id="src-1")
@@ -166,7 +183,7 @@ def test_clear_all_data_returns_postgres_cleanup_counters(
     )
 
     store = hybrid_module.HybridMetadataStore(
-        postgres_dsn="postgresql://docs:secret@db.local/docs",
+        postgres_dsn=_TEST_POSTGRES_DSN,
     )
 
     deleted = store.clear_all_data()
@@ -207,7 +224,7 @@ def test_tdm_calls_route_to_postgres_tdm_store(
     )
 
     store = hybrid_module.HybridMetadataStore(
-        postgres_dsn="postgresql://docs:secret@db.local/docs",
+        postgres_dsn=_TEST_POSTGRES_DSN,
     )
 
     tables = store.list_tdm_tables(source_id="src-1")
@@ -257,7 +274,7 @@ def test_unknown_methods_raise_attribute_error(
     )
 
     store = hybrid_module.HybridMetadataStore(
-        postgres_dsn="postgresql://docs:secret@db.local/docs",
+        postgres_dsn=_TEST_POSTGRES_DSN,
     )
 
     with pytest.raises(AttributeError):

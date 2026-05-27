@@ -2,6 +2,27 @@
 
 <!-- markdownlint-disable MD024 -->
 
+## [Unreleased]
+
+### Changed
+
+- El versionado Alembic queda aislado por aplicacion cuando KDB-RAG-Docs y
+  KDB-RAG-Repo comparten la misma base Postgres: Docs usa
+  `alembic_version_docs` y Repo usa `alembic_version_repo`, evitando
+  colisiones en `alembic_version`.
+- Se agregan guardrails de CI para bloquear regresiones hacia
+  `alembic_version` default en rutas criticas de migracion y bootstrap
+  (`tests/test_alembic_version_contract.py`).
+
+### Added
+
+- Guia operativa de Fase 6 para ejecutar backup, upgrade y validacion de
+  tablas Alembic aisladas en base Postgres compartida:
+  `docs/migration-guides/alembic-shared-db-cutover.md`.
+- Politica de retiro controlado para la tabla `alembic_version` legacy,
+  con ventana minima de observacion, validaciones previas y estrategia
+  reversible rename-then-drop en la guia de cutover compartido.
+
 ## [0.3.10] - 2026-05-26
 
 ### Changed

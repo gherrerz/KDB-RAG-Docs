@@ -28,6 +28,9 @@ y opera con Postgres como store efectivo de metadata documental.
 - `POSTGRES_POOL_SIZE`, `POSTGRES_POOL_TIMEOUT` y `RUNTIME_ENVIRONMENT` ya controlan el bootstrap y la policy de startup de Alembic/Postgres.
 - `CHROMA_MODE`, `CHROMA_HOST`, `CHROMA_PORT`, `CHROMA_TOKEN`, `CHROMA_USERNAME` y `CHROMA_PASSWORD` ya están soportados por el contrato de settings.
 - Estado actual: el arranque requiere DSN de Postgres válido, valida heads de Alembic y falla explícitamente cuando `POSTGRES_*` está ausente. Jobs, job_events, runtime_state/index_version, documents, chunks, catálogo TDM y upload artifacts async se enrutan a Postgres. Los edges documentales se resuelven en Neo4j y ya no se persisten en Postgres. El endpoint multipart async persiste artifacts directamente en Postgres al encolar y los workers rehidratan batches desde esos artifacts, por lo que `UPLOAD_STAGING_SHARED` deja de ser un requisito funcional; el staging temporal en filesystem queda sólo para flujos locales legacy fuera de ese path async. La capa vectorial operativa final usa cliente remoto; `embedded` queda sólo como valor legacy no soportado operativamente.
+- En base compartida con KDB-RAG-Repo, Alembic debe quedar aislado por aplicacion: Docs usa `alembic_version_docs` y Repo usa `alembic_version_repo`; no se debe usar `alembic_version` por defecto.
+- Runbook operativo de Fase 6:
+  [migration-guides/alembic-shared-db-cutover.md](migration-guides/alembic-shared-db-cutover.md).
 
 ## Parameters
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+import os
 from typing import Any
 
 from coderag.storage.postgres_schema import (
@@ -15,6 +16,22 @@ from coderag.storage.postgres_schema import (
     tdm_virtualization_artifacts_table,
 )
 from coderag.storage.postgres_tdm_store import PostgresTdmStore
+
+
+def _build_test_postgres_dsn(default_db: str = "coderag_docs") -> str:
+    """Build a DSN for tests from env vars without hardcoded credentials."""
+    host = os.environ.get("POSTGRES_HOST", "localhost").strip() or "localhost"
+    port = os.environ.get("POSTGRES_PORT", "5432").strip() or "5432"
+    database = os.environ.get("POSTGRES_DB", default_db).strip() or default_db
+    user = os.environ.get("POSTGRES_USER", "").strip()
+    password = os.environ.get("POSTGRES_PASSWORD", "").strip()
+
+    if user and password:
+        return f"postgresql://{user}:{password}@{host}:{port}/{database}"
+    return f"postgresql://{host}:{port}/{database}"
+
+
+_TEST_POSTGRES_DSN = _build_test_postgres_dsn()
 
 
 class _FakeMappingsResult:
@@ -80,7 +97,7 @@ def test_upsert_methods_target_expected_tdm_tables() -> None:
     """Each TDM upsert should emit one statement against the right table."""
     connection = _FakeConnection([_FakeExecuteResult() for _ in range(7)])
     store = PostgresTdmStore(
-        "postgresql://docs:secret@db.local/docs",
+        _TEST_POSTGRES_DSN,
         session_factory=_FakeSessionFactory(connection),
     )
 
@@ -247,7 +264,7 @@ def test_list_methods_normalize_tdm_rows() -> None:
         ]
     )
     store = PostgresTdmStore(
-        "postgresql://docs:secret@db.local/docs",
+        _TEST_POSTGRES_DSN,
         session_factory=_FakeSessionFactory(connection),
     )
 
@@ -283,7 +300,7 @@ def test_clear_tdm_data_deletes_all_tdm_tables() -> None:
         ]
     )
     store = PostgresTdmStore(
-        "postgresql://docs:secret@db.local/docs",
+        _TEST_POSTGRES_DSN,
         session_factory=_FakeSessionFactory(connection),
     )
 

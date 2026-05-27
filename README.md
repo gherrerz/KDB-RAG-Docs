@@ -15,11 +15,17 @@ objetivo, la referencia autoritativa para el target del cutover es [docs/DESIGN_
 Decisiones cerradas para la implementación:
 
 - Las tablas nuevas de Docs en Postgres deben usar el prefijo `Tbl_Documents_`.
+- Si Docs comparte la misma base Postgres con KDB-RAG-Repo, cada aplicacion
+  debe usar su tabla Alembic aislada (`alembic_version_docs` para Docs y
+  `alembic_version_repo` para Repo).
 - `path_or_url` debe conservar el origen original del documento.
 - La deduplicación mantiene la regla actual basada en `title + content_type`.
 - No habrá migración histórica desde SQLite; la ruta acordada es reset + reingesta.
 - No habrá dual-write prolongado entre storage legacy y storage objetivo.
 - La ingesta async con archivos locales persiste artifacts temporales en Postgres al encolar y rehidrata desde ahí durante la ejecución, sin depender de filesystem compartido.
+
+Guia operativa de Fase 6 para base Postgres compartida con KDB-RAG-Repo:
+[docs/migration-guides/alembic-shared-db-cutover.md](docs/migration-guides/alembic-shared-db-cutover.md).
 
 ## Features
 
