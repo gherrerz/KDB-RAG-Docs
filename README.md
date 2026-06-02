@@ -255,7 +255,7 @@ Variables opcionales para apuntar la UI a una API distinta:
 - `POST /sources/ingest`
 - `POST /sources/ingest/files`
 - `POST /sources/ingest/files/async`
-- `DELETE /sources/reset?confirm=true`
+- `POST /admin/reset`
 - `POST /sources/ingest/async`
 - `GET /sources/ingest/readiness`
 - `GET /sources/documents`
@@ -433,7 +433,20 @@ Respuesta:
 Nota: si `USE_RQ=false`, el backend devuelve
 `"message": "Ingestion job started (local async worker)"`.
 
-Ejemplo `DELETE /sources/reset?confirm=true`:
+Ejemplo `POST /admin/reset`:
+
+```bash
+curl -X POST http://127.0.0.1:8000/admin/reset \
+  -H "Content-Type: application/json" \
+  -H "X-Admin-Reset-Token: your-admin-reset-token" \
+  -d '{"confirm": true, "confirmation_phrase": "RESET ALL DATA"}'
+```
+
+Variables operativas asociadas:
+
+- `ADMIN_RESET_ENABLED=true` para exponer el endpoint.
+- `ADMIN_RESET_TOKEN` con el mismo token que debe usar la UI desktop o cualquier
+  cliente remoto autorizado.
 
 Respuesta:
 

@@ -99,7 +99,18 @@ def test_legacy_endpoints_still_work_with_tdm_flags_enabled() -> None:
         assert "graph_paths" in query_body
         assert "diagnostics" in query_body
 
-        reset_response = client.delete("/sources/reset?confirm=true")
+        original_reset_enabled = server.SETTINGS.admin_reset_enabled
+        original_reset_token = server.SETTINGS.admin_reset_token
+        server.SETTINGS.admin_reset_enabled = True
+        server.SETTINGS.admin_reset_token = "reset-token"
+        reset_response = client.post(
+            "/admin/reset",
+            headers={"X-Admin-Reset-Token": "reset-token"},
+            json={
+                "confirm": True,
+                "confirmation_phrase": "RESET ALL DATA",
+            },
+        )
         assert reset_response.status_code == 200
         assert reset_response.json().get("status") == "completed"
     finally:
@@ -107,6 +118,8 @@ def test_legacy_endpoints_still_work_with_tdm_flags_enabled() -> None:
         server.SETTINGS.tdm_enable_masking = original_masking
         server.SETTINGS.tdm_enable_virtualization = original_virtualization
         server.SETTINGS.tdm_enable_synthetic = original_synthetic
+        server.SETTINGS.admin_reset_enabled = original_reset_enabled
+        server.SETTINGS.admin_reset_token = original_reset_token
         server.SERVICE.ingest = original_ingest
         server.SERVICE.query = original_query
         server.SERVICE.reset_all = original_reset

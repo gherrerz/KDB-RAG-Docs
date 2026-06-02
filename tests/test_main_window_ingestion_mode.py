@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 
+import coderag.ui.main_window as main_window_module
 from coderag.ui.main_window import MainWindow
 
 
@@ -43,8 +45,8 @@ class _FakeApiClient:
         )
         return {"status": "updated", "new_tags": tags}
 
-    def reset_all(self) -> dict[str, Any]:
-        self.calls.append(("reset_all", (), {}))
+    def reset_all(self, admin_reset_token: str) -> dict[str, Any]:
+        self.calls.append(("reset_all", (), {"admin_reset_token": admin_reset_token}))
         return {"status": "completed"}
 
     def tdm_ingest(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -184,3 +186,40 @@ def test_main_window_tdm_methods_delegate_to_api_client() -> None:
         "tdm_virtualization_preview",
         "tdm_synthetic_profile",
     ]
+
+
+def test_main_window_reset_all_delegates_with_admin_token() -> None:
+    """Delegate reset through UiApiClient with the configured admin token."""
+    window = _build_lightweight_window()
+    original_get_settings = main_window_module.get_settings
+    main_window_module.get_settings = lambda: SimpleNamespace(
+        admin_reset_token="reset-token"
+    )
+
+    try:
+        result = window.reset_all()
+    finally:
+        main_window_module.get_settings = original_get_settings
+
+    assert result["status"] == "completed"
+    assert window.api_client.calls[0] == (
+        "reset_all",
+        (),
+        {"admin_reset_token": "reset-token"},
+    )
+
+
+def test_main_window_reset_all_fails_locally_without_admin_token() -> None:
+    """Fail locally before issuing the reset when UI lacks admin token."""
+    window = _build_lightweight_window()
+    original_get_settings = main_window_module.get_settings
+    main_window_module.get_settings = lambda: SimpleNamespace(admin_reset_token="  ")
+
+    try:
+        result = window.reset_all()
+    finally:
+        main_window_module.get_settings = original_get_settings
+
+    assert result["status"] == "failed"
+    assert "ADMIN_RESET_TOKEN" in result["message"]
+    assert window.api_client.calls == []

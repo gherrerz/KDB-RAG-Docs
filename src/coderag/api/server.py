@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
+from fastapi.openapi.utils import get_openapi
 
 from coderag.api.upload_ingestion import (
     StagedUploadFile,
@@ -14,6 +15,7 @@ from coderag.api.upload_ingestion import (
     UploadIngestionError,
 )
 from coderag.core.models import (
+    AdminResetRequest,
     DeleteDocumentResponse,
     DocumentContentResponse,
     IngestionRequest,
@@ -67,13 +69,31 @@ def _artifact_files_payload(
 
 def _run_reset_all(confirm: bool) -> dict[str, Any]:
     """Execute destructive reset only after explicit caller confirmation."""
-    if not confirm:
-        raise HTTPException(
-            status_code=400,
-            detail="Reset requires explicit confirmation.",
-        )
     response = SERVICE.reset_all()
     return response.model_dump()
+
+
+def _ensure_admin_reset_access(admin_token: str | None) -> None:
+    """Protect the global reset endpoint with feature flag and token."""
+    if not SETTINGS.admin_reset_enabled:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "message": "Administrative reset endpoint is disabled.",
+                "code": "admin_reset_disabled",
+            },
+        )
+
+    expected_token = (SETTINGS.admin_reset_token or "").strip()
+    if (admin_token or "").strip() != expected_token:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "message": "Invalid administrative token for global reset.",
+                "code": "invalid_admin_reset_token",
+            },
+        )
+    return None
 
 
 def _is_queue_connection_error(exc: Exception) -> bool:
@@ -151,6 +171,41 @@ app = FastAPI(
     ],
     lifespan=_lifespan,
 )
+
+
+def _mark_admin_reset_header_required(schema: dict[str, object]) -> None:
+    """Align published OpenAPI with the effective reset contract."""
+    path_item = schema.get("paths", {}).get("/admin/reset", {}).get("post", {})
+    parameters = path_item.get("parameters", [])
+    for parameter in parameters:
+        if not isinstance(parameter, dict):
+            continue
+        if (
+            parameter.get("in") == "header"
+            and parameter.get("name") == "X-Admin-Reset-Token"
+        ):
+            parameter["required"] = True
+            return
+
+
+def custom_openapi() -> dict[str, object]:
+    """Publish OpenAPI adjusted to the service's effective HTTP contract."""
+    if app.openapi_schema is not None:
+        return cast(dict[str, object], app.openapi_schema)
+
+    schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        description=app.description,
+        routes=app.routes,
+        tags=app.openapi_tags,
+    )
+    _mark_admin_reset_header_required(schema)
+    app.openapi_schema = schema
+    return cast(dict[str, object], app.openapi_schema)
+
+
+app.openapi = custom_openapi
 
 
 @app.get(
@@ -890,22 +945,31 @@ def ingest_source_files_async(
         ) from exc
 
 
-@app.delete(
-    "/sources/reset",
+@app.post(
+    "/admin/reset",
     tags=["ingestion"],
     summary="Reset all ingestion artifacts",
     description=(
         "Clear persisted ingestion state, TDM metadata, staging mirror, "
         "managed graph relationships, and reset runtime indexes. Requires "
-        "explicit confirmation through the confirm query parameter."
+        "administrative token and explicit confirmation in the request body."
     ),
     responses={
-        400: {"description": "Missing confirmation (confirm=false)."}
+        403: {"description": "Missing or invalid admin reset token."},
+        404: {"description": "Administrative reset endpoint disabled."},
+        422: {"description": "Invalid reset confirmation payload."},
     },
 )
-def reset_sources(confirm: bool = False) -> dict[str, Any]:
+def reset_sources(
+    request: AdminResetRequest,
+    x_admin_reset_token: str | None = Header(
+        default=None,
+        alias="X-Admin-Reset-Token",
+    ),
+) -> dict[str, Any]:
     """Clear persisted ingestion artifacts and reset runtime indexes."""
-    return _run_reset_all(confirm=confirm)
+    _ensure_admin_reset_access(x_admin_reset_token)
+    return _run_reset_all(confirm=request.confirm)
 
 
 @app.post(

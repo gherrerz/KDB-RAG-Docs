@@ -304,6 +304,12 @@ class Settings(BaseSettings):
     tdm_admin_endpoints: bool = Field(
         default_factory=lambda: _env_bool("TDM_ADMIN_ENDPOINTS", False)
     )
+    admin_reset_enabled: bool = Field(
+        default_factory=lambda: _env_bool("ADMIN_RESET_ENABLED", False)
+    )
+    admin_reset_token: str = Field(
+        default_factory=lambda: _env_str("ADMIN_RESET_TOKEN", "") or ""
+    )
     redis_url: str = Field(
         default_factory=lambda: (
             _env_str("REDIS_URL", "redis://localhost:6379/0")
@@ -372,6 +378,7 @@ class Settings(BaseSettings):
         self.chroma_token = (self.chroma_token or "").strip() or None
         self.chroma_username = (self.chroma_username or "").strip() or None
         self.chroma_password = (self.chroma_password or "").strip() or None
+        self.admin_reset_token = (self.admin_reset_token or "").strip()
         if (
             self.vertex_service_account_json_b64
             and self.vertex_service_account_json_b64.strip()
@@ -403,6 +410,15 @@ class Settings(BaseSettings):
         if self.chroma_password and not self.chroma_username:
             raise ValueError(
                 "CHROMA_USERNAME is required when CHROMA_PASSWORD is set."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def validate_admin_reset_settings(self) -> "Settings":
+        """Require explicit token when destructive admin reset is enabled."""
+        if self.admin_reset_enabled and not self.admin_reset_token:
+            raise ValueError(
+                "ADMIN_RESET_TOKEN is required when ADMIN_RESET_ENABLED=true."
             )
         return self
 

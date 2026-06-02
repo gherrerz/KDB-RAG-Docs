@@ -34,6 +34,16 @@ y opera con Postgres como store efectivo de metadata documental.
 
 ## Parameters
 
+## Controles administrativos
+
+- `ADMIN_RESET_ENABLED`: expone `POST /admin/reset` solo cuando vale `true`.
+- `ADMIN_RESET_TOKEN`: token obligatorio para autorizar el reset global cuando
+  `ADMIN_RESET_ENABLED=true`.
+- Si `ADMIN_RESET_ENABLED=true` y `ADMIN_RESET_TOKEN` esta vacio, el runtime
+  considera la configuracion invalida y falla al construir settings.
+- La UI desktop y cualquier script operador que invoque `POST /admin/reset`
+  deben usar el mismo `ADMIN_RESET_TOKEN` configurado en la API protegida.
+
 - `data_dir`: carpeta de trabajo local para staging legacy puntual,
   uploads transitorios y artefactos no-relacionales; no se usa como
   backend de metadata runtime

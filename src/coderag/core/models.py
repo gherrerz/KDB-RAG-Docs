@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class SourceConfig(BaseModel):
@@ -38,6 +38,35 @@ class ResetAllResponse(BaseModel):
     deleted_jobs: int
     neo4j_enabled: bool
     neo4j_edges_deleted: int
+
+
+class AdminResetRequest(BaseModel):
+    """Request payload required to authorize a global administrative reset."""
+
+    confirm: Literal[True] = Field(
+        description="Must be true to confirm the destructive operation."
+    )
+    confirmation_phrase: str = Field(
+        description="Explicit confirmation phrase required by the endpoint.",
+        examples=["RESET ALL DATA"],
+    )
+
+    @field_validator("confirmation_phrase", mode="before")
+    @classmethod
+    def normalize_confirmation_phrase(cls, value: Any) -> str | Any:
+        """Trim confirmation text before validating the contract."""
+        if not isinstance(value, str):
+            return value
+        return value.strip()
+
+    @model_validator(mode="after")
+    def validate_confirmation_phrase(self) -> "AdminResetRequest":
+        """Require the exact human confirmation phrase."""
+        if self.confirmation_phrase != "RESET ALL DATA":
+            raise ValueError(
+                "confirmation_phrase must be exactly 'RESET ALL DATA'"
+            )
+        return self
 
 
 class DeleteDocumentResponse(BaseModel):

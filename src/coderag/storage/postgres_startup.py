@@ -15,6 +15,11 @@ _DEFAULT_ALEMBIC_VERSION_TABLE = "alembic_version_docs"
 _BOOTSTRAP_CACHE: dict[tuple[str, PostgresStartupPolicy], dict[str, Any]] = {}
 
 
+def _legacy_alembic_version_table() -> str:
+    """Resolve the legacy shared Alembic version table name when needed."""
+    return _DEFAULT_ALEMBIC_VERSION_TABLE.removesuffix("_docs")
+
+
 def _repo_root() -> Path:
     """Resolve repository root from the current src layout."""
     return Path(__file__).resolve().parents[3]
@@ -36,7 +41,11 @@ def _build_alembic_config(postgres_dsn: str) -> Any:
     return config
 
 
-def _read_database_heads(postgres_dsn: str) -> set[str]:
+def _read_database_heads(
+    postgres_dsn: str,
+    *,
+    version_table: str = _DEFAULT_ALEMBIC_VERSION_TABLE,
+) -> set[str]:
     """Read the currently applied Alembic heads from the database."""
     from coderag.storage.postgres_session import to_sqlalchemy_postgres_url
 
@@ -49,11 +58,30 @@ def _read_database_heads(postgres_dsn: str) -> set[str]:
         with engine.connect() as connection:
             context = migration_context.configure(
                 connection,
-                opts={"version_table": _DEFAULT_ALEMBIC_VERSION_TABLE},
+                opts={"version_table": version_table},
             )
             return set(context.get_current_heads())
     finally:
         engine.dispose()
+
+
+def _sync_docs_version_table_from_legacy(
+    *,
+    postgres_dsn: str,
+    expected_heads: set[str],
+    config: Any,
+    command: Any,
+) -> bool:
+    """Stamp docs version table when legacy table already has the expected head."""
+    legacy_heads = _read_database_heads(
+        postgres_dsn,
+        version_table=_legacy_alembic_version_table(),
+    )
+    if not legacy_heads or legacy_heads != expected_heads:
+        return False
+
+    command.stamp(config, "head")
+    return True
 
 
 def ensure_postgres_schema_ready(
@@ -104,9 +132,18 @@ def ensure_postgres_schema_ready(
     if not expected_heads:
         action = "no_migrations_registered"
     elif policy == "auto_upgrade" and current_heads != expected_heads:
-        command.upgrade(config, "head")
-        current_heads = _read_database_heads(postgres_dsn)
-        action = "upgraded"
+        if not current_heads and _sync_docs_version_table_from_legacy(
+            postgres_dsn=postgres_dsn,
+            expected_heads=expected_heads,
+            config=config,
+            command=command,
+        ):
+            current_heads = _read_database_heads(postgres_dsn)
+            action = "stamped_from_legacy_version_table"
+        else:
+            command.upgrade(config, "head")
+            current_heads = _read_database_heads(postgres_dsn)
+            action = "upgraded"
     elif current_heads != expected_heads:
         raise RuntimeError(
             "PostgreSQL is not aligned with the expected Alembic heads. "

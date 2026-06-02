@@ -18,7 +18,7 @@ LEGACY_PATHS = {
     "/readiness",
     "/sources/ingest",
     "/sources/ingest/async",
-    "/sources/reset",
+    "/admin/reset",
     "/jobs/{job_id}",
     "/query",
     "/query/retrieval",

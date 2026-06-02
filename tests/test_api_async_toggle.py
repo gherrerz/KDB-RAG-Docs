@@ -38,6 +38,19 @@ def _fake_embed_text(
     return buckets
 
 
+def _admin_reset_headers() -> dict[str, str]:
+    """Build headers for protected admin reset tests."""
+    return {"X-Admin-Reset-Token": "reset-token"}
+
+
+def _admin_reset_payload() -> dict[str, object]:
+    """Build the request body required by the protected reset endpoint."""
+    return {
+        "confirm": True,
+        "confirmation_phrase": "RESET ALL DATA",
+    }
+
+
 @pytest.fixture(autouse=True)
 def _force_remote_chroma_mode() -> None:
     """Keep API toggle tests pinned to remote Chroma semantics."""
@@ -150,22 +163,135 @@ def test_async_ingest_uses_local_worker_when_rq_disabled() -> None:
         server.SERVICE.graph_store.clear_all_edges = original_clear_all_edges
 
 
-def test_reset_requires_confirmation() -> None:
-    """Reject reset endpoint calls without explicit confirmation."""
+def test_admin_reset_is_disabled_by_default() -> None:
+    """Reject admin reset calls when the feature flag is disabled."""
     client = TestClient(server.app)
-    response = client.delete("/sources/reset")
-    assert response.status_code == 400
+    original_enabled = server.SETTINGS.admin_reset_enabled
+    original_token = server.SETTINGS.admin_reset_token
+    server.app.openapi_schema = None
+
+    server.SETTINGS.admin_reset_enabled = False
+    server.SETTINGS.admin_reset_token = "reset-token"
+    try:
+        response = client.post(
+            "/admin/reset",
+            headers={"X-Admin-Reset-Token": "reset-token"},
+            json={
+                "confirm": True,
+                "confirmation_phrase": "RESET ALL DATA",
+            },
+        )
+        assert response.status_code == 404
+    finally:
+        server.SETTINGS.admin_reset_enabled = original_enabled
+        server.SETTINGS.admin_reset_token = original_token
 
 
-def test_reset_openapi_exposes_only_delete_sources_reset() -> None:
-    """Publish a single reset contract in OpenAPI without deprecated aliases."""
+def test_admin_reset_openapi_publishes_new_contract() -> None:
+    """Publish only the new admin reset contract in OpenAPI."""
     client = TestClient(server.app)
+    server.app.openapi_schema = None
     body = client.get("/openapi.json").json()
 
-    assert "/sources/reset" in body["paths"]
-    assert "delete" in body["paths"]["/sources/reset"]
-    assert "post" not in body["paths"]["/sources/reset"]
+    assert "/admin/reset" in body["paths"]
+    assert "post" in body["paths"]["/admin/reset"]
+    assert "/sources/reset" not in body["paths"]
+    parameters = body["paths"]["/admin/reset"]["post"]["parameters"]
+    header_parameter = next(
+        parameter
+        for parameter in parameters
+        if parameter["name"] == "X-Admin-Reset-Token"
+        and parameter["in"] == "header"
+    )
+    assert header_parameter["required"] is True
+    assert body["paths"]["/admin/reset"]["post"]["requestBody"]["required"] is True
     assert "/sources" not in body["paths"]
+
+
+def test_admin_reset_requires_valid_token() -> None:
+    """Reject admin reset calls without the correct token."""
+    client = TestClient(server.app)
+    original_enabled = server.SETTINGS.admin_reset_enabled
+    original_token = server.SETTINGS.admin_reset_token
+
+    server.SETTINGS.admin_reset_enabled = True
+    server.SETTINGS.admin_reset_token = "reset-token"
+    try:
+        response = client.post(
+            "/admin/reset",
+            json={
+                "confirm": True,
+                "confirmation_phrase": "RESET ALL DATA",
+            },
+        )
+        assert response.status_code == 403
+    finally:
+        server.SETTINGS.admin_reset_enabled = original_enabled
+        server.SETTINGS.admin_reset_token = original_token
+
+
+def test_admin_reset_rejects_invalid_confirmation_phrase() -> None:
+    """Reject admin reset payloads with the wrong confirmation phrase."""
+    client = TestClient(server.app)
+    original_enabled = server.SETTINGS.admin_reset_enabled
+    original_token = server.SETTINGS.admin_reset_token
+
+    server.SETTINGS.admin_reset_enabled = True
+    server.SETTINGS.admin_reset_token = "reset-token"
+    try:
+        response = client.post(
+            "/admin/reset",
+            headers={"X-Admin-Reset-Token": "reset-token"},
+            json={
+                "confirm": True,
+                "confirmation_phrase": "RESET EVERYTHING",
+            },
+        )
+        assert response.status_code == 422
+    finally:
+        server.SETTINGS.admin_reset_enabled = original_enabled
+        server.SETTINGS.admin_reset_token = original_token
+
+
+def test_admin_reset_returns_reset_summary() -> None:
+    """Execute the protected admin reset when token and payload are valid."""
+    client = TestClient(server.app)
+    original_enabled = server.SETTINGS.admin_reset_enabled
+    original_token = server.SETTINGS.admin_reset_token
+    original_reset = server.SERVICE.reset_all
+
+    server.SETTINGS.admin_reset_enabled = True
+    server.SETTINGS.admin_reset_token = "reset-token"
+    server.SERVICE.reset_all = lambda: type(
+        "ResetResult",
+        (),
+        {
+            "model_dump": lambda self: {
+                "status": "completed",
+                "message": "Reset done",
+                "deleted_documents": 2,
+                "deleted_chunks": 5,
+                "deleted_jobs": 1,
+                "neo4j_enabled": False,
+                "neo4j_edges_deleted": 0,
+            }
+        },
+    )()
+    try:
+        response = client.post(
+            "/admin/reset",
+            headers={"X-Admin-Reset-Token": "reset-token"},
+            json={
+                "confirm": True,
+                "confirmation_phrase": "RESET ALL DATA",
+            },
+        )
+        assert response.status_code == 200
+        assert response.json()["status"] == "completed"
+    finally:
+        server.SETTINGS.admin_reset_enabled = original_enabled
+        server.SETTINGS.admin_reset_token = original_token
+        server.SERVICE.reset_all = original_reset
 
 
 def test_async_ingest_falls_back_to_local_when_redis_unavailable() -> None:
@@ -248,7 +374,15 @@ def test_reset_clears_ingested_data() -> None:
         assert before_reset.status_code == 200
         assert len(before_reset.json().get("citations", [])) > 0
 
-        reset_response = client.delete("/sources/reset?confirm=true")
+        original_reset_enabled = server.SETTINGS.admin_reset_enabled
+        original_reset_token = server.SETTINGS.admin_reset_token
+        server.SETTINGS.admin_reset_enabled = True
+        server.SETTINGS.admin_reset_token = "reset-token"
+        reset_response = client.post(
+            "/admin/reset",
+            headers=_admin_reset_headers(),
+            json=_admin_reset_payload(),
+        )
         assert reset_response.status_code == 200
         body = reset_response.json()
         assert body["status"] == "completed"
@@ -266,6 +400,8 @@ def test_reset_clears_ingested_data() -> None:
         server.SETTINGS.neo4j_password = original_neo4j_password
         server.SETTINGS.llm_provider = original_provider
         server.SETTINGS.openai_api_key = original_openai_key
+        server.SETTINGS.admin_reset_enabled = original_reset_enabled
+        server.SETTINGS.admin_reset_token = original_reset_token
         index_chroma.embed_text = original_embed
         server.SERVICE.graph_store.replace_edges = original_replace_edges
         server.SERVICE.graph_store.expand_paths = original_expand_paths
@@ -313,7 +449,15 @@ def test_core_endpoints_degrade_cleanly_when_neo4j_disabled() -> None:
         assert readiness_body["ready"] is True
         assert readiness_body["checks"]["neo4j"]["required"] is False
 
-        reset_response = client.delete("/sources/reset?confirm=true")
+        original_reset_enabled = server.SETTINGS.admin_reset_enabled
+        original_reset_token = server.SETTINGS.admin_reset_token
+        server.SETTINGS.admin_reset_enabled = True
+        server.SETTINGS.admin_reset_token = "reset-token"
+        reset_response = client.post(
+            "/admin/reset",
+            headers=_admin_reset_headers(),
+            json=_admin_reset_payload(),
+        )
         assert reset_response.status_code == 200
         reset_body = reset_response.json()
         assert reset_body["neo4j_enabled"] is False
@@ -322,6 +466,8 @@ def test_core_endpoints_degrade_cleanly_when_neo4j_disabled() -> None:
         server.SETTINGS.use_neo4j = original_neo4j
         server.SETTINGS.llm_provider = original_provider
         server.SETTINGS.openai_api_key = original_openai_key
+        server.SETTINGS.admin_reset_enabled = original_reset_enabled
+        server.SETTINGS.admin_reset_token = original_reset_token
         index_chroma.embed_text = original_embed
 
 

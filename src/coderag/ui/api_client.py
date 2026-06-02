@@ -302,11 +302,16 @@ class UiApiClient:
             timeout=60,
         )
 
-    def reset_all(self) -> dict[str, object]:
+    def reset_all(self, admin_reset_token: str) -> dict[str, object]:
         """Call backend endpoint to clear all repositories and indexes."""
-        return self.delete_json(
-            "/sources/reset?confirm=true",
+        return self.post_json(
+            "/admin/reset",
+            {
+                "confirm": True,
+                "confirmation_phrase": "RESET ALL DATA",
+            },
             timeout=180,
+            headers={"X-Admin-Reset-Token": admin_reset_token},
         )
 
     def tdm_ingest(self, payload: dict[str, object]) -> dict[str, object]:
@@ -370,12 +375,14 @@ class UiApiClient:
         path: str,
         payload: dict[str, object],
         timeout: int,
+        headers: dict[str, str] | None = None,
     ) -> dict[str, object]:
         """Call backend POST endpoint and parse JSON response."""
         try:
             response = requests.post(
                 f"{self.api_base_url}{path}",
                 json=payload,
+                headers=headers,
                 timeout=timeout,
             )
             response.raise_for_status()

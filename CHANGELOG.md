@@ -6,6 +6,13 @@
 
 ### Changed
 
+- **BREAKING** el reset global deja de usar `DELETE /sources/reset?confirm=true`
+  y converge a `POST /admin/reset` con `ADMIN_RESET_ENABLED`,
+  `ADMIN_RESET_TOKEN`, header `X-Admin-Reset-Token` y body explicito de
+  confirmacion (`confirm=true`, `confirmation_phrase="RESET ALL DATA"`).
+- La UI desktop y los checks operativos de Docs ahora usan el nuevo contrato
+  administrativo de reset y requieren compartir `ADMIN_RESET_TOKEN` cuando
+  apuntan a una API protegida.
 - El versionado Alembic queda aislado por aplicacion cuando KDB-RAG-Docs y
   KDB-RAG-Repo comparten la misma base Postgres: Docs usa
   `alembic_version_docs` y Repo usa `alembic_version_repo`, evitando

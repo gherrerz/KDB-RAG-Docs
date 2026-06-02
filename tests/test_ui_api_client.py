@@ -140,3 +140,30 @@ def test_ui_api_client_list_documents_builds_encoded_path() -> None:
 
     assert result["count"] == 0
     assert captured[0][0] == "/sources/documents?source_id=src-1&tags=finance%2Curgent"
+
+
+def test_ui_api_client_reset_all_uses_admin_reset_contract() -> None:
+    """Call the protected POST /admin/reset endpoint with header and body."""
+    client = UiApiClient()
+    captured: list[tuple[str, dict[str, object], int, dict[str, str] | None]] = []
+
+    def _fake_post(
+        path: str,
+        payload: dict[str, object],
+        timeout: int,
+        headers: dict[str, str] | None = None,
+    ) -> dict[str, object]:
+        captured.append((path, payload, timeout, headers))
+        return {"status": "completed"}
+
+    client.post_json = _fake_post  # type: ignore[method-assign]
+
+    result = client.reset_all("reset-token")
+
+    assert result["status"] == "completed"
+    assert captured[0][0] == "/admin/reset"
+    assert captured[0][1] == {
+        "confirm": True,
+        "confirmation_phrase": "RESET ALL DATA",
+    }
+    assert captured[0][3] == {"X-Admin-Reset-Token": "reset-token"}

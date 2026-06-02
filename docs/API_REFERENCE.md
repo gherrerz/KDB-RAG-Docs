@@ -55,7 +55,7 @@ de la red puede consumirse usando la IP del host.
 | Replace document tags | PUT | `/sources/documents/{document_id}/tags` | `replace_document_tags` | `SERVICE.replace_document_tags` | `document_id` en path + `ReplaceDocumentTagsRequest` | `ReplaceDocumentTagsResponse` |
 | Delete document | DELETE | `/sources/documents/{document_id}` | `delete_document` | `SERVICE.delete_document` | `document_id` en path | `DeleteDocumentResponse` |
 | Job status | GET | `/jobs/{job_id}` | `get_job` | `SERVICE.get_job` y fallback `get_rq_job_status` | `job_id` en path | `dict` (estado + timeline) |
-| Full reset | DELETE | `/sources/reset?confirm=true` | `reset_sources` | `SERVICE.reset_all` | `confirm` query param | `ResetAllResponse` |
+| Full reset | POST | `/admin/reset` | `reset_sources` | `SERVICE.reset_all` | `X-Admin-Reset-Token` header + `AdminResetRequest` | `ResetAllResponse` |
 | Query | POST | `/query` | `query` | `SERVICE.query` | `QueryRequest` | `QueryResponse` |
 | Retrieval alias | POST | `/query/retrieval` | `retrieval_only` | `SERVICE.query` | `QueryRequest` | `QueryResponse` |
 | TDM ingest | POST | `/tdm/ingest` | `ingest_tdm` | `SERVICE.ingest_tdm_assets` | `IngestionRequest` | `dict` (resumen TDM) |
@@ -150,13 +150,21 @@ Notas de contrato:
 
 ## Endpoints en detalle
 
-## DELETE /sources/reset
+## POST /admin/reset
 
 Ruta canonica para reset destructivo del estado de ingesta.
 
 Request:
 
-- Query param obligatorio: `confirm=true`
+- Header obligatorio: `X-Admin-Reset-Token`
+- Body obligatorio: `AdminResetRequest`
+
+```json
+{
+  "confirm": true,
+  "confirmation_phrase": "RESET ALL DATA"
+}
+```
 
 Comportamiento:
 
@@ -167,7 +175,9 @@ Comportamiento:
 Codigos comunes:
 
 - `200`: reset completado.
-- `400`: falta confirmacion explicita.
+- `403`: token administrativo faltante o invalido.
+- `404`: endpoint administrativo deshabilitado.
+- `422`: payload de confirmacion invalido.
 
 ## GET /health
 
@@ -569,7 +579,7 @@ Response (shape):
 }
 ```
 
-## DELETE /sources/reset Details
+## POST /admin/reset Details
 
 Borra repositorios de ingesta y deja el sistema listo para primera ingesta.
 
@@ -584,7 +594,15 @@ Incluye:
 
 Request:
 
-- Query param obligatorio: `confirm=true`
+- Header obligatorio: `X-Admin-Reset-Token`
+- Body obligatorio:
+
+```json
+{
+  "confirm": true,
+  "confirmation_phrase": "RESET ALL DATA"
+}
+```
 
 Response:
 
@@ -603,7 +621,9 @@ Response:
 Codigos comunes:
 
 - `200`: reset ejecutado.
-- `400`: falta confirmacion (`confirm=false`).
+- `403`: token administrativo faltante o invalido.
+- `404`: endpoint administrativo deshabilitado.
+- `422`: payload de confirmacion invalido.
 
 ## POST /query
 

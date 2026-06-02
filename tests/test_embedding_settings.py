@@ -6,6 +6,7 @@ import base64
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from coderag.core.settings import Settings
 
@@ -99,6 +100,12 @@ def test_vertex_service_account_json_b64_invalid_raises() -> None:
     """Fail clearly when b64 payload cannot be decoded."""
     with pytest.raises(RuntimeError):
         Settings(vertex_service_account_json_b64="not-base64!!")
+
+
+def test_admin_reset_enabled_requires_token() -> None:
+    """Reject destructive admin reset when enabled without a token."""
+    with pytest.raises(ValidationError):
+        Settings(admin_reset_enabled=True, admin_reset_token="   ")
 
 
 def test_vertex_labels_defaults_are_available() -> None:
