@@ -21,6 +21,15 @@
     `CHROMA_TOKEN`/`CHROMA_USERNAME`/`CHROMA_PASSWORD` en los manifiestos k8s;
     debe mantenerse sin exposición pública y migrarse a una imagen parcheada o
     al servidor Rust cuando esté disponible.
+- Segunda tanda de CVEs reportadas por Trivy en `requirements-runtime.txt`:
+  - `python-multipart` 0.0.27 → 0.0.30 (CVE-2026-53539 DoS por complejidad
+    cuadrática en `QuerystringParser`).
+  - `starlette` 0.49.1 → 1.3.1 (CVE-2026-48818 SSRF + robo de credenciales NTLM
+    vía rutas UNC en `StaticFiles`; CVE-2026-54283 DoS por límites de
+    `request.form()` ignorados en `application/x-www-form-urlencoded`). El bump a
+    starlette 1.x exige `fastapi` 0.120.1 → 0.137.1 (primera línea estable que
+    admite starlette 1.x; `pydantic==2.11.7` permanece compatible). Barre además
+    otras CVEs recientes de starlette (CVE-2026-48710 "BadHost", CVE-2026-48817).
 
 ### Changed
 
