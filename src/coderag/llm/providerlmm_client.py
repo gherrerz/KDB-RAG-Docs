@@ -257,13 +257,14 @@ class ProviderLlmClient:
                     "content": build_answer_prompt(question, context),
                 },
             ],
+            "max_output_tokens": SETTINGS.llm_max_output_tokens,
         }
         try:
             response = requests.post(
                 url,
                 headers=headers,
                 json=payload,
-                timeout=30,
+                timeout=SETTINGS.llm_request_timeout_sec,
             )
             response.raise_for_status()
             data = response.json()
@@ -297,10 +298,17 @@ class ProviderLlmClient:
                         }
                     ],
                 }
-            ]
+            ],
+            "generationConfig": {
+                "maxOutputTokens": SETTINGS.llm_max_output_tokens,
+            },
         }
         try:
-            response = requests.post(url, json=payload, timeout=30)
+            response = requests.post(
+                url,
+                json=payload,
+                timeout=SETTINGS.llm_request_timeout_sec,
+            )
             response.raise_for_status()
             data = response.json()
             candidates = data.get("candidates", [])
@@ -349,7 +357,10 @@ class ProviderLlmClient:
                         }
                     ],
                 }
-            ]
+            ],
+            "generationConfig": {
+                "maxOutputTokens": SETTINGS.llm_max_output_tokens,
+            },
         }
         if labels:
             payload["labels"] = labels
@@ -359,7 +370,7 @@ class ProviderLlmClient:
                 url,
                 headers=headers,
                 json=payload,
-                timeout=30,
+                timeout=SETTINGS.llm_request_timeout_sec,
             )
             response.raise_for_status()
             data = response.json()

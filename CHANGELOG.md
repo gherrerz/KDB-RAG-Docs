@@ -51,6 +51,15 @@
   recuperar el contenido textual completo persistido de un documento
   ingestado sin reconstruirlo desde chunks.
 
+### Fixed
+
+- `POST /query` devolvia `503` intermitente
+  (`LLM provider call failed in strict mode`) cuando la generacion de una
+  respuesta fundamentada larga superaba el `timeout=30` fijo del POST al
+  proveedor. El timeout ahora es configurable via `LLM_REQUEST_TIMEOUT_SEC`
+  (default 120) y los payloads de OpenAI/Gemini/Vertex acotan la salida con
+  `LLM_MAX_OUTPUT_TOKENS` (default 4096) para limitar latencia y costo.
+
 ## [0.3.10] - 2026-05-26
 
 ### Changed

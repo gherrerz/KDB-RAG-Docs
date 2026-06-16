@@ -152,6 +152,12 @@ class Settings(BaseSettings):
     llm_embedding: str | None = Field(
         default_factory=lambda: _env_str("LLM_EMBEDDING")
     )
+    llm_request_timeout_sec: int = Field(
+        default_factory=lambda: _env_int("LLM_REQUEST_TIMEOUT_SEC", 120)
+    )
+    llm_max_output_tokens: int = Field(
+        default_factory=lambda: _env_int("LLM_MAX_OUTPUT_TOKENS", 4096)
+    )
     openai_api_key: str | None = Field(
         default_factory=lambda: _env_str("OPENAI_API_KEY")
     )
@@ -326,6 +332,22 @@ class Settings(BaseSettings):
         """Ensure RQ ingest timeout is a positive integer."""
         if value <= 0:
             raise ValueError("RQ_INGEST_JOB_TIMEOUT_SEC must be > 0")
+        return value
+
+    @field_validator("llm_request_timeout_sec")
+    @classmethod
+    def validate_llm_request_timeout_sec(cls, value: int) -> int:
+        """Ensure the LLM request timeout is a positive integer."""
+        if value <= 0:
+            raise ValueError("LLM_REQUEST_TIMEOUT_SEC must be > 0")
+        return value
+
+    @field_validator("llm_max_output_tokens")
+    @classmethod
+    def validate_llm_max_output_tokens(cls, value: int) -> int:
+        """Ensure the LLM output token cap is a positive integer."""
+        if value <= 0:
+            raise ValueError("LLM_MAX_OUTPUT_TOKENS must be > 0")
         return value
 
     @field_validator("upload_max_bytes")

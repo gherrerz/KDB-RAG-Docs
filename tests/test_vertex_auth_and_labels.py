@@ -143,6 +143,42 @@ def test_vertex_answer_uses_bearer_headers_and_labels(
     assert captured["labels_from_headers"] == expected_labels
 
 
+def test_vertex_answer_uses_configured_timeout_and_output_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Apply LLM_REQUEST_TIMEOUT_SEC and LLM_MAX_OUTPUT_TOKENS to the call."""
+    _set_vertex_defaults(monkeypatch)
+    monkeypatch.setattr(SETTINGS, "llm_request_timeout_sec", 77)
+    monkeypatch.setattr(SETTINGS, "llm_max_output_tokens", 321)
+    captured: dict = {}
+
+    def _fake_headers(labels: dict[str, str]) -> dict[str, str]:
+        _ = labels
+        return {"Authorization": "Bearer fake-token"}
+
+    def _fake_post(url: str, headers: dict, json: dict, timeout: int):
+        _ = url, headers
+        captured["payload"] = json
+        captured["timeout"] = timeout
+        return _FakeGeminiResponse()
+
+    monkeypatch.setattr(
+        "coderag.llm.providerlmm_client.build_vertex_request_headers",
+        _fake_headers,
+    )
+    monkeypatch.setattr(
+        "coderag.llm.providerlmm_client.requests.post",
+        _fake_post,
+    )
+
+    ProviderLlmClient()._answer_vertex(question="P", context="C")
+
+    assert captured["timeout"] == 77
+    assert (
+        captured["payload"]["generationConfig"]["maxOutputTokens"] == 321
+    )
+
+
 def test_vertex_embedding_uses_bearer_headers_without_api_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

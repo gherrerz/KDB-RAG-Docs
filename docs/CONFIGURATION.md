@@ -133,6 +133,11 @@ y opera con Postgres como store efectivo de metadata documental.
 - `VERTEX_LABEL_MODEL_NAME` (fallback opcional; se infiere dinamicamente)
 - `VERTEX_LABEL_USE_CASE_ID` (default `tbd`)
 - `LLM_EMBEDDING` (override global opcional para el modelo de embedding)
+- `LLM_REQUEST_TIMEOUT_SEC` (default `120`): timeout en segundos de las llamadas
+  HTTP a los proveedores de respuesta (OpenAI/Gemini/Vertex). Subirlo evita que
+  respuestas fundamentadas largas excedan el límite y caigan en `503` strict.
+- `LLM_MAX_OUTPUT_TOKENS` (default `4096`): cota de tokens de salida aplicada al
+  payload de los tres proveedores; acota latencia y costo por llamada.
 
 ### Plantillas .env por provider
 
