@@ -62,6 +62,24 @@ spec:
                 secretKeyRef:
                   name: coderag-app-secrets
                   key: NEO4J_PASSWORD
+            - name: CHROMA_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: coderag-app-secrets
+                  key: CHROMA_TOKEN
+                  optional: true
+            - name: CHROMA_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: coderag-app-secrets
+                  key: CHROMA_USERNAME
+                  optional: true
+            - name: CHROMA_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: coderag-app-secrets
+                  key: CHROMA_PASSWORD
+                  optional: true
           volumeMounts:
             - name: app-data
               mountPath: /storage

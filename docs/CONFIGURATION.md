@@ -92,7 +92,12 @@ y opera con Postgres como store efectivo de metadata documental.
 - `CHROMA_MODE`: el runtime final soporta `remote`; si recibe `embedded`, readiness y operaciones fallan de forma explicita para forzar el cutover.
 - `CHROMA_PERSIST_DIR`: ruta legacy de compatibilidad; ya no se usa como backend vectorial operativo.
 - `CHROMA_HOST` y `CHROMA_PORT`: destino del servicio Chroma cuando `CHROMA_MODE=remote`.
-- `CHROMA_TOKEN` o `CHROMA_USERNAME` + `CHROMA_PASSWORD`: autenticación opcional para Chroma remoto.
+- `CHROMA_TOKEN` o `CHROMA_USERNAME` + `CHROMA_PASSWORD`: autenticación para
+  Chroma remoto. **Recomendado habilitarla** como mitigación de CVE-2026-45829
+  ("ChromaToast", RCE pre-auth en el servidor Chroma): el servidor debe rechazar
+  peticiones no autenticadas y no exponerse públicamente. El runtime usa el
+  cliente delgado `chromadb-client` (no incluye el código del servidor
+  vulnerable). `CHROMA_TOKEN` se envía como `Authorization: Bearer <token>`.
 - `CHROMA_COLLECTION`: coleccion activa donde se guardan chunks+embeddings.
 - `INGEST_EMBED_WORKERS`: numero de workers para generar embeddings en
   paralelo durante `rebuild` de indice vectorial.

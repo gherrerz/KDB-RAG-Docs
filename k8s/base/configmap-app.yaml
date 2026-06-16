@@ -6,6 +6,11 @@ metadata:
 data:
   PYTHONUNBUFFERED: "1"
   USE_CHROMA: "true"
+  # Remote-only runtime: the app talks to an external Chroma server over HTTP.
+  # CHROMA_PERSIST_DIR is retained only for legacy/local fallback paths.
+  CHROMA_MODE: remote
+  CHROMA_HOST: chromadb.default.svc.cluster.local
+  CHROMA_PORT: "8000"
   CHROMA_PERSIST_DIR: /storage/chromadb
   CHROMA_COLLECTION: coderag_chunks
   USE_NEO4J: "true"

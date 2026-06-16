@@ -4,6 +4,24 @@
 
 ## [Unreleased]
 
+### Security
+
+- Se corrigen vulnerabilidades reportadas por Trivy en dependencias de runtime
+  (`requirements-runtime.txt`):
+  - `python-multipart` 0.0.20 → 0.0.27 (CVE-2026-24486 path traversal,
+    CVE-2026-42561 DoS de parsing de headers).
+  - `fastapi` 0.116.1 → 0.120.1 y pin explícito `starlette==0.49.1`
+    (CVE-2025-62727 DoS por header Range de tiempo cuadrático).
+  - Se reemplaza el paquete `chromadb` por el cliente delgado
+    `chromadb-client==1.5.9` (CVE-2026-45829 "ChromaToast", RCE pre-auth en el
+    **servidor** Chroma). El app solo usa `chromadb.HttpClient`, por lo que el
+    cliente delgado elimina el código del servidor vulnerable de la imagen y
+    reduce su tamaño. El servidor Chroma sigue siendo la superficie RCE: se
+    habilita autenticación por token en `docker-compose.yml` y se cablea
+    `CHROMA_TOKEN`/`CHROMA_USERNAME`/`CHROMA_PASSWORD` en los manifiestos k8s;
+    debe mantenerse sin exposición pública y migrarse a una imagen parcheada o
+    al servidor Rust cuando esté disponible.
+
 ### Changed
 
 - **BREAKING** el reset global deja de usar `DELETE /sources/reset?confirm=true`

@@ -15,6 +15,7 @@ services:
       - CHROMA_HOST=chroma
       - CHROMA_PORT=8000
       - CHROMA_COLLECTION=coderag_chunks
+      - CHROMA_TOKEN=${CHROMA_TOKEN:-coderag-dev-token}
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
       - POSTGRES_DB=${POSTGRES_DB:-coderag_docs}
@@ -67,6 +68,7 @@ services:
       - CHROMA_HOST=chroma
       - CHROMA_PORT=8000
       - CHROMA_COLLECTION=coderag_chunks
+      - CHROMA_TOKEN=${CHROMA_TOKEN:-coderag-dev-token}
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
       - POSTGRES_DB=${POSTGRES_DB:-coderag_docs}
@@ -152,6 +154,12 @@ services:
         max-file: "3"
 
   chroma:
+    # SECURITY (CVE-2026-45829 "ChromaToast", pre-auth RCE in the Chroma server):
+    # the server is the vulnerable surface, not the client. Mitigations here:
+    #  - never expose this port publicly (bound to 127.0.0.1 below);
+    #  - require authentication so unauthenticated requests are rejected;
+    #  - track a patched server image or migrate to the Rust server (chroma run),
+    #    which is not affected, via CHROMA_IMAGE when one is available.
     image: ${CHROMA_IMAGE:-chromadb/chroma:0.5.5}
     container_name: kdb-rag-docs-chroma
     restart: unless-stopped
@@ -159,6 +167,10 @@ services:
       - "127.0.0.1:${CHROMA_HOST_PORT:-8002}:8000"
     environment:
       - IS_PERSISTENT=TRUE
+      # Token auth: clients must send "Authorization: Bearer <CHROMA_TOKEN>".
+      - CHROMA_SERVER_AUTHN_PROVIDER=chromadb.auth.token_authn.TokenAuthenticationServerProvider
+      - CHROMA_SERVER_AUTHN_CREDENTIALS=${CHROMA_TOKEN:-coderag-dev-token}
+      - CHROMA_AUTH_TOKEN_TRANSPORT_HEADER=Authorization
     volumes:
       - chroma_data:/chroma/chroma
     healthcheck:
