@@ -188,6 +188,30 @@ def _mark_admin_reset_header_required(schema: dict[str, object]) -> None:
             return
 
 
+def _restore_binary_upload_format(node: object) -> None:
+    """Re-add ``format: binary`` to binary string schemas for Swagger UI.
+
+    FastAPI emits OpenAPI 3.1, where ``UploadFile`` binaries are described as
+    ``type: string`` plus ``contentMediaType``. The bundled Swagger UI only
+    renders a file picker when ``format: binary`` is present, so file upload
+    fields otherwise degrade to plain text boxes. This walks the schema tree
+    and restores ``format: binary`` wherever a binary string is declared,
+    keeping ``contentMediaType`` intact.
+    """
+    if isinstance(node, dict):
+        if (
+            node.get("type") == "string"
+            and node.get("contentMediaType")
+            and "format" not in node
+        ):
+            node["format"] = "binary"
+        for value in node.values():
+            _restore_binary_upload_format(value)
+    elif isinstance(node, list):
+        for item in node:
+            _restore_binary_upload_format(item)
+
+
 def custom_openapi() -> dict[str, object]:
     """Publish OpenAPI adjusted to the service's effective HTTP contract."""
     if app.openapi_schema is not None:
@@ -201,6 +225,7 @@ def custom_openapi() -> dict[str, object]:
         tags=app.openapi_tags,
     )
     _mark_admin_reset_header_required(schema)
+    _restore_binary_upload_format(schema)
     app.openapi_schema = schema
     return cast(dict[str, object], app.openapi_schema)
 

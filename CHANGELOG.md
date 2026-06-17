@@ -62,6 +62,12 @@
 
 ### Fixed
 
+- Swagger UI volvia a mostrar el campo `files` de `POST /sources/ingest/files`
+  (y su variante `/async`) como caja de texto en vez de selector de archivos:
+  regresion del salto a OpenAPI 3.1 con FastAPI 0.137, que describe los binarios
+  de `UploadFile` con `contentMediaType` en lugar de `format: binary`. El
+  post-procesador de OpenAPI (`custom_openapi`) ahora restaura `format: binary`
+  en los schemas de upload sin alterar el parsing multipart.
 - `POST /query` devolvia `503` intermitente
   (`LLM provider call failed in strict mode`) cuando la generacion de una
   respuesta fundamentada larga superaba el `timeout=30` fijo del POST al

@@ -146,6 +146,32 @@ def test_upload_files_ingest_rejects_unsupported_extension_single_file() -> None
     ).lower()
 
 
+def test_upload_files_schema_exposes_binary_format_for_swagger() -> None:
+    """Published OpenAPI keeps ``format: binary`` so Swagger renders a picker.
+
+    FastAPI 0.137 (OpenAPI 3.1) describes ``UploadFile`` binaries with
+    ``contentMediaType`` instead of ``format: binary``; the bundled Swagger UI
+    only renders a file selector for ``format: binary``. The custom OpenAPI
+    post-processor restores it for the multipart upload endpoints.
+    """
+    server.app.openapi_schema = None  # Avoid a cached schema from other tests.
+    try:
+        schema = server.app.openapi()
+    finally:
+        server.app.openapi_schema = None
+
+    request_body = schema["paths"]["/sources/ingest/files"]["post"][
+        "requestBody"
+    ]["content"]["multipart/form-data"]["schema"]
+    ref_name = request_body["$ref"].split("/")[-1]
+    body_schema = schema["components"]["schemas"][ref_name]
+    files_items = body_schema["properties"]["files"]["items"]
+
+    assert files_items["format"] == "binary"
+    # The 3.1 representation stays in place alongside the restored format.
+    assert files_items["contentMediaType"] == "application/octet-stream"
+
+
 def test_json_ingest_endpoint_remains_compatible() -> None:
     """Keep the original JSON ingestion contract unchanged."""
     client = TestClient(server.app)
