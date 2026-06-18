@@ -155,6 +155,27 @@ class DocumentContentResponse(BaseModel):
     tags: list[str] = Field(default_factory=list)
 
 
+class UploadedFilePayload(BaseModel):
+    """One file uploaded via JSON body with base64-encoded content.
+
+    MCP-friendly alternative to multipart ``UploadFile``: an AI agent can fill
+    these fields as plain JSON arguments to attach files over the MCP transport.
+    """
+
+    filename: str = Field(min_length=1)
+    content_base64: str = Field(min_length=1)
+    media_type: str | None = None
+
+
+class FilesIngestionJsonRequest(BaseModel):
+    """JSON request to ingest one batch of base64-encoded uploaded files."""
+
+    files: list[UploadedFilePayload] = Field(min_length=1)
+    source_type: str = "folder"
+    filters: dict[str, Any] = Field(default_factory=dict)
+    tags: list[str] = Field(default_factory=list)
+
+
 class ChunkRecord(BaseModel):
     """Semantic chunk used by retrieval indexes."""
 

@@ -66,6 +66,11 @@ Notas operativas:
   ingesta por archivos (filtro `include_operations`, default-deny). Quedan fuera
   `POST /admin/reset`, la ingesta por payload (`/sources/ingest`,
   `/sources/ingest/async`) y todos los endpoints TDM (`/tdm/*`).
+- Para adjuntar archivos vía MCP se exponen las variantes JSON base64
+  `ingest_files_json[/async]` (`POST /sources/ingest/files/json[/async]`). Las
+  variantes multipart (`/sources/ingest/files[/async]`) siguen como REST-only para
+  la UI y **no** se exponen por MCP, porque el binario multipart no mapea a
+  argumentos JSON de una tool.
 - `delete_document` (`DELETE /sources/documents/{document_id}`) sí se expone como
   tool MCP: es una operación destructiva por documento, así que se recomienda
   mantener `MCP_API_TOKEN` configurado en cualquier entorno no local.

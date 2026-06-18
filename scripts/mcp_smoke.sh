@@ -34,3 +34,11 @@ curl -s "${AUTH[@]}" -X POST "$BASE/mcp" \
   -H "Content-Type: application/json" -H "$ACCEPT" -H "mcp-session-id: $SID" \
   -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"ingest_readiness","arguments":{}}}' \
   | sed 's/^data: //' | head -c 400; echo
+
+# 5) tools/call adjuntando un archivo de texto en base64 (ingest_files_json)
+echo "--- tools/call ingest_files_json (archivo base64) ---"
+B64=$(printf 'hola desde mcp' | base64 | tr -d '\n')
+curl -s "${AUTH[@]}" -X POST "$BASE/mcp" \
+  -H "Content-Type: application/json" -H "$ACCEPT" -H "mcp-session-id: $SID" \
+  -d "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\",\"params\":{\"name\":\"ingest_files_json\",\"arguments\":{\"files\":[{\"filename\":\"smoke.txt\",\"content_base64\":\"$B64\"}],\"tags\":[\"smoke\"]}}}" \
+  | sed 's/^data: //' | head -c 400; echo

@@ -47,6 +47,8 @@ de la red puede consumirse usando la IP del host.
 | Ingestion sync | POST | `/sources/ingest` | `ingest_source` | `SERVICE.ingest` | `IngestionRequest` | `dict` (estado de job + metricas) |
 | Ingestion uploads batch sync | POST | `/sources/ingest/files` | `ingest_source_files` | `UploadIngestionAdapter` + `SERVICE.ingest` | `multipart/form-data` (`files`, `source_type?`, `filters?`, `tags?`) | `dict` (estado de job + metricas) |
 | Ingestion uploads batch async | POST | `/sources/ingest/files/async` | `ingest_source_files_async` | `UploadIngestionAdapter` + `enqueue_ingest_job/enqueue_local_ingest_job` | `multipart/form-data` (`files`, `source_type?`, `filters?`, `tags?`) | `{"job_id", "status", "message"}` |
+| Ingestion JSON base64 sync | POST | `/sources/ingest/files/json` | `ingest_files_json` | `UploadIngestionAdapter` + `SERVICE.ingest` | `FilesIngestionJsonRequest` (JSON, `files[].content_base64`) | `dict` (estado de job + metricas) |
+| Ingestion JSON base64 async | POST | `/sources/ingest/files/json/async` | `ingest_files_json_async` | `UploadIngestionAdapter` + `enqueue_ingest_job/enqueue_local_ingest_job` | `FilesIngestionJsonRequest` (JSON, `files[].content_base64`) | `{"job_id", "status", "message"}` |
 | Ingestion async | POST | `/sources/ingest/async` | `ingest_source_async` | `enqueue_ingest_job` o `enqueue_local_ingest_job` | `IngestionRequest` | `{"job_id", "status", "message"}` |
 | Ingestion readiness | GET | `/sources/ingest/readiness` | `ingest_readiness` | checks runtime + Chroma + Neo4j + Redis + RQ worker | N/A | `{"ready", "recommendation", "checks"}` |
 | Documents catalog | GET | `/sources/documents` | `list_documents` | `SERVICE.list_documents` | `source_id?`, `tags?` | `{"source_id", "tags", "count", "documents"}` |
@@ -418,6 +420,34 @@ curl -X POST http://127.0.0.1:8000/sources/ingest/files/async \
   -F "source_type=folder" \
   -F 'filters={"domain":"qa"}' \
   -F "tags=finance,urgent"
+```
+
+## POST /sources/ingest/files/json[/async]
+
+Alternativa **MCP-friendly** a `/sources/ingest/files[/async]`: en vez de
+`multipart/form-data`, el contenido de cada archivo se envía como **base64** dentro
+de un cuerpo JSON. Esto permite que un agente de IA adjunte archivos por MCP
+(el binario multipart no mapea a argumentos JSON de una tool). Comparten el mismo
+pipeline de staging/ingesta que las variantes multipart; la versión `/async`
+encola el job igual que `/sources/ingest/files/async`.
+
+Cuerpo (`FilesIngestionJsonRequest`):
+
+- `files` (requerido): lista de objetos `{filename, content_base64, media_type?}`.
+  `content_base64` debe ser base64 válido; en caso contrario la respuesta es 422.
+- `source_type` (opcional): actualmente solo acepta `folder`.
+- `filters` (opcional): objeto JSON de filtros.
+- `tags` (opcional): array JSON de strings.
+
+El límite de tamaño (25 MB por defecto) se aplica a los **bytes decodificados**.
+base64 infla ~33%, por lo que archivos muy grandes por esta vía son poco prácticos.
+
+Ejemplo `curl` (un archivo de texto):
+
+```bash
+curl -X POST http://127.0.0.1:8000/sources/ingest/files/json \
+  -H "Content-Type: application/json" \
+  -d '{"files":[{"filename":"a.txt","content_base64":"'"$(printf 'hola' | base64)"'"}],"tags":["qa"]}'
 ```
 
 Ejemplo `curl`:
@@ -854,8 +884,8 @@ Tools publicadas (default-deny):
 | `delete_document` | `DELETE /sources/documents/{document_id}` |
 | `replace_document_tags` | `PUT /sources/documents/{document_id}/tags` |
 | `ingest_readiness` | `GET /sources/ingest/readiness` |
-| `ingest_source_files` | `POST /sources/ingest/files` |
-| `ingest_source_files_async` | `POST /sources/ingest/files/async` |
+| `ingest_files_json` | `POST /sources/ingest/files/json` |
+| `ingest_files_json_async` | `POST /sources/ingest/files/json/async` |
 | `get_job` | `GET /jobs/{job_id}` |
 | `query` | `POST /query` |
 | `retrieval_only` | `POST /query/retrieval` |
@@ -867,9 +897,12 @@ Notas de comportamiento:
   además de `/health` y `/readiness`.
 - `delete_document` es destructivo por documento y queda expuesto vía MCP por
   elección explícita; mantenga `MCP_API_TOKEN` configurado fuera de redes locales.
-- Los endpoints de subida (`ingest_source_files[/async]`) usan
-  `multipart/form-data`; sobre el transporte MCP el binario no mapea a argumentos
-  JSON, por lo que esas tools pueden quedar limitadas para subir archivos reales.
+- Para adjuntar archivos vía MCP se exponen las variantes JSON
+  `ingest_files_json[/async]`, que reciben el contenido como base64 en el cuerpo
+  (mapean a argumentos JSON que un agente puede rellenar). Las variantes multipart
+  `POST /sources/ingest/files[/async]` siguen disponibles como REST-only (las usa
+  la UI) pero **no** se exponen por MCP, porque `multipart/form-data` con binarios
+  no mapea a argumentos JSON de una tool.
 - El montaje se realiza al final de `server.py`, una vez registradas todas las
   rutas, porque `fastapi-mcp` introspecta el OpenAPI en ese momento.
 

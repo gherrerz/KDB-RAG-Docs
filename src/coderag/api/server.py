@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, cast
@@ -18,6 +20,7 @@ from coderag.core.models import (
     AdminResetRequest,
     DeleteDocumentResponse,
     DocumentContentResponse,
+    FilesIngestionJsonRequest,
     IngestionRequest,
     ListDocumentTagsResponse,
     QueryRequest,
@@ -971,6 +974,209 @@ def ingest_source_files_async(
                     "source_type": source_type,
                     "has_filters": bool(filters and filters.strip()),
                     "has_tags": bool(tags and tags.strip()),
+                    "artifact_id": artifact_id,
+                    "use_rq": SETTINGS.use_rq,
+                },
+            ),
+        ) from exc
+
+
+def _decode_uploaded_payloads(
+    request: FilesIngestionJsonRequest,
+) -> list[tuple[str, bytes, str | None]]:
+    """Decode base64 JSON file payloads into ``(filename, bytes, media_type)``.
+
+    MCP-friendly counterpart to multipart parsing: raises ``UploadIngestionError``
+    (mapped to 422 by the endpoints) when any ``content_base64`` is malformed.
+    """
+    decoded: list[tuple[str, bytes, str | None]] = []
+    for item in request.files:
+        try:
+            payload = base64.b64decode(item.content_base64, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise UploadIngestionError(
+                f"content_base64 inválido para '{item.filename}'."
+            ) from exc
+        decoded.append((item.filename, payload, item.media_type))
+    return decoded
+
+
+@app.post(
+    "/sources/ingest/files/json",
+    operation_id="ingest_files_json",
+    tags=["ingestion"],
+    summary="Run synchronous ingestion from base64 JSON files",
+    description=(
+        "MCP-friendly alternative to /sources/ingest/files: upload one or more "
+        "supported documents as base64-encoded content in a JSON body, stage "
+        "them server-side, and execute the same synchronous ingestion pipeline."
+    ),
+    responses={
+        422: {
+            "description": (
+                "Invalid base64 content, unsupported extension, "
+                "or malformed payload."
+            )
+        },
+        503: {
+            "description": (
+                "Strict runtime unavailable (for example Chroma disabled, "
+                "missing embedding provider credentials, or provider error)."
+            )
+        },
+    },
+)
+def ingest_files_json(request: FilesIngestionJsonRequest) -> dict[str, Any]:
+    """Trigger ingestion pipeline from one base64-encoded JSON batch."""
+    staged_dir: Path | None = None
+    filenames = [item.filename for item in request.files]
+    try:
+        decoded = _decode_uploaded_payloads(request)
+        captured_files = UPLOAD_INGESTION.collect_payloads(decoded)
+        staged_batch = UPLOAD_INGESTION.materialize_batch(captured_files)
+        staged_dir = staged_batch.staged_dir
+        ingestion_request = UPLOAD_INGESTION.build_request(
+            staged_dir=staged_dir,
+            source_type=request.source_type,
+            filters=request.filters,
+            tags=request.tags,
+        )
+        return SERVICE.ingest(ingestion_request)
+    except UploadIngestionError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=_format_exception_detail(
+                exc,
+                operation="ingest_files_json",
+                context={
+                    "filenames": filenames,
+                    "file_count": len(request.files),
+                    "source_type": request.source_type,
+                    "has_filters": bool(request.filters),
+                    "has_tags": bool(request.tags),
+                },
+            ),
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=_format_exception_detail(
+                exc,
+                operation="ingest_files_json",
+                context={
+                    "filenames": filenames,
+                    "file_count": len(request.files),
+                    "source_type": request.source_type,
+                    "has_filters": bool(request.filters),
+                    "has_tags": bool(request.tags),
+                    "staged_dir": str(staged_dir) if staged_dir else None,
+                },
+            ),
+        ) from exc
+    finally:
+        if staged_dir is not None:
+            UPLOAD_INGESTION.cleanup(staged_dir)
+
+
+@app.post(
+    "/sources/ingest/files/json/async",
+    operation_id="ingest_files_json_async",
+    tags=["ingestion"],
+    summary="Enqueue asynchronous ingestion from base64 JSON files",
+    description=(
+        "MCP-friendly alternative to /sources/ingest/files/async: upload one or "
+        "more supported documents as base64-encoded content in a JSON body and "
+        "enqueue asynchronous ingestion. Uploaded batches are persisted as "
+        "temporary Postgres artifacts so workers can rehydrate them."
+    ),
+    responses={
+        422: {
+            "description": (
+                "Invalid base64 content, unsupported extension, "
+                "or malformed payload."
+            )
+        },
+        500: {"description": "Queue or local async worker startup error."},
+    },
+)
+def ingest_files_json_async(
+    request: FilesIngestionJsonRequest,
+) -> dict[str, str]:
+    """Enqueue async ingestion pipeline from one base64-encoded JSON batch."""
+    artifact_id: str | None = None
+    filenames = [item.filename for item in request.files]
+    try:
+        decoded = _decode_uploaded_payloads(request)
+        captured_files = UPLOAD_INGESTION.collect_payloads(decoded)
+
+        artifact_id = RUNTIME.ingestion_artifact_store.create_uploaded_batch_artifact(
+            source_type=request.source_type,
+            origin_path_or_url=None,
+            files=_artifact_files_payload(captured_files),
+        )
+        ingestion_request = UPLOAD_INGESTION.build_request(
+            staged_dir=None,
+            source_type=request.source_type,
+            filters=request.filters,
+            tags=request.tags,
+            artifact_id=artifact_id,
+        )
+        payload = ingestion_request.model_dump()
+
+        if SETTINGS.use_rq:
+            try:
+                job_id = enqueue_ingest_job(payload)
+                message = "Upload ingestion job enqueued"
+            except Exception as exc:
+                if not _is_queue_connection_error(exc):
+                    raise
+                job_id = enqueue_local_ingest_job(payload)
+                message = (
+                    "RQ unavailable; upload ingestion job started "
+                    "(local async worker fallback)"
+                )
+        else:
+            job_id = enqueue_local_ingest_job(payload)
+            message = "Upload ingestion job started (local async worker)"
+
+        return {
+            "job_id": job_id,
+            "status": "queued",
+            "message": message,
+        }
+    except UploadIngestionError as exc:
+        if artifact_id:
+            RUNTIME.ingestion_artifact_store.mark_processing_failed(
+                artifact_id,
+                str(exc),
+            )
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except HTTPException:
+        if artifact_id:
+            RUNTIME.ingestion_artifact_store.mark_processing_failed(
+                artifact_id,
+                "HTTPException before async enqueue completed",
+            )
+        raise
+    except Exception as exc:
+        if artifact_id:
+            RUNTIME.ingestion_artifact_store.mark_processing_failed(
+                artifact_id,
+                str(exc),
+            )
+        raise HTTPException(
+            status_code=500,
+            detail=_format_exception_detail(
+                exc,
+                operation="ingest_files_json_async",
+                context={
+                    "filenames": filenames,
+                    "file_count": len(request.files),
+                    "source_type": request.source_type,
+                    "has_filters": bool(request.filters),
+                    "has_tags": bool(request.tags),
                     "artifact_id": artifact_id,
                     "use_rq": SETTINGS.use_rq,
                 },

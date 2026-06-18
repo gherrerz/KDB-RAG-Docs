@@ -73,6 +73,15 @@
   `MCP_SERVER_NAME`. Se añaden `fastapi-mcp==0.4.0` y `mcp==1.23.0`. Nuevo módulo
   `src/coderag/api/mcp_server.py`, tests `tests/test_mcp.py` y smoke
   `scripts/mcp_smoke.sh`.
+- Nuevos endpoints de ingesta por archivos vía JSON base64
+  `POST /sources/ingest/files/json` y `POST /sources/ingest/files/json/async`
+  (modelos `UploadedFilePayload`/`FilesIngestionJsonRequest`): alternativa
+  MCP-friendly a los endpoints multipart que recibe el contenido como base64 en el
+  cuerpo, reutilizando el mismo pipeline de staging/ingesta. El servidor MCP pasa a
+  exponer estas variantes (`ingest_files_json[/async]`) en lugar de las multipart
+  (`ingest_source_files[/async]`), que quedan como REST-only para la UI porque el
+  binario `multipart/form-data` no mapea a argumentos JSON de una tool MCP. Nuevo
+  test `tests/test_upload_ingestion_json.py`.
 
 ### Fixed
 

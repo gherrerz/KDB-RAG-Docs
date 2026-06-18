@@ -30,12 +30,16 @@ def test_setup_mcp_exposes_only_included_operations() -> None:
     names = {tool.name for tool in mcp.tools}
 
     assert names == set(MCP_INCLUDED_OPERATIONS)
-    assert {"query", "delete_document", "ingest_source_files",
-            "replace_document_tags"} <= names
+    assert {"query", "delete_document", "ingest_files_json",
+            "ingest_files_json_async", "replace_document_tags"} <= names
     forbidden = {
         "reset_sources",
         "ingest_source",
         "ingest_source_async",
+        # Las variantes multipart quedan como REST-only (inservibles vía MCP);
+        # MCP expone solo las variantes JSON base64.
+        "ingest_source_files",
+        "ingest_source_files_async",
         "ingest_tdm",
         "query_tdm",
         "tdm_service_catalog",

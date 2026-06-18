@@ -255,6 +255,8 @@ Variables opcionales para apuntar la UI a una API distinta:
 - `POST /sources/ingest`
 - `POST /sources/ingest/files`
 - `POST /sources/ingest/files/async`
+- `POST /sources/ingest/files/json` (alternativa JSON base64, usable por MCP)
+- `POST /sources/ingest/files/json/async` (alternativa JSON base64, usable por MCP)
 - `POST /admin/reset`
 - `POST /sources/ingest/async`
 - `GET /sources/ingest/readiness`

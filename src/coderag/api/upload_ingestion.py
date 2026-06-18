@@ -59,7 +59,13 @@ class UploadIngestionAdapter:
 
     def stage_uploads_batch(self, files: list[UploadFile]) -> StagedUploadBatch:
         """Persist uploaded files into one isolated temporary directory."""
-        captured_files = self.collect_uploads(files)
+        return self.materialize_batch(self.collect_uploads(files))
+
+    def materialize_batch(
+        self,
+        captured_files: list[StagedUploadFile],
+    ) -> StagedUploadBatch:
+        """Write already-captured payloads into one isolated temporary dir."""
         upload_dir = self.base_dir / uuid.uuid4().hex
         upload_dir.mkdir(parents=True, exist_ok=False)
         try:
@@ -74,7 +80,7 @@ class UploadIngestionAdapter:
         return StagedUploadBatch(staged_dir=upload_dir, files=captured_files)
 
     def collect_uploads(self, files: list[UploadFile]) -> list[StagedUploadFile]:
-        """Read uploaded files into memory for artifact-backed flows."""
+        """Read multipart uploaded files into memory for staging/artifacts."""
         if not files:
             raise UploadIngestionError(
                 "Upload ingestion requires at least one file."
@@ -84,30 +90,77 @@ class UploadIngestionAdapter:
         captured_files: list[StagedUploadFile] = []
         for ordinal, upload in enumerate(files):
             raw_name = upload.filename or "upload.txt"
-            safe_base_name = self._sanitize_filename(raw_name)
-            safe_name = self._dedupe_filename(safe_base_name, used_names)
-            self._validate_extension(safe_name)
-
             payload = upload.file.read(self.max_upload_bytes + 1)
-            if len(payload) > self.max_upload_bytes:
-                raise UploadIngestionError(
-                    "Uploaded file exceeds maximum size "
-                    f"({self.max_upload_bytes} bytes): {safe_name}"
-                )
-
             captured_files.append(
-                StagedUploadFile(
+                self._capture_payload(
                     ordinal=ordinal,
-                    original_filename=raw_name,
-                    staged_filename=safe_name,
-                    media_type=upload.content_type,
-                    size_bytes=len(payload),
-                    content_hash=hashlib.sha256(payload).hexdigest(),
+                    raw_name=raw_name,
                     payload=payload,
+                    media_type=upload.content_type,
+                    used_names=used_names,
                 )
             )
 
         return captured_files
+
+    def collect_payloads(
+        self,
+        items: list[tuple[str, bytes, str | None]],
+    ) -> list[StagedUploadFile]:
+        """Capture already-decoded ``(filename, bytes, media_type)`` items.
+
+        Runs the same sanitization, dedup, extension and size validation as
+        :meth:`collect_uploads`, but over content already in memory (for
+        JSON/base64 ingestion flows that do not use multipart ``UploadFile``).
+        """
+        if not items:
+            raise UploadIngestionError(
+                "Upload ingestion requires at least one file."
+            )
+
+        used_names: set[str] = set()
+        captured_files: list[StagedUploadFile] = []
+        for ordinal, (raw_name, payload, media_type) in enumerate(items):
+            captured_files.append(
+                self._capture_payload(
+                    ordinal=ordinal,
+                    raw_name=raw_name or "upload.txt",
+                    payload=payload,
+                    media_type=media_type,
+                    used_names=used_names,
+                )
+            )
+
+        return captured_files
+
+    def _capture_payload(
+        self,
+        ordinal: int,
+        raw_name: str,
+        payload: bytes,
+        media_type: str | None,
+        used_names: set[str],
+    ) -> StagedUploadFile:
+        """Validate one in-memory payload and build its staged descriptor."""
+        safe_base_name = self._sanitize_filename(raw_name)
+        safe_name = self._dedupe_filename(safe_base_name, used_names)
+        self._validate_extension(safe_name)
+
+        if len(payload) > self.max_upload_bytes:
+            raise UploadIngestionError(
+                "Uploaded file exceeds maximum size "
+                f"({self.max_upload_bytes} bytes): {safe_name}"
+            )
+
+        return StagedUploadFile(
+            ordinal=ordinal,
+            original_filename=raw_name,
+            staged_filename=safe_name,
+            media_type=media_type,
+            size_bytes=len(payload),
+            content_hash=hashlib.sha256(payload).hexdigest(),
+            payload=payload,
+        )
 
     def parse_filters(self, filters_raw: str | None) -> dict[str, Any]:
         """Parse optional JSON filters string from multipart form field."""
