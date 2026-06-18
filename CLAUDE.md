@@ -81,6 +81,13 @@ Catálogo: `GET /sources/documents`, `GET /sources/tags`,
 `PUT /sources/documents/{id}/tags`, `DELETE /sources/documents/{id}`.
 TDM: `POST /tdm/ingest`, `POST /tdm/query`, `GET /tdm/catalog/...`,
 `POST /tdm/virtualization/preview`, `GET /tdm/synthetic/profile/{table}`.
+MCP: `POST/GET /mcp` — servidor MCP (envoltura `fastapi-mcp`) que coexiste con la
+API REST en el mismo proceso/puerto y deriva sus tools del OpenAPI
+(nombre = `operation_id`). Solo expone consulta/lectura, gestión de documentos e
+ingesta por archivos (default-deny vía `include_operations`); quedan fuera
+`/admin/reset`, la ingesta por payload y `/tdm/*`. Config: `MCP_ENABLED`,
+`MCP_API_TOKEN` (header `X-MCP-Token`), `MCP_MOUNT_PATH`, `MCP_SERVER_NAME`.
+Impl: `src/coderag/api/mcp_server.py`.
 
 Shape de respuesta de consulta: `answer`, `citations`, `graph_paths`, `diagnostics`.
 

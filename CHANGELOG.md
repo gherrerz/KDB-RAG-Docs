@@ -59,6 +59,20 @@
 - Nuevo endpoint `GET /sources/documents/{document_id}/content` para
   recuperar el contenido textual completo persistido de un documento
   ingestado sin reconstruirlo desde chunks.
+- Soporte MCP (Model Context Protocol) coexistiendo con la API REST: nuevo
+  endpoint `POST/GET /mcp` (envoltura `fastapi-mcp` montada sobre la misma app
+  FastAPI, transporte HTTP streamable) que permite a agentes de IA descubrir
+  (`tools/list`) y ejecutar (`tools/call`) un subconjunto de operaciones derivado
+  del OpenAPI (nombre de tool = `operation_id`). Se publican vía
+  `include_operations` (default-deny): `list_documents`, `list_document_tags`,
+  `get_document_content`, `delete_document`, `replace_document_tags`,
+  `ingest_readiness`, `ingest_source_files`, `ingest_source_files_async`,
+  `get_job`, `query` y `retrieval_only`; quedan fuera `/admin/reset`, la ingesta
+  por payload (`/sources/ingest[/async]`) y los endpoints `/tdm/*`. Configurable
+  con `MCP_ENABLED`, `MCP_API_TOKEN` (header `X-MCP-Token`), `MCP_MOUNT_PATH` y
+  `MCP_SERVER_NAME`. Se añaden `fastapi-mcp==0.4.0` y `mcp==1.23.0`. Nuevo módulo
+  `src/coderag/api/mcp_server.py`, tests `tests/test_mcp.py` y smoke
+  `scripts/mcp_smoke.sh`.
 
 ### Fixed
 

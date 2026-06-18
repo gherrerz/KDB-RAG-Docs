@@ -596,6 +596,7 @@ def list_documents(
 
 @app.get(
     "/sources/tags",
+    operation_id="list_document_tags",
     tags=["ingestion"],
     summary="List persisted document tags",
     description=(
@@ -612,6 +613,7 @@ def list_document_tags(
 
 app.get(
     "/sources/documents",
+    operation_id="list_documents",
     tags=["ingestion"],
     summary="List ingested documents",
     description=(
@@ -623,6 +625,7 @@ app.get(
 
 @app.get(
     "/sources/documents/{document_id}/content",
+    operation_id="get_document_content",
     tags=["ingestion"],
     summary="Get full persisted document content",
     description=(
@@ -646,6 +649,7 @@ def get_document_content(document_id: str) -> DocumentContentResponse:
 
 @app.delete(
     "/sources/documents/{document_id}",
+    operation_id="delete_document",
     tags=["ingestion"],
     summary="Delete one ingested document",
     description=(
@@ -672,6 +676,7 @@ def delete_document(document_id: str) -> DeleteDocumentResponse:
 
 @app.put(
     "/sources/documents/{document_id}/tags",
+    operation_id="replace_document_tags",
     tags=["ingestion"],
     summary="Replace tags for one ingested document",
     description=(
@@ -698,6 +703,7 @@ def replace_document_tags(
 
 @app.get(
     "/sources/ingest/readiness",
+    operation_id="ingest_readiness",
     tags=["ingestion"],
     summary="Get ingestion readiness diagnostics",
     description=(
@@ -780,6 +786,7 @@ def ingest_source(request: IngestionRequest) -> dict[str, Any]:
 
 @app.post(
     "/sources/ingest/files",
+    operation_id="ingest_source_files",
     tags=["ingestion"],
     summary="Run synchronous ingestion from uploaded files",
     description=(
@@ -863,6 +870,7 @@ def ingest_source_files(
 
 @app.post(
     "/sources/ingest/files/async",
+    operation_id="ingest_source_files_async",
     tags=["ingestion"],
     summary="Enqueue asynchronous ingestion from uploaded files",
     description=(
@@ -1038,6 +1046,7 @@ def ingest_source_async(request: IngestionRequest) -> dict[str, str]:
 
 @app.get(
     "/jobs/{job_id}",
+    operation_id="get_job",
     tags=["ingestion"],
     summary="Get ingestion job status",
     description=(
@@ -1082,6 +1091,7 @@ def get_job(job_id: str) -> dict[str, Any]:
 
 @app.post(
     "/query",
+    operation_id="query",
     tags=["query"],
     summary="Run hybrid query",
     description=(
@@ -1108,6 +1118,7 @@ def query(request: QueryRequest) -> dict:
 
 @app.post(
     "/query/retrieval",
+    operation_id="retrieval_only",
     tags=["query"],
     summary="Run query (retrieval alias)",
     description=(
@@ -1342,3 +1353,12 @@ def tdm_synthetic_profile(
         )
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+# Montaje del servidor MCP al final del módulo: fastapi-mcp introspecta el
+# OpenAPI en este punto, por lo que todas las rutas @app ya deben estar
+# registradas. Coexiste con la API REST en el mismo proceso/puerto.
+if SETTINGS.mcp_enabled:
+    from coderag.api.mcp_server import setup_mcp
+
+    setup_mcp(app)

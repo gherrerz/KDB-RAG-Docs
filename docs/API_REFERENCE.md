@@ -64,6 +64,7 @@ de la red puede consumirse usando la IP del host.
 | TDM table catalog | GET | `/tdm/catalog/tables/{table_name}` | `tdm_table_catalog` | `SERVICE.get_tdm_table_catalog` | `table_name` + `source_id?` | `dict` |
 | TDM virtualization preview | POST | `/tdm/virtualization/preview` | `preview_tdm_virtualization` | `SERVICE.preview_tdm_virtualization` | `TdmQueryRequest` | `dict` |
 | TDM synthetic profile | GET | `/tdm/synthetic/profile/{table_name}` | `tdm_synthetic_profile` | `SERVICE.get_tdm_synthetic_profile` | `table_name` + `source_id?` + `target_rows?` | `dict` |
+| Servidor MCP | POST/GET | `/mcp` | `setup_mcp` (envoltura MCP del OpenAPI) | N/A (deriva tools del OpenAPI) | MCP JSON-RPC | MCP JSON-RPC |
 
 ## Esquemas principales
 
@@ -827,6 +828,50 @@ Alias funcional de `/query` para diagnostico y compatibilidad.
 
 - Usa el mismo request schema (`QueryRequest`).
 - Retorna el mismo response schema (`QueryResponse`).
+
+## POST/GET /mcp (servidor MCP)
+
+Servidor MCP (Model Context Protocol) montado sobre la misma app FastAPI
+(`fastapi-mcp`), coexistiendo con la API REST en el mismo proceso y puerto.
+Cualquier agente de IA compatible con MCP puede conectarse a `/mcp` (transporte
+HTTP streamable) para **descubrir** (`tools/list`) y **ejecutar** (`tools/call`)
+las operaciones expuestas. Las tools se derivan automáticamente del OpenAPI y su
+nombre es el `operation_id` de cada ruta.
+
+- Implementación: `src/coderag/api/mcp_server.py` (`setup_mcp`)
+- Header de auth: `X-MCP-Token: str` (requerido solo si `MCP_API_TOKEN` está configurado)
+- Error responses:
+  - `403`: token MCP inválido cuando `MCP_API_TOKEN` está configurado (`detail` es objeto)
+  - `404`: servidor MCP deshabilitado (`MCP_ENABLED=false`) (`detail` es objeto)
+
+Tools publicadas (default-deny):
+
+| Tool (`operation_id`) | Endpoint subyacente |
+| --- | --- |
+| `list_documents` | `GET /sources/documents` |
+| `list_document_tags` | `GET /sources/tags` |
+| `get_document_content` | `GET /sources/documents/{document_id}/content` |
+| `delete_document` | `DELETE /sources/documents/{document_id}` |
+| `replace_document_tags` | `PUT /sources/documents/{document_id}/tags` |
+| `ingest_readiness` | `GET /sources/ingest/readiness` |
+| `ingest_source_files` | `POST /sources/ingest/files` |
+| `ingest_source_files_async` | `POST /sources/ingest/files/async` |
+| `get_job` | `GET /jobs/{job_id}` |
+| `query` | `POST /query` |
+| `retrieval_only` | `POST /query/retrieval` |
+
+Notas de comportamiento:
+
+- **Excluidos** del servidor MCP: `POST /admin/reset`, la ingesta por payload
+  (`/sources/ingest`, `/sources/ingest/async`) y todos los endpoints `/tdm/*`,
+  además de `/health` y `/readiness`.
+- `delete_document` es destructivo por documento y queda expuesto vía MCP por
+  elección explícita; mantenga `MCP_API_TOKEN` configurado fuera de redes locales.
+- Los endpoints de subida (`ingest_source_files[/async]`) usan
+  `multipart/form-data`; sobre el transporte MCP el binario no mapea a argumentos
+  JSON, por lo que esas tools pueden quedar limitadas para subir archivos reales.
+- El montaje se realiza al final de `server.py`, una vez registradas todas las
+  rutas, porque `fastapi-mcp` introspecta el OpenAPI en ese momento.
 
 ## Referencias cruzadas utiles
 

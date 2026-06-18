@@ -265,6 +265,13 @@ Variables opcionales para apuntar la UI a una API distinta:
 - `GET /jobs/{id}`
 - `POST /query`
 - `POST /query/retrieval`
+- `POST/GET /mcp` (servidor MCP para agentes de IA; envoltura `fastapi-mcp` sobre la misma app)
+
+El endpoint `/mcp` coexiste con la API REST en el mismo proceso/puerto y deja que
+cualquier agente de IA descubra (`tools/list`) y ejecute (`tools/call`) un
+subconjunto de operaciones de consulta/lectura, gestión de documentos e ingesta
+por archivos. Se controla con `MCP_ENABLED` y `MCP_API_TOKEN` (header
+`X-MCP-Token`). Ver `docs/API_REFERENCE.md` para la lista de tools.
 
 `GET /sources/ingest/readiness` expone checks estructurados de Chroma y del
 backend lexico Postgres para diagnostico operativo, incluyendo `signal`,

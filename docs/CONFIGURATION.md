@@ -44,6 +44,32 @@ y opera con Postgres como store efectivo de metadata documental.
 - La UI desktop y cualquier script operador que invoque `POST /admin/reset`
   deben usar el mismo `ADMIN_RESET_TOKEN` configurado en la API protegida.
 
+### Servidor MCP
+
+Expone un subconjunto de operaciones de la API como tools MCP en `/mcp`
+(envoltura automática con `fastapi-mcp`, montada sobre la misma app). Ver
+`docs/API_REFERENCE.md`.
+
+- `MCP_ENABLED`: habilita el montaje de `/mcp`. Default: `true`.
+- `MCP_API_TOKEN`: token requerido en el header `X-MCP-Token` para acceder a
+  `/mcp`. Default: vacío.
+- `MCP_MOUNT_PATH`: path de montaje del servidor MCP. Default: `/mcp`.
+- `MCP_SERVER_NAME`: nombre anunciado del servidor MCP. Default: `docrag-mcp`.
+
+Notas operativas:
+
+- Si `MCP_ENABLED=true` y `MCP_API_TOKEN` está vacío, `/mcp` queda accesible sin
+  autenticación (solo protegido por el feature flag) y se emite una advertencia
+  de seguridad al construir settings. Defina `MCP_API_TOKEN` antes de exponerlo
+  fuera de una red confiable.
+- Solo se publican operaciones de consulta, lectura, gestión de documentos e
+  ingesta por archivos (filtro `include_operations`, default-deny). Quedan fuera
+  `POST /admin/reset`, la ingesta por payload (`/sources/ingest`,
+  `/sources/ingest/async`) y todos los endpoints TDM (`/tdm/*`).
+- `delete_document` (`DELETE /sources/documents/{document_id}`) sí se expone como
+  tool MCP: es una operación destructiva por documento, así que se recomienda
+  mantener `MCP_API_TOKEN` configurado en cualquier entorno no local.
+
 - `data_dir`: carpeta de trabajo local para staging legacy puntual,
   uploads transitorios y artefactos no-relacionales; no se usa como
   backend de metadata runtime

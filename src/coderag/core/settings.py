@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import binascii
 import os
+import warnings
 from pathlib import Path
 from typing import Literal
 
@@ -316,6 +317,19 @@ class Settings(BaseSettings):
     admin_reset_token: str = Field(
         default_factory=lambda: _env_str("ADMIN_RESET_TOKEN", "") or ""
     )
+    mcp_enabled: bool = Field(
+        default_factory=lambda: _env_bool("MCP_ENABLED", True)
+    )
+    mcp_api_token: str = Field(
+        default_factory=lambda: _env_str("MCP_API_TOKEN", "") or ""
+    )
+    mcp_mount_path: str = Field(
+        default_factory=lambda: _env_str("MCP_MOUNT_PATH", "/mcp") or "/mcp"
+    )
+    mcp_server_name: str = Field(
+        default_factory=lambda: _env_str("MCP_SERVER_NAME", "docrag-mcp")
+        or "docrag-mcp"
+    )
     redis_url: str = Field(
         default_factory=lambda: (
             _env_str("REDIS_URL", "redis://localhost:6379/0")
@@ -441,6 +455,18 @@ class Settings(BaseSettings):
         if self.admin_reset_enabled and not self.admin_reset_token:
             raise ValueError(
                 "ADMIN_RESET_TOKEN is required when ADMIN_RESET_ENABLED=true."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def warn_unprotected_mcp_endpoint(self) -> "Settings":
+        """Advertir si /mcp queda habilitado sin token de autenticación."""
+        self.mcp_api_token = (self.mcp_api_token or "").strip()
+        if self.mcp_enabled and not self.mcp_api_token:
+            warnings.warn(
+                "MCP_ENABLED=true sin MCP_API_TOKEN: /mcp quedará accesible "
+                "sin autenticación. Defina MCP_API_TOKEN para protegerlo.",
+                stacklevel=2,
             )
         return self
 
