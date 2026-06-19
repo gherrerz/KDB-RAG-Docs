@@ -86,7 +86,9 @@ API REST en el mismo proceso/puerto y deriva sus tools del OpenAPI
 (nombre = `operation_id`). Solo expone consulta/lectura, gestión de documentos e
 ingesta por archivos vía JSON base64 (`ingest_files_json[/async]`, default-deny vía
 `include_operations`); quedan fuera `/admin/reset`, la ingesta por payload, las
-variantes multipart de subida (REST-only para la UI) y `/tdm/*`. Config: `MCP_ENABLED`,
+variantes multipart de subida (REST-only para la UI) y `/tdm/*`. Reenvía headers de
+identidad opcionales `x-role-id`/`x-user-id`/`x-country-id` (pass-through, allowlist de
+`fastapi-mcp`; ver `src/coderag/api/identity_headers.py`). Config: `MCP_ENABLED`,
 `MCP_API_TOKEN` (header `X-MCP-Token`), `MCP_MOUNT_PATH`, `MCP_SERVER_NAME`.
 Impl: `src/coderag/api/mcp_server.py`.
 

@@ -870,6 +870,11 @@ nombre es el `operation_id` de cada ruta.
 
 - Implementación: `src/coderag/api/mcp_server.py` (`setup_mcp`)
 - Header de auth: `X-MCP-Token: str` (requerido solo si `MCP_API_TOKEN` está configurado)
+- Headers de identidad (opcionales, pass-through): `x-role-id`, `x-user-id`,
+  `x-country-id`. Se fijan en la conexión `/mcp` (cliente MCP o gateway) y el
+  servidor los **reenvía** a cada llamada interna de tool (allowlist de
+  `fastapi-mcp`). Están declarados en el OpenAPI de cada operación expuesta. Por
+  limitación de `fastapi-mcp` 0.4.0 no aparecen como argumentos JSON de la tool.
 - Error responses:
   - `403`: token MCP inválido cuando `MCP_API_TOKEN` está configurado (`detail` es objeto)
   - `404`: servidor MCP deshabilitado (`MCP_ENABLED=false`) (`detail` es objeto)

@@ -82,6 +82,11 @@
   (`ingest_source_files[/async]`), que quedan como REST-only para la UI porque el
   binario `multipart/form-data` no mapea a argumentos JSON de una tool MCP. Nuevo
   test `tests/test_upload_ingestion_json.py`.
+- Headers de identidad opcionales en los servicios MCP: `x-role-id`, `x-user-id` y
+  `x-country-id` se reenvían (pass-through) desde la conexión `/mcp` hacia cada tool
+  vía el allowlist de `fastapi-mcp` y se declaran en el OpenAPI de los 11 endpoints
+  expuestos. Nuevo módulo `src/coderag/api/identity_headers.py` (dependencia
+  `identity_headers` + `IDENTITY_HEADER_NAMES`).
 
 ### Fixed
 

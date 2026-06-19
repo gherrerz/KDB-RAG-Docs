@@ -8,9 +8,18 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, cast
 
-from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
+from fastapi import (
+    Depends,
+    FastAPI,
+    File,
+    Form,
+    Header,
+    HTTPException,
+    UploadFile,
+)
 from fastapi.openapi.utils import get_openapi
 
+from coderag.api.identity_headers import identity_headers
 from coderag.api.upload_ingestion import (
     StagedUploadFile,
     UploadIngestionAdapter,
@@ -600,6 +609,7 @@ def list_documents(
 @app.get(
     "/sources/tags",
     operation_id="list_document_tags",
+    dependencies=[Depends(identity_headers)],
     tags=["ingestion"],
     summary="List persisted document tags",
     description=(
@@ -617,6 +627,7 @@ def list_document_tags(
 app.get(
     "/sources/documents",
     operation_id="list_documents",
+    dependencies=[Depends(identity_headers)],
     tags=["ingestion"],
     summary="List ingested documents",
     description=(
@@ -629,6 +640,7 @@ app.get(
 @app.get(
     "/sources/documents/{document_id}/content",
     operation_id="get_document_content",
+    dependencies=[Depends(identity_headers)],
     tags=["ingestion"],
     summary="Get full persisted document content",
     description=(
@@ -653,6 +665,7 @@ def get_document_content(document_id: str) -> DocumentContentResponse:
 @app.delete(
     "/sources/documents/{document_id}",
     operation_id="delete_document",
+    dependencies=[Depends(identity_headers)],
     tags=["ingestion"],
     summary="Delete one ingested document",
     description=(
@@ -680,6 +693,7 @@ def delete_document(document_id: str) -> DeleteDocumentResponse:
 @app.put(
     "/sources/documents/{document_id}/tags",
     operation_id="replace_document_tags",
+    dependencies=[Depends(identity_headers)],
     tags=["ingestion"],
     summary="Replace tags for one ingested document",
     description=(
@@ -707,6 +721,7 @@ def replace_document_tags(
 @app.get(
     "/sources/ingest/readiness",
     operation_id="ingest_readiness",
+    dependencies=[Depends(identity_headers)],
     tags=["ingestion"],
     summary="Get ingestion readiness diagnostics",
     description=(
@@ -1004,6 +1019,7 @@ def _decode_uploaded_payloads(
 @app.post(
     "/sources/ingest/files/json",
     operation_id="ingest_files_json",
+    dependencies=[Depends(identity_headers)],
     tags=["ingestion"],
     summary="Run synchronous ingestion from base64 JSON files",
     description=(
@@ -1083,6 +1099,7 @@ def ingest_files_json(request: FilesIngestionJsonRequest) -> dict[str, Any]:
 @app.post(
     "/sources/ingest/files/json/async",
     operation_id="ingest_files_json_async",
+    dependencies=[Depends(identity_headers)],
     tags=["ingestion"],
     summary="Enqueue asynchronous ingestion from base64 JSON files",
     description=(
@@ -1253,6 +1270,7 @@ def ingest_source_async(request: IngestionRequest) -> dict[str, str]:
 @app.get(
     "/jobs/{job_id}",
     operation_id="get_job",
+    dependencies=[Depends(identity_headers)],
     tags=["ingestion"],
     summary="Get ingestion job status",
     description=(
@@ -1298,6 +1316,7 @@ def get_job(job_id: str) -> dict[str, Any]:
 @app.post(
     "/query",
     operation_id="query",
+    dependencies=[Depends(identity_headers)],
     tags=["query"],
     summary="Run hybrid query",
     description=(
@@ -1325,6 +1344,7 @@ def query(request: QueryRequest) -> dict:
 @app.post(
     "/query/retrieval",
     operation_id="retrieval_only",
+    dependencies=[Depends(identity_headers)],
     tags=["query"],
     summary="Run query (retrieval alias)",
     description=(

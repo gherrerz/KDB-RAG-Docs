@@ -71,6 +71,9 @@ Notas operativas:
   variantes multipart (`/sources/ingest/files[/async]`) siguen como REST-only para
   la UI y **no** se exponen por MCP, porque el binario multipart no mapea a
   argumentos JSON de una tool.
+- Headers de identidad opcionales (`x-role-id`, `x-user-id`, `x-country-id`): se
+  fijan en la conexión `/mcp` y el servidor los reenvía (pass-through) a cada tool.
+  No se exige su presencia. Definidos en `src/coderag/api/identity_headers.py`.
 - `delete_document` (`DELETE /sources/documents/{document_id}`) sí se expone como
   tool MCP: es una operación destructiva por documento, así que se recomienda
   mantener `MCP_API_TOKEN` configurado en cualquier entorno no local.
