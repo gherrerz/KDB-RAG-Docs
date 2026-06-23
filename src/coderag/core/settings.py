@@ -44,6 +44,50 @@ def _env_bool(name: str, default: bool) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
+# Sufijo de variable de entorno por ambiente activo. Permite apuntar a
+# servidores y credenciales distintos por entorno (servidores separados).
+_ENV_SUFFIX_BY_ENVIRONMENT = {
+    "development": "DEV",
+    "test": "TEST",
+    "production": "PROD",
+}
+
+# Campos de infraestructura cuyas variantes con sufijo se resuelven por
+# entorno (endpoints y credenciales). La variable base es el nombre en
+# mayúsculas (p.ej. ``chroma_host`` -> ``CHROMA_HOST`` / ``CHROMA_HOST_TEST``).
+# ``runtime_environment`` queda excluido a propósito: decide el sufijo.
+_ENV_SCOPED_INFRA_FIELDS = (
+    "chroma_mode",
+    "chroma_host",
+    "chroma_port",
+    "chroma_token",
+    "chroma_username",
+    "chroma_password",
+    "chroma_collection",
+    "postgres_host",
+    "postgres_port",
+    "postgres_db",
+    "postgres_user",
+    "postgres_password",
+    "neo4j_uri",
+    "neo4j_user",
+    "neo4j_password",
+)
+
+
+def _active_runtime_environment() -> str:
+    """Resolve the active runtime environment (no suffix applies to it)."""
+    raw = (os.getenv("RUNTIME_ENVIRONMENT") or "development").strip().lower()
+    if raw not in _ENV_SUFFIX_BY_ENVIRONMENT:
+        return "development"
+    return raw
+
+
+def _active_env_suffix() -> str:
+    """Return the env-var suffix for the active runtime environment."""
+    return _ENV_SUFFIX_BY_ENVIRONMENT[_active_runtime_environment()]
+
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -186,7 +230,7 @@ class Settings(BaseSettings):
     )
     gemini_answer_model: str = Field(
         default_factory=lambda: (
-            _env_str("GEMINI_ANSWER_MODEL", "gemini-2.0-flash")
+            _env_str("GEMINI_ANSWER_MODEL", "gemini-2.5-flash")
             or "gemini-2.0-flash"
         )
     )
@@ -327,7 +371,7 @@ class Settings(BaseSettings):
         default_factory=lambda: _env_str("MCP_MOUNT_PATH", "/mcp") or "/mcp"
     )
     mcp_server_name: str = Field(
-        default_factory=lambda: _env_str("MCP_SERVER_NAME", "docrag-mcp")
+        default_factory=lambda: _env_str("MCP_SERVER_NAME", "documents-kdb-mcp")
         or "docrag-mcp"
     )
     redis_url: str = Field(
@@ -339,6 +383,27 @@ class Settings(BaseSettings):
     rq_ingest_job_timeout_sec: int = Field(
         default_factory=lambda: _env_int("RQ_INGEST_JOB_TIMEOUT_SEC", 900)
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _resolve_env_scoped_infra(cls, data: object) -> object:
+        """Resolve per-environment variants of infra URLs and credentials.
+
+        Precedence per field: ``{NAME}_{SUFFIX}`` -> ``{NAME}`` -> default.
+        When the suffixed variant for the active ``RUNTIME_ENVIRONMENT`` is
+        present, it is injected over the base field key before validation so
+        the rest of the model consumes it normally. Pydantic-settings reads
+        the base env var by field name, so this override must run here (the
+        ``default_factory`` only fires when the base var is absent).
+        """
+        if not isinstance(data, dict):
+            return data
+        suffix = _active_env_suffix()
+        for field_name in _ENV_SCOPED_INFRA_FIELDS:
+            scoped = os.getenv(f"{field_name.upper()}_{suffix}")
+            if scoped is not None and scoped.strip() != "":
+                data[field_name] = scoped
+        return data
 
     @field_validator("rq_ingest_job_timeout_sec")
     @classmethod

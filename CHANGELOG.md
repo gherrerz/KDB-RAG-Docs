@@ -4,6 +4,16 @@
 
 ## [Unreleased]
 
+### Added
+
+- Resolución de URLs y credenciales de infraestructura (Chroma, Postgres, Neo4j)
+  diferenciada por entorno mediante variables con sufijo `_DEV`/`_TEST`/`_PROD`,
+  gobernadas por `RUNTIME_ENVIRONMENT`. Precedencia por variable:
+  `{VAR}_{SUFIJO}` → `{VAR}` (base, fallback) → default. Implementado en el
+  `model_validator(mode="before")` de `settings.py`; documentado en
+  `docs/CONFIGURATION.md` y `.env.example`. Sin breaking change: si solo existe
+  la variable base, el comportamiento es idéntico al previo.
+
 ### Security
 
 - Se corrigen vulnerabilidades reportadas por Trivy en dependencias de runtime

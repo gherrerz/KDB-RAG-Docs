@@ -32,6 +32,44 @@ y opera con Postgres como store efectivo de metadata documental.
 - Runbook operativo de Fase 6:
   [migration-guides/alembic-shared-db-cutover.md](migration-guides/alembic-shared-db-cutover.md).
 
+## Infraestructura por entorno (URLs y credenciales) — `implemented`
+
+Las conexiones de infraestructura (Chroma, Postgres y Neo4j) se diferencian por
+entorno mediante **variables con sufijo**, gobernadas por `RUNTIME_ENVIRONMENT`.
+Esto permite apuntar cada entorno a servidores y credenciales distintos
+(escenario de servidores separados) sin tocar código.
+
+Precedencia de resolución, por variable:
+
+1. `{VAR}_{SUFIJO}` (variante del entorno activo, p.ej. `CHROMA_HOST_TEST`)
+2. `{VAR}` (variable base, *fallback* — comportamiento previo)
+3. default codificado en `settings.py`
+
+Mapeo de sufijos:
+
+| `RUNTIME_ENVIRONMENT` | Sufijo |
+| --------------------- | ------ |
+| `development`         | `_DEV` |
+| `test` (QA)           | `_TEST` |
+| `production`          | `_PROD` |
+
+Variables suffixables (endpoints **y** credenciales):
+
+- Chroma: `CHROMA_MODE`, `CHROMA_HOST`, `CHROMA_PORT`, `CHROMA_TOKEN`,
+  `CHROMA_USERNAME`, `CHROMA_PASSWORD`, `CHROMA_COLLECTION`.
+- Postgres: `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_DB`, `POSTGRES_USER`,
+  `POSTGRES_PASSWORD`.
+- Neo4j: `NEO4J_URI`, `NEO4J_USER`, `NEO4J_PASSWORD`.
+
+`RUNTIME_ENVIRONMENT` **no** lleva sufijo (es quien lo decide). Parámetros
+no-infra (pools, batch sizes, FTS, LLM, MCP, flags TDM) permanecen globales y
+**no** se resuelven por sufijo. La resolución se aplica en el `model_validator`
+`mode="before"` de `settings.py` (`_resolve_env_scoped_infra`), antes de la
+validación, por lo que `resolve_postgres_dsn()` y los clientes consumen el valor
+ya resuelto. Como `SETTINGS` se construye una vez al import, cambiar de entorno
+requiere reiniciar el proceso. Mantén las credenciales reales fuera de git (solo
+placeholders en `.env.example`).
+
 ## Parameters
 
 ## Controles administrativos
