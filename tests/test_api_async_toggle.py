@@ -655,6 +655,7 @@ def test_replace_document_tags_endpoint_updates_catalog_immediately() -> None:
         assert replace_body["source_id"] == source_id
         assert replace_body["old_tags"] == ["finance", "urgent"]
         assert replace_body["new_tags"] == ["legal", "approved"]
+        assert replace_body["created"] is False
 
         updated_catalog = client.get(f"/sources/documents?source_id={source_id}")
         assert updated_catalog.status_code == 200
@@ -695,7 +696,10 @@ def test_replace_document_tags_endpoint_returns_404_for_missing_document() -> No
     )
 
     assert response.status_code == 404
-    assert response.json()["detail"] == "Document not found: missing-document"
+    detail = response.json()["detail"]
+    assert detail["error"] == "DOCS_NOT_FOUND"
+    assert detail["message"] == "Document not found: missing-document"
+    assert detail["retryable"] is False
 
 
 def test_get_document_content_endpoint_returns_full_persisted_text() -> None:
@@ -762,7 +766,10 @@ def test_get_document_content_endpoint_returns_404_for_unknown_document() -> Non
     response = client.get("/sources/documents/missing-document/content")
 
     assert response.status_code == 404
-    assert response.json()["detail"] == "Document not found: missing-document"
+    detail = response.json()["detail"]
+    assert detail["error"] == "DOCS_NOT_FOUND"
+    assert detail["message"] == "Document not found: missing-document"
+    assert detail["retryable"] is False
 
 
 def test_delete_document_endpoint_removes_one_persisted_document() -> None:
@@ -805,6 +812,7 @@ def test_delete_document_endpoint_removes_one_persisted_document() -> None:
         assert delete_body["document_id"] == document_id
         assert delete_body["deleted_documents"] == 1
         assert delete_body["deleted_chunks"] >= 1
+        assert delete_body["created"] is False
 
         catalog_after = client.get(f"/sources/documents?source_id={source_id}")
         assert catalog_after.status_code == 200

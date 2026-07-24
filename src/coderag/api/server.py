@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, cast
@@ -20,6 +21,7 @@ from fastapi import (
 from fastapi.openapi.utils import get_openapi
 
 from coderag.api.identity_headers import identity_headers
+from coderag.api.mcp_server import MCP_SENSITIVE_FIELDS, MCP_SERVER_TYPE
 from coderag.api.upload_ingestion import (
     StagedUploadFile,
     UploadIngestionAdapter,
@@ -32,6 +34,9 @@ from coderag.core.models import (
     FilesIngestionJsonRequest,
     IngestionRequest,
     ListDocumentTagsResponse,
+    McpDependencyStatus,
+    McpHealthResponse,
+    McpInfoResponse,
     QueryRequest,
     ReplaceDocumentTagsRequest,
     ReplaceDocumentTagsResponse,
@@ -143,9 +148,30 @@ def _format_exception_detail(
     return payload
 
 
+def _docs_error_detail(
+    code: str,
+    message: str,
+    *,
+    retryable: bool = False,
+) -> dict[str, Any]:
+    """Build standardized error body for MCP tool-exposed operations.
+
+    Contrato Hexa: cuerpos de error con forma ``{error: "DOCS_*", message,
+    retryable}`` para las operaciones publicadas como tools MCP (ver
+    ``MCP_INCLUDED_OPERATIONS``). Códigos: DOCS_NOT_FOUND, DOCS_VALIDATION,
+    DOCS_CONFLICT, DOCS_UNAVAILABLE, DOCS_RATE_LIMITED, DOCS_AUTH_FAILED.
+    """
+    return {
+        "error": f"DOCS_{code}",
+        "message": message,
+        "retryable": retryable,
+    }
+
+
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
     """Release service resources when application shuts down."""
+    _app.state.started_at = time.monotonic()
     try:
         yield
     finally:
@@ -249,11 +275,73 @@ app.openapi = custom_openapi
     "/health",
     tags=["health"],
     summary="Health check",
-    description="Validate that the API process is up and responding.",
+    description=(
+        "Contrato de integración MCP: estado consolidado del servicio, sin "
+        "autenticación, respuesta en menos de 2 segundos."
+    ),
 )
-def health() -> dict[str, str]:
-    """Service health endpoint."""
-    return {"status": "ok"}
+def health() -> McpHealthResponse:
+    """Service health endpoint (shape del contrato de integración MCP)."""
+    named_checks: list[tuple[str, Any]] = [
+        ("runtime_store", _check_runtime_store),
+        ("lexical", _check_lexical_runtime),
+        ("chroma", _check_chroma_runtime),
+    ]
+    dependencies: dict[str, McpDependencyStatus] = {}
+    has_critical_failure = False
+    has_noncritical_failure = False
+    for name, check_fn in named_checks:
+        started = time.perf_counter()
+        item = check_fn()
+        latency_ms = round((time.perf_counter() - started) * 1000, 3)
+        ok = bool(item.get("ok"))
+        dependencies[name] = McpDependencyStatus(
+            status="healthy" if ok else "unhealthy",
+            latency_ms=latency_ms,
+        )
+        if not ok:
+            if bool(item.get("required")):
+                has_critical_failure = True
+            else:
+                has_noncritical_failure = True
+
+    if has_critical_failure:
+        status = "unhealthy"
+    elif has_noncritical_failure:
+        status = "degraded"
+    else:
+        status = "healthy"
+
+    started_at = getattr(app.state, "started_at", None)
+    uptime_s = int(time.monotonic() - started_at) if started_at else 0
+    return McpHealthResponse(
+        status=status,
+        name=SETTINGS.mcp_server_name,
+        version=app.version,
+        uptime_s=uptime_s,
+        dependencies=dependencies,
+    )
+
+
+@app.get(
+    "/info",
+    tags=["health"],
+    summary="Metadata del servidor MCP",
+    description=(
+        "Contrato de integración MCP Hexa: metadata est\u00e1tica del servidor "
+        "(name, version, server_type, description, sensitive_fields), sin "
+        "autenticación."
+    ),
+)
+def info() -> McpInfoResponse:
+    """Metadata endpoint exigido por el contrato de integración MCP Hexa."""
+    return McpInfoResponse(
+        name=SETTINGS.mcp_server_name,
+        version=app.version,
+        server_type=MCP_SERVER_TYPE,
+        description=SETTINGS.mcp_server_description,
+        sensitive_fields=MCP_SENSITIVE_FIELDS,
+    )
 
 
 @app.get(
@@ -658,7 +746,10 @@ def get_document_content(document_id: str) -> DocumentContentResponse:
     except KeyError as exc:
         raise HTTPException(
             status_code=404,
-            detail=f"Document not found: {document_id}",
+            detail=_docs_error_detail(
+                "NOT_FOUND",
+                f"Document not found: {document_id}",
+            ),
         ) from exc
 
 
@@ -685,7 +776,10 @@ def delete_document(document_id: str) -> DeleteDocumentResponse:
     except KeyError as exc:
         raise HTTPException(
             status_code=404,
-            detail=f"Document not found: {document_id}",
+            detail=_docs_error_detail(
+                "NOT_FOUND",
+                f"Document not found: {document_id}",
+            ),
         ) from exc
     return response
 
@@ -714,7 +808,10 @@ def replace_document_tags(
     except KeyError as exc:
         raise HTTPException(
             status_code=404,
-            detail=f"Document not found: {document_id}",
+            detail=_docs_error_detail(
+                "NOT_FOUND",
+                f"Document not found: {document_id}",
+            ),
         ) from exc
 
 
@@ -1059,36 +1156,26 @@ def ingest_files_json(request: FilesIngestionJsonRequest) -> dict[str, Any]:
         )
         return SERVICE.ingest(ingestion_request)
     except UploadIngestionError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=422,
+            detail=_docs_error_detail("VALIDATION", str(exc)),
+        ) from exc
     except RuntimeError as exc:
         raise HTTPException(
             status_code=503,
-            detail=_format_exception_detail(
-                exc,
-                operation="ingest_files_json",
-                context={
-                    "filenames": filenames,
-                    "file_count": len(request.files),
-                    "source_type": request.source_type,
-                    "has_filters": bool(request.filters),
-                    "has_tags": bool(request.tags),
-                },
+            detail=_docs_error_detail(
+                "UNAVAILABLE",
+                str(exc),
+                retryable=True,
             ),
         ) from exc
     except Exception as exc:
         raise HTTPException(
             status_code=500,
-            detail=_format_exception_detail(
-                exc,
-                operation="ingest_files_json",
-                context={
-                    "filenames": filenames,
-                    "file_count": len(request.files),
-                    "source_type": request.source_type,
-                    "has_filters": bool(request.filters),
-                    "has_tags": bool(request.tags),
-                    "staged_dir": str(staged_dir) if staged_dir else None,
-                },
+            detail=_docs_error_detail(
+                "UNAVAILABLE",
+                str(exc),
+                retryable=True,
             ),
         ) from exc
     finally:
@@ -1169,7 +1256,10 @@ def ingest_files_json_async(
                 artifact_id,
                 str(exc),
             )
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=422,
+            detail=_docs_error_detail("VALIDATION", str(exc)),
+        ) from exc
     except HTTPException:
         if artifact_id:
             RUNTIME.ingestion_artifact_store.mark_processing_failed(
@@ -1185,18 +1275,10 @@ def ingest_files_json_async(
             )
         raise HTTPException(
             status_code=500,
-            detail=_format_exception_detail(
-                exc,
-                operation="ingest_files_json_async",
-                context={
-                    "filenames": filenames,
-                    "file_count": len(request.files),
-                    "source_type": request.source_type,
-                    "has_filters": bool(request.filters),
-                    "has_tags": bool(request.tags),
-                    "artifact_id": artifact_id,
-                    "use_rq": SETTINGS.use_rq,
-                },
+            detail=_docs_error_detail(
+                "UNAVAILABLE",
+                str(exc),
+                retryable=True,
             ),
         ) from exc
 
@@ -1309,7 +1391,10 @@ def get_job(job_id: str) -> dict[str, Any]:
             return merged
 
     if job is None:
-        raise HTTPException(status_code=404, detail="Job not found")
+        raise HTTPException(
+            status_code=404,
+            detail=_docs_error_detail("NOT_FOUND", "Job not found"),
+        )
     return job
 
 
@@ -1338,7 +1423,10 @@ def query(request: QueryRequest) -> dict:
         response = SERVICE.query(request)
         return response.model_dump()
     except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=503,
+            detail=_docs_error_detail("UNAVAILABLE", str(exc), retryable=True),
+        ) from exc
 
 
 @app.post(
@@ -1365,7 +1453,10 @@ def retrieval_only(request: QueryRequest) -> dict:
         response = SERVICE.query(request)
         return response.model_dump()
     except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=503,
+            detail=_docs_error_detail("UNAVAILABLE", str(exc), retryable=True),
+        ) from exc
 
 
 @app.post(

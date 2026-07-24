@@ -74,7 +74,10 @@ contratos de API, core y UI.
 
 ## 4. Contratos clave de API
 
-Salud/consulta: `GET /health`, `GET /readiness`, `POST /query`, `POST /query/retrieval`.
+Salud/consulta: `GET /health` (shape contrato Hexa: `status`, `name`, `version`,
+`uptime_s`, `dependencies`), `GET /info` (metadata p\u00fablica: `name`, `version`,
+`server_type`, `description`, `sensitive_fields`), `GET /readiness`, `POST /query`,
+`POST /query/retrieval`.
 Ingesta/jobs: `POST /sources/ingest[/files][/async]`, `GET /sources/ingest/readiness`,
 `GET /jobs/{job_id}`, `DELETE /sources/reset?confirm=true`.
 Catálogo: `GET /sources/documents`, `GET /sources/tags`,
@@ -86,11 +89,18 @@ API REST en el mismo proceso/puerto y deriva sus tools del OpenAPI
 (nombre = `operation_id`). Solo expone consulta/lectura, gestión de documentos e
 ingesta por archivos vía JSON base64 (`ingest_files_json[/async]`, default-deny vía
 `include_operations`); quedan fuera `/admin/reset`, la ingesta por payload, las
-variantes multipart de subida (REST-only para la UI) y `/tdm/*`. Reenvía headers de
+variantes multipart de subida (REST-only para la UI) y `/tdm/*`. También publica
+prompts (`query_guide`, `ingest_workflow_guide`, `document_catalog_guide`) y
+resources (`rag://documents`, `rag://ingest/readiness`,
+`rag://documents/{document_id}` + 5 guías estáticas). Reenvía headers de
 identidad opcionales `x-role-id`/`x-user-id`/`x-country-id` (pass-through, allowlist de
-`fastapi-mcp`; ver `src/coderag/api/identity_headers.py`). Config: `MCP_ENABLED`,
-`MCP_API_TOKEN` (header `X-MCP-Token`), `MCP_MOUNT_PATH`, `MCP_SERVER_NAME`.
-Impl: `src/coderag/api/mcp_server.py`.
+`fastapi-mcp`; ver `src/coderag/api/identity_headers.py`). Auth: header
+`Authorization: Bearer {MCP_API_TOKEN}` (401 si falta/no coincide cuando el
+token está configurado). Tools de escritura (`delete_document`,
+`replace_document_tags`, `ingest_files_json[/async]`) retornan `created: bool`
+(idempotencia); errores usan `{error: "DOCS_*", message, retryable}`. Config:
+`MCP_ENABLED`, `MCP_API_TOKEN`, `MCP_MOUNT_PATH`, `MCP_SERVER_NAME`,
+`MCP_SERVER_DESCRIPTION`. Impl: `src/coderag/api/mcp_server.py`.
 
 Shape de respuesta de consulta: `answer`, `citations`, `graph_paths`, `diagnostics`.
 

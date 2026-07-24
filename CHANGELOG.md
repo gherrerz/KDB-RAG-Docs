@@ -6,6 +6,12 @@
 
 ### Added
 
+- Nuevo documento `docs/MCP_CONTRACT.md`: contrato de integración MCP
+  autocontenido para consumidores externos (payloads de entrada/salida de las
+  11 tools, los 3 prompts y los 8 resources, tabla consolidada de códigos de
+  error `DOCS_*`, ejemplos JSON-RPC de `tools/call`/`prompts/get`/
+  `resources/read`, y una sesión completa de handshake). Enlazado desde
+  `docs/API_REFERENCE.md` en la sección `POST/GET /mcp`.
 - Resolución de URLs y credenciales de infraestructura (Chroma, Postgres, Neo4j)
   diferenciada por entorno mediante variables con sufijo `_DEV`/`_TEST`/`_PROD`,
   gobernadas por `RUNTIME_ENVIRONMENT`. Precedencia por variable:
@@ -43,6 +49,23 @@
 
 ### Changed
 
+- **BREAKING** el servidor MCP (`/mcp`) migra su autenticación del header
+  `X-MCP-Token` a `Authorization: Bearer {MCP_API_TOKEN}` (contrato de
+  integración Hexa). Falta o incompatibilidad de token responde `401` con
+  `{message, code:"invalid_mcp_token"}`; `MCP_ENABLED=false` sigue respondiendo
+  `404`. Clientes existentes deben actualizar el header enviado.
+- **BREAKING** `GET /health` cambia de forma: en lugar de `{"status":"ok"}`
+  ahora retorna `{status: healthy|degraded|unhealthy, name, version,
+  uptime_s, dependencies}` (modelo `McpHealthResponse`/`McpDependencyStatus`),
+  reutilizando los checks ya existentes de `runtime_store`, `lexical`, `chroma`,
+  `neo4j` y `redis` con latencia medida por dependencia. Sigue sin
+  autenticación.
+- Los endpoints publicados como tools MCP (`get_document_content`,
+  `delete_document`, `replace_document_tags`, `ingest_files_json[/async]`,
+  `get_job`, `query`, `retrieval_only`) devuelven cuerpos de error
+  estandarizados `{error: "DOCS_*", message, retryable}` (`DOCS_NOT_FOUND`,
+  `DOCS_VALIDATION`, `DOCS_UNAVAILABLE`) manteniendo el `status_code` HTTP
+  previo. Los endpoints multipart (`ingest_source_files[/async]`) no cambian.
 - **BREAKING** el reset global deja de usar `DELETE /sources/reset?confirm=true`
   y converge a `POST /admin/reset` con `ADMIN_RESET_ENABLED`,
   `ADMIN_RESET_TOKEN`, header `X-Admin-Reset-Token` y body explicito de
@@ -60,6 +83,26 @@
 
 ### Added
 
+- Nuevo endpoint público `GET /info` (sin autenticación) para el contrato de
+  integración Hexa: expone `{name, version, server_type: "tools", description,
+  sensitive_fields}` (modelo `McpInfoResponse`). `sensitive_fields` declara los
+  campos con contenido libre de usuario (`query`, `question`, `content`,
+  `title`, `tags`, `answer`) para que Hexa configure su Dual-LLM Sanitizer.
+- Prompts y resources MCP (paridad con `KDB-RAG-Repo`): nuevo módulo
+  `src/coderag/api/mcp_prompts.py` con 3 prompts (`query_guide`,
+  `ingest_workflow_guide`, `document_catalog_guide`) y
+  `src/coderag/api/mcp_resources.py` con 5 guías estáticas más los recursos
+  dinámicos `rag://documents`, `rag://ingest/readiness` y el template
+  `rag://documents/{document_id}`, registrados antes de montar `/mcp` para que
+  el handshake `initialize` anuncie las capabilities `tools`+`prompts`+
+  `resources`. Nuevos tests `tests/test_mcp_prompts.py` y
+  `tests/test_mcp_resources.py`.
+- Campo `created: bool` en las respuestas de las tools de escritura
+  (contrato Hexa de idempotencia): `ingest_files_json[/async]` (`true` si el
+  lote ingerido era completamente nuevo, `false` si la deduplicación por
+  `title+content_type` reemplazó al menos un documento existente),
+  `delete_document` y `replace_document_tags` (siempre `false`, mutaciones
+  idempotentes sobre un documento ya persistido).
 - Guia operativa de Fase 6 para ejecutar backup, upgrade y validacion de
   tablas Alembic aisladas en base Postgres compartida:
   `docs/migration-guides/alembic-shared-db-cutover.md`.

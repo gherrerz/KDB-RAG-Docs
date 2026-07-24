@@ -559,6 +559,7 @@ def test_ingest_replaces_previous_duplicate_documents_globally(tmp_path) -> None
         )
         first_source_id = str(first.get("source_id", ""))
         assert first.get("status") == "completed"
+        assert first.get("created") is True
         assert old_file.exists()
 
         second = service.ingest(
@@ -571,6 +572,7 @@ def test_ingest_replaces_previous_duplicate_documents_globally(tmp_path) -> None
         )
         second_source_id = str(second.get("source_id", ""))
         assert second.get("status") == "completed"
+        assert second.get("created") is False
         assert first_source_id != second_source_id
 
         documents = [

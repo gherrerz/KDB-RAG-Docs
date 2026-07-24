@@ -251,7 +251,8 @@ Variables opcionales para apuntar la UI a una API distinta:
 
 ## API Endpoints
 
-- `GET /health`
+- `GET /health` (shape contrato Hexa: `status`, `name`, `version`, `uptime_s`, `dependencies`)
+- `GET /info` (metadata pública sin autenticación: `name`, `version`, `server_type`, `description`, `sensitive_fields`)
 - `POST /sources/ingest`
 - `POST /sources/ingest/files`
 - `POST /sources/ingest/files/async`
@@ -272,8 +273,9 @@ Variables opcionales para apuntar la UI a una API distinta:
 El endpoint `/mcp` coexiste con la API REST en el mismo proceso/puerto y deja que
 cualquier agente de IA descubra (`tools/list`) y ejecute (`tools/call`) un
 subconjunto de operaciones de consulta/lectura, gestión de documentos e ingesta
-por archivos. Se controla con `MCP_ENABLED` y `MCP_API_TOKEN` (header
-`X-MCP-Token`). Ver `docs/API_REFERENCE.md` para la lista de tools.
+por archivos, además de prompts y resources de guía. Se controla con
+`MCP_ENABLED` y `MCP_API_TOKEN` (header `Authorization: Bearer
+{MCP_API_TOKEN}`). Ver `docs/API_REFERENCE.md` para la lista de tools.
 
 `GET /sources/ingest/readiness` expone checks estructurados de Chroma y del
 backend lexico Postgres para diagnostico operativo, incluyendo `signal`,

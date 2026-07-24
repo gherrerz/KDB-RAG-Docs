@@ -374,6 +374,16 @@ class Settings(BaseSettings):
         default_factory=lambda: _env_str("MCP_SERVER_NAME", "documents-kdb-mcp")
         or "docrag-mcp"
     )
+    mcp_server_description: str = Field(
+        default_factory=lambda: _env_str(
+            "MCP_SERVER_DESCRIPTION",
+            (
+                "Ingesta y consulta documental empresarial con RAG "
+                "híbrido (vector + lexical + grafo)."
+            ),
+        )
+        or ""
+    )
     redis_url: str = Field(
         default_factory=lambda: (
             _env_str("REDIS_URL", "redis://localhost:6379/0")

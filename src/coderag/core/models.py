@@ -81,6 +81,13 @@ class DeleteDocumentResponse(BaseModel):
     deleted_staging_files: int
     reindexed_sources: int
     neo4j_nodes_deleted: int = 0
+    created: bool = Field(
+        default=False,
+        description=(
+            "Contrato Hexa: idempotencia de tools de escritura. Siempre "
+            "false para delete_document (mutación sobre documento existente)."
+        ),
+    )
 
 
 class ReplaceDocumentTagsRequest(BaseModel):
@@ -114,6 +121,14 @@ class ReplaceDocumentTagsResponse(BaseModel):
     source_id: str
     old_tags: list[str] = Field(default_factory=list)
     new_tags: list[str] = Field(default_factory=list)
+    created: bool = Field(
+        default=False,
+        description=(
+            "Contrato Hexa: idempotencia de tools de escritura. Siempre "
+            "false para replace_document_tags (mutación sobre documento "
+            "existente)."
+        ),
+    )
 
 
 class DocumentRecord(BaseModel):
@@ -348,3 +363,44 @@ class TdmQueryResponse(BaseModel):
     answer: str
     findings: list[dict[str, Any]] = Field(default_factory=list)
     diagnostics: dict[str, Any] = Field(default_factory=dict)
+
+
+class McpInfoResponse(BaseModel):
+    """Metadata publicada en GET /info, contrato de integración MCP Hexa."""
+
+    name: str = Field(description="Nombre único del servidor MCP.")
+    version: str = Field(description="Versión semántica del servicio.")
+    server_type: Literal["tools", "agent"] = Field(
+        description="tools: operaciones discretas y sincrónicas."
+    )
+    description: str = Field(description="Breve descripción del sistema integrado.")
+    sensitive_fields: list[str] = Field(
+        description=(
+            "Campos que pueden contener datos libres ingresados por "
+            "usuarios, usados por Hexa para configurar el DualLLM Sanitizer."
+        )
+    )
+
+
+class McpDependencyStatus(BaseModel):
+    """Estado de una dependencia individual reportada en GET /health."""
+
+    status: Literal["healthy", "unhealthy"] = Field(
+        description="Salud de la dependencia evaluada."
+    )
+    latency_ms: float = Field(description="Latencia del chequeo en milisegundos.")
+
+
+class McpHealthResponse(BaseModel):
+    """Shape de GET /health exigido por el contrato de integración MCP Hexa."""
+
+    status: Literal["healthy", "degraded", "unhealthy"] = Field(
+        description="Estado global consolidado del servicio."
+    )
+    name: str = Field(description="Nombre del servidor MCP.")
+    version: str = Field(description="Versión semántica del servicio.")
+    uptime_s: int = Field(description="Segundos transcurridos desde el arranque.")
+    dependencies: dict[str, McpDependencyStatus] = Field(
+        default_factory=dict,
+        description="Estado por dependencia crítica/no crítica evaluada.",
+    )

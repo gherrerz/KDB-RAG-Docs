@@ -296,6 +296,11 @@ class IngestionApplicationService:
             "incoming_batch": incoming_dedup_stats,
             "replaced_existing": dedup_stats,
         }
+        # Contrato Hexa: idempotencia de tools de escritura. "created" es
+        # false cuando la deduplicaci\u00f3n (title+content_type) reemplaz\u00f3 al
+        # menos un documento ya persistido; true cuando el lote completo era
+        # nuevo (sin coincidencias previas).
+        created = int(dedup_stats.get("deleted_documents", 0) or 0) == 0
 
         return {
             "job_id": job_id,
@@ -303,6 +308,7 @@ class IngestionApplicationService:
             "source_id": source_id,
             "documents": str(documents_count),
             "chunks": str(chunks_count),
+            "created": created,
             "steps": steps,
             "progress_pct": 100.0,
             "metrics": {

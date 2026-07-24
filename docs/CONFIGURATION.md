@@ -89,10 +89,13 @@ Expone un subconjunto de operaciones de la API como tools MCP en `/mcp`
 `docs/API_REFERENCE.md`.
 
 - `MCP_ENABLED`: habilita el montaje de `/mcp`. Default: `true`.
-- `MCP_API_TOKEN`: token requerido en el header `X-MCP-Token` para acceder a
-  `/mcp`. Default: vacío.
+- `MCP_API_TOKEN`: token requerido en el header `Authorization: Bearer
+  {MCP_API_TOKEN}` para acceder a `/mcp` (contrato de integración Hexa;
+  reemplaza al header legacy `X-MCP-Token`). Default: vacío.
 - `MCP_MOUNT_PATH`: path de montaje del servidor MCP. Default: `/mcp`.
 - `MCP_SERVER_NAME`: nombre anunciado del servidor MCP. Default: `docrag-mcp`.
+- `MCP_SERVER_DESCRIPTION`: descripción publicada sin autenticación en
+  `GET /info` (contrato Hexa). Default: descripción genérica del servicio.
 
 Notas operativas:
 
@@ -115,6 +118,9 @@ Notas operativas:
 - `delete_document` (`DELETE /sources/documents/{document_id}`) sí se expone como
   tool MCP: es una operación destructiva por documento, así que se recomienda
   mantener `MCP_API_TOKEN` configurado en cualquier entorno no local.
+- `GET /health` y `GET /info` no requieren autenticación y siguen el contrato
+  de integración Hexa (ver `docs/API_REFERENCE.md`). El servidor MCP también
+  publica prompts y resources (paridad con `KDB-RAG-Repo`) además de las tools.
 
 - `data_dir`: carpeta de trabajo local para staging legacy puntual,
   uploads transitorios y artefactos no-relacionales; no se usa como

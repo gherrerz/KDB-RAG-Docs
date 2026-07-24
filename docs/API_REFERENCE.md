@@ -42,7 +42,8 @@ de la red puede consumirse usando la IP del host.
 
 | Servicio HTTP | Metodo | Path | Handler FastAPI | Servicio interno | Schema request | Schema response |
 | --- | --- | --- | --- | --- | --- | --- |
-| Health | GET | `/health` | `health` | N/A | N/A | `{"status": "ok"}` |
+| Health | GET | `/health` | `health` | checks `runtime_store`+`lexical`+`chroma` | N/A | `McpHealthResponse` (contrato Hexa: `status`, `name`, `version`, `uptime_s`, `dependencies`) |
+| Info | GET | `/info` | `info` | N/A | N/A | `McpInfoResponse` (contrato Hexa: `name`, `version`, `server_type`, `description`, `sensitive_fields`) |
 | Readiness | GET | `/readiness` | `readiness` | checks runtime store + Chroma crítico | N/A | `{"status": "ready"}` |
 | Ingestion sync | POST | `/sources/ingest` | `ingest_source` | `SERVICE.ingest` | `IngestionRequest` | `dict` (estado de job + metricas) |
 | Ingestion uploads batch sync | POST | `/sources/ingest/files` | `ingest_source_files` | `UploadIngestionAdapter` + `SERVICE.ingest` | `multipart/form-data` (`files`, `source_type?`, `filters?`, `tags?`) | `dict` (estado de job + metricas) |
@@ -66,7 +67,7 @@ de la red puede consumirse usando la IP del host.
 | TDM table catalog | GET | `/tdm/catalog/tables/{table_name}` | `tdm_table_catalog` | `SERVICE.get_tdm_table_catalog` | `table_name` + `source_id?` | `dict` |
 | TDM virtualization preview | POST | `/tdm/virtualization/preview` | `preview_tdm_virtualization` | `SERVICE.preview_tdm_virtualization` | `TdmQueryRequest` | `dict` |
 | TDM synthetic profile | GET | `/tdm/synthetic/profile/{table_name}` | `tdm_synthetic_profile` | `SERVICE.get_tdm_synthetic_profile` | `table_name` + `source_id?` + `target_rows?` | `dict` |
-| Servidor MCP | POST/GET | `/mcp` | `setup_mcp` (envoltura MCP del OpenAPI) | N/A (deriva tools del OpenAPI) | MCP JSON-RPC | MCP JSON-RPC |
+| Servidor MCP | POST/GET | `/mcp` | `setup_mcp` (envoltura MCP del OpenAPI) | N/A (deriva tools del OpenAPI) | MCP JSON-RPC + header `Authorization: Bearer {MCP_API_TOKEN}` | MCP JSON-RPC |
 
 ## Esquemas principales
 
@@ -184,19 +185,58 @@ Codigos comunes:
 
 ## GET /health
 
-Valida que el servicio este en ejecucion.
+Valida que el servicio este en ejecucion. Shape del contrato de integración
+MCP Hexa (sin autenticación, respuesta esperada en menos de 2 segundos).
+Consolida el estado de `runtime_store`, `lexical` y `chroma` (cada uno con
+latencia medida en `latency_ms`).
 
 Response:
 
 ```json
 {
-  "status": "ok"
+  "status": "healthy",
+  "name": "docrag-mcp",
+  "version": "0.1.0",
+  "uptime_s": 1234,
+  "dependencies": {
+    "runtime_store": {"status": "healthy", "latency_ms": 1.2},
+    "lexical": {"status": "healthy", "latency_ms": 3.4},
+    "chroma": {"status": "healthy", "latency_ms": 5.6}
+  }
 }
 ```
 
+`status` es `"unhealthy"` si alguna dependencia obligatoria falla, `"degraded"`
+si solo falla una dependencia no obligatoria, y `"healthy"` en otro caso.
+
 Codigos comunes:
 
-- `200`: servicio disponible.
+- `200`: servicio disponible (incluye estados `degraded`/`unhealthy` en el body).
+
+## GET /info
+
+Metadata estática del servidor MCP, sin autenticación. Exigido por el
+contrato de integración Hexa para que el orquestador descubra el servidor
+sin necesidad de negociar un token primero.
+
+Response:
+
+```json
+{
+  "name": "docrag-mcp",
+  "version": "0.1.0",
+  "server_type": "tools",
+  "description": "Ingesta y consulta documental empresarial con RAG híbrido (vector + lexical + grafo).",
+  "sensitive_fields": ["query", "question", "content", "title", "tags", "answer"]
+}
+```
+
+`sensitive_fields` declara los campos de las tools MCP que pueden contener
+contenido libre de usuario, para que Hexa configure su Dual-LLM Sanitizer.
+
+Codigos comunes:
+
+- `200`: siempre (no depende de dependencias externas).
 
 ## GET /readiness
 
@@ -252,6 +292,7 @@ Response (ejemplo exitoso):
   "message": "Document was deleted from persisted metadata, vector index, managed staging mirror, and Neo4j orphan cleanup.",
   "document_id": "abc123",
   "source_id": "f0e1d2c3b4a5",
+  "created": false,
   "deleted_documents": 1,
   "deleted_chunks": 3,
   "deleted_staging_files": 1,
@@ -262,8 +303,10 @@ Response (ejemplo exitoso):
 
 Codigos comunes:
 
-- `200`: documento eliminado.
-- `404`: no existe documento persistido con ese `document_id`.
+- `200`: documento eliminado (`created` siempre `false`: es una mutaci\u00f3n sobre
+  un documento ya persistido).
+- `404`: no existe documento persistido con ese `document_id`
+  (`detail: {error: "DOCS_NOT_FOUND", message, retryable: false}`).
 
 Comportamiento adicional:
 
@@ -297,6 +340,7 @@ Response (ejemplo exitoso):
   "source_id": "f0e1d2c3b4a5",
   "documents": "2",
   "chunks": "5",
+  "created": true,
   "progress_pct": 100,
   "steps": [
     {
@@ -341,6 +385,10 @@ Codigos comunes:
 
 - `200`: ingesta terminada (tambien puede retornar `status=failed` de negocio).
 - `503`: runtime estricto no disponible (por ejemplo, Chroma/provider).
+
+Nota de contrato: `created` es `true` si todo el lote ingerido era nuevo, y
+`false` si la deduplicaci\u00f3n global por `title + content_type` reemplaz\u00f3 al
+menos un documento existente (`deduplication.replaced_existing.deleted_documents > 0`).
 
 ## POST /sources/ingest/files
 
@@ -835,7 +883,8 @@ Response shape:
   "document_id": "7f0a...",
   "source_id": "abc123def456",
   "old_tags": ["finance", "urgent"],
-  "new_tags": ["legal", "approved"]
+  "new_tags": ["legal", "approved"],
+  "created": false
 }
 ```
 
@@ -849,8 +898,10 @@ curl -X PUT http://127.0.0.1:8000/sources/documents/7f0a/tags \
 
 Codigos comunes:
 
-- `200`: tags reemplazadas.
-- `404`: no existe documento persistido con ese `document_id`.
+- `200`: tags reemplazadas (`created` siempre `false`: es una mutaci\u00f3n sobre
+  un documento ya persistido).
+- `404`: no existe documento persistido con ese `document_id`
+  (`detail: {error: "DOCS_NOT_FOUND", message, retryable: false}`).
 
 ## POST /query/retrieval
 
@@ -869,15 +920,27 @@ las operaciones expuestas. Las tools se derivan automáticamente del OpenAPI y s
 nombre es el `operation_id` de cada ruta.
 
 - Implementación: `src/coderag/api/mcp_server.py` (`setup_mcp`)
-- Header de auth: `X-MCP-Token: str` (requerido solo si `MCP_API_TOKEN` está configurado)
+- Header de auth: `Authorization: Bearer {MCP_API_TOKEN}` (requerido solo si
+  `MCP_API_TOKEN` está configurado; formato exigido por el contrato de
+  integración Hexa, reemplaza al header legacy `X-MCP-Token`).
 - Headers de identidad (opcionales, pass-through): `x-role-id`, `x-user-id`,
   `x-country-id`. Se fijan en la conexión `/mcp` (cliente MCP o gateway) y el
   servidor los **reenvía** a cada llamada interna de tool (allowlist de
   `fastapi-mcp`). Están declarados en el OpenAPI de cada operación expuesta. Por
   limitación de `fastapi-mcp` 0.4.0 no aparecen como argumentos JSON de la tool.
 - Error responses:
-  - `403`: token MCP inválido cuando `MCP_API_TOKEN` está configurado (`detail` es objeto)
+  - `401`: token MCP faltante o inválido cuando `MCP_API_TOKEN` está configurado (`detail` es objeto `{message, code:"invalid_mcp_token"}`)
   - `404`: servidor MCP deshabilitado (`MCP_ENABLED=false`) (`detail` es objeto)
+- Errores de las tools (`get_document_content`, `delete_document`,
+  `replace_document_tags`, `ingest_files_json[/async]`, `get_job`, `query`,
+  `retrieval_only`): cuerpo estandarizado `{error: "DOCS_*", message, retryable}`
+  sobre el `status_code` HTTP habitual (`DOCS_NOT_FOUND` en 404,
+  `DOCS_VALIDATION` en 422, `DOCS_UNAVAILABLE` en 503/500 con `retryable: true`).
+- Prompts publicados: `query_guide`, `ingest_workflow_guide`,
+  `document_catalog_guide` (`src/coderag/api/mcp_prompts.py`).
+- Resources publicados: 5 guías estáticas más los recursos dinámicos
+  `rag://documents`, `rag://ingest/readiness` y el template
+  `rag://documents/{document_id}` (`src/coderag/api/mcp_resources.py`).
 
 Tools publicadas (default-deny):
 
@@ -910,6 +973,10 @@ Notas de comportamiento:
   no mapea a argumentos JSON de una tool.
 - El montaje se realiza al final de `server.py`, una vez registradas todas las
   rutas, porque `fastapi-mcp` introspecta el OpenAPI en ese momento.
+
+> Referencia completa del contrato MCP (payloads de entrada/salida por tool,
+> prompts, resources y todos los códigos de error posibles) en
+> [MCP_CONTRACT.md](MCP_CONTRACT.md).
 
 ## Referencias cruzadas utiles
 
