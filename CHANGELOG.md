@@ -49,6 +49,14 @@
 
 ### Changed
 
+- Bump de dependencias `mcp` 1.23.0 → 1.28.1 y `pypdf` 5.4.0 → 6.14.2 en
+  `requirements-runtime.txt`. Sin cambios de código: `mcp==1.28.1` sigue en la
+  línea estable v1.x (misma API `Server`/`mcp.types` usada por
+  `mcp_prompts.py`/`mcp_resources.py`) y satisface los mínimos ya pineados de
+  `pydantic`/`uvicorn`/`starlette`/`httpx`; `pypdf==6.14.2` solo eliminó
+  soporte a Python 3.8 (el runtime usa 3.12) y preserva la API
+  `PdfReader`/`.pages`/`.extract_text()` usada en `pdf_parser.py`. Referencias
+  actualizadas en `docs/MCP_CONTRACT.md`.
 - **BREAKING** el servidor MCP (`/mcp`) migra su autenticación del header
   `X-MCP-Token` a `Authorization: Bearer {MCP_API_TOKEN}` (contrato de
   integración Hexa). Falta o incompatibilidad de token responde `401` con
